@@ -21,8 +21,35 @@ const JobClaimResultSchema = z.object({
   event_id: z.string().optional(),
 });
 
+const CoordinatorJobSchema = z.object({
+  job_id: z.string(),
+  run_id: z.string(),
+  job_type: z.string(),
+  backend: z.string(),
+  dataset_uri: z.string(),
+  status: z.string().optional(),
+  worker_id: z.string().optional(),
+  peer_id: z.string().optional(),
+  job_spec: z.unknown().optional(),
+  created_at: z.string().optional(),
+});
+
+const CoordinatorArtifactSchema = z.object({
+  job_id: z.string(),
+  worker_id: z.string(),
+  peer_id: z.string(),
+  artifact_type: z.string(),
+  artifact_uri: z.string(),
+  artifact_hash: z.string(),
+  config_hash: z.string(),
+  metrics_uri: z.string().optional(),
+  created_at: z.string().optional(),
+});
+
 export type CoordinatorEvent = z.infer<typeof EventSchema>;
 export type CoordinatorJobClaimResult = z.infer<typeof JobClaimResultSchema>;
+export type CoordinatorJob = z.infer<typeof CoordinatorJobSchema>;
+export type CoordinatorArtifact = z.infer<typeof CoordinatorArtifactSchema>;
 
 export class CoordinatorClient {
   private readonly baseUrl: string;
@@ -49,6 +76,7 @@ export class CoordinatorClient {
         job_type: job.job_type,
         backend: job.backend,
         dataset_uri: job.job_type === "evaluate_adapter" ? job.eval_shard.uri : job.dataset_shard.uri,
+        job_spec: job,
       }, EventSchema);
     }
   }
@@ -94,12 +122,29 @@ export class CoordinatorClient {
     }, EventSchema);
   }
 
+  async getJob(jobId: string): Promise<CoordinatorJob> {
+    return this.get(`/jobs/${encodeURIComponent(jobId)}`, CoordinatorJobSchema);
+  }
+
+  async getArtifact(jobId: string): Promise<CoordinatorArtifact> {
+    return this.get(`/artifacts/${encodeURIComponent(jobId)}`, CoordinatorArtifactSchema);
+  }
+
   async events(count = 100): Promise<CoordinatorEvent[]> {
-    const response = await fetch(`${this.baseUrl}/events?count=${count}`);
+    return this.get(`/events?count=${count}`, z.array(EventSchema));
+  }
+
+  private async get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${path}`);
+    const body = await response.text();
+    const json = body.length > 0 ? JSON.parse(body) : null;
+
     if (!response.ok) {
-      throw new Error(`coordinator GET /events failed with ${response.status}: ${await response.text()}`);
+      const message = typeof json?.error === "string" ? json.error : body;
+      throw new Error(`coordinator GET ${path} failed with ${response.status}: ${message}`);
     }
-    return z.array(EventSchema).parse(await response.json());
+
+    return schema.parse(json);
   }
 
   private async post<T>(path: string, payload: unknown, schema: z.ZodType<T>): Promise<T> {

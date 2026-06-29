@@ -43,7 +43,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/worker-pool-cli.ts` starts bounded concurrent worker processes against a control peer. Use this for product E2E proof instead of manual shell loops.
 - `src/jobs.ts` defines local `train_toy_model`, `train_mlx_smoke`, and `train_adapter` job builders.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
-- `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured.
+- `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured, sends the full `MarshallJob` as `job_spec`, and can read persisted jobs/artifacts back from the coordinator.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
@@ -68,8 +68,8 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers four workers claiming independent jobs concurrently.
 - `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
-- `coordinator/redis_store.go` stores runs, workers, jobs, job claims, statuses, artifacts, and append-only events in Redis.
-- `coordinator/http.go` exposes the initial coordinator HTTP admin API.
+- `coordinator/redis_store.go` stores runs, workers, jobs, full job specs, job claims, statuses, artifacts, and append-only events in Redis.
+- `coordinator/http.go` exposes the initial coordinator HTTP admin API, including `GET /jobs/{job_id}` and `GET /artifacts/{job_id}` for persisted state reads.
 - `coordinator/*_integration_test.go` verifies the Redis store and HTTP lifecycle against a real Redis server when `MARSHALL_REDIS_ADDR` is set.
 
 ## Verification

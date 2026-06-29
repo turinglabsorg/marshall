@@ -30,9 +30,11 @@ func (server *Server) routes() {
 	server.mux.HandleFunc("POST /runs", server.createRun)
 	server.mux.HandleFunc("POST /workers", server.registerWorker)
 	server.mux.HandleFunc("POST /jobs", server.createJob)
+	server.mux.HandleFunc("GET /jobs/{job_id}", server.getJob)
 	server.mux.HandleFunc("POST /jobs/{job_id}/claim", server.claimJob)
 	server.mux.HandleFunc("POST /jobs/{job_id}/status", server.updateJobStatus)
 	server.mux.HandleFunc("POST /artifacts", server.publishArtifact)
+	server.mux.HandleFunc("GET /artifacts/{job_id}", server.getArtifact)
 	server.mux.HandleFunc("GET /events", server.events)
 }
 
@@ -67,6 +69,11 @@ func (server *Server) createJob(response http.ResponseWriter, request *http.Requ
 	writeResult(response, event, err)
 }
 
+func (server *Server) getJob(response http.ResponseWriter, request *http.Request) {
+	job, err := server.store.GetJob(request.Context(), request.PathValue("job_id"))
+	writeResult(response, job, err)
+}
+
 func (server *Server) claimJob(response http.ResponseWriter, request *http.Request) {
 	var claim JobClaim
 	if !decodeJSON(response, request, &claim) {
@@ -94,6 +101,11 @@ func (server *Server) publishArtifact(response http.ResponseWriter, request *htt
 	}
 	event, err := server.store.PublishArtifact(request.Context(), artifact)
 	writeResult(response, event, err)
+}
+
+func (server *Server) getArtifact(response http.ResponseWriter, request *http.Request) {
+	artifact, err := server.store.GetArtifact(request.Context(), request.PathValue("job_id"))
+	writeResult(response, artifact, err)
 }
 
 func (server *Server) events(response http.ResponseWriter, request *http.Request) {

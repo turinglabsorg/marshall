@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -89,8 +90,11 @@ func (store *RedisStore) CreateJob(ctx context.Context, job Job) (Event, error) 
 	if job.Status == "" {
 		job.Status = "queued"
 	}
+	if len(job.JobSpec) > 0 && !json.Valid(job.JobSpec) {
+		return Event{}, fmt.Errorf("job_spec must be valid JSON")
+	}
 
-	if _, err := store.client.command(ctx, append([]string{"HSET", store.key("job", job.JobID)}, mapArgs(map[string]string{
+	fields := map[string]string{
 		"job_id":      job.JobID,
 		"run_id":      job.RunID,
 		"job_type":    job.JobType,
@@ -98,7 +102,11 @@ func (store *RedisStore) CreateJob(ctx context.Context, job Job) (Event, error) 
 		"dataset_uri": job.DatasetURI,
 		"status":      job.Status,
 		"created_at":  job.CreatedAt,
-	})...)...); err != nil {
+	}
+	if len(job.JobSpec) > 0 {
+		fields["job_spec"] = string(job.JobSpec)
+	}
+	if _, err := store.client.command(ctx, append([]string{"HSET", store.key("job", job.JobID)}, mapArgs(fields)...)...); err != nil {
 		return Event{}, err
 	}
 	if _, err := store.client.command(ctx, "SADD", store.key("jobs"), job.JobID); err != nil {
@@ -114,6 +122,20 @@ func (store *RedisStore) CreateJob(ctx context.Context, job Job) (Event, error) 
 		"backend":    job.Backend,
 		"created_at": job.CreatedAt,
 	})
+}
+
+func (store *RedisStore) GetJob(ctx context.Context, jobID string) (Job, error) {
+	if jobID == "" {
+		return Job{}, fmt.Errorf("job_id is required")
+	}
+	fields, err := store.hash(ctx, store.key("job", jobID))
+	if err != nil {
+		return Job{}, err
+	}
+	if fields["job_id"] == "" {
+		return Job{}, fmt.Errorf("job not found")
+	}
+	return jobFromFields(fields), nil
 }
 
 func (store *RedisStore) ClaimJob(ctx context.Context, claim JobClaim) (JobClaimResult, error) {
@@ -228,6 +250,20 @@ func (store *RedisStore) PublishArtifact(ctx context.Context, artifact Artifact)
 	})
 }
 
+func (store *RedisStore) GetArtifact(ctx context.Context, jobID string) (Artifact, error) {
+	if jobID == "" {
+		return Artifact{}, fmt.Errorf("job_id is required")
+	}
+	fields, err := store.hash(ctx, store.key("artifact", jobID))
+	if err != nil {
+		return Artifact{}, err
+	}
+	if fields["job_id"] == "" {
+		return Artifact{}, fmt.Errorf("artifact not found")
+	}
+	return artifactFromFields(fields), nil
+}
+
 func (store *RedisStore) Events(ctx context.Context, count int) ([]Event, error) {
 	if count <= 0 {
 		count = 100
@@ -288,4 +324,33 @@ func arrayFields(value redisValue) map[string]string {
 		fields[value.items[index].stringValue()] = value.items[index+1].stringValue()
 	}
 	return fields
+}
+
+func jobFromFields(fields map[string]string) Job {
+	return Job{
+		JobID:      fields["job_id"],
+		RunID:      fields["run_id"],
+		JobType:    fields["job_type"],
+		Backend:    fields["backend"],
+		DatasetURI: fields["dataset_uri"],
+		Status:     fields["status"],
+		WorkerID:   fields["worker_id"],
+		PeerID:     fields["peer_id"],
+		JobSpec:    json.RawMessage(fields["job_spec"]),
+		CreatedAt:  fields["created_at"],
+	}
+}
+
+func artifactFromFields(fields map[string]string) Artifact {
+	return Artifact{
+		JobID:        fields["job_id"],
+		WorkerID:     fields["worker_id"],
+		PeerID:       fields["peer_id"],
+		ArtifactType: fields["artifact_type"],
+		ArtifactURI:  fields["artifact_uri"],
+		ArtifactHash: fields["artifact_hash"],
+		ConfigHash:   fields["config_hash"],
+		MetricsURI:   fields["metrics_uri"],
+		CreatedAt:    fields["created_at"],
+	}
 }

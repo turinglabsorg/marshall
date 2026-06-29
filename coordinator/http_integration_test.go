@@ -40,7 +40,13 @@ func TestHTTPServerLifecycle(t *testing.T) {
 		JobType:    "train_mlx_smoke",
 		Backend:    "mlx",
 		DatasetURI: "file://examples/datasets/tiny-italian.jsonl",
+		JobSpec:    json.RawMessage(`{"job_id":"job_http_001","run_id":"run_http_001","job_type":"train_mlx_smoke"}`),
 	}, http.StatusOK)
+	var persistedJob Job
+	getJSONInto(t, server.URL+"/jobs/job_http_001", http.StatusOK, &persistedJob)
+	if persistedJob.JobID != "job_http_001" || len(persistedJob.JobSpec) == 0 {
+		t.Fatalf("unexpected persisted job: %+v", persistedJob)
+	}
 
 	var claim JobClaimResult
 	postJSONInto(t, server.URL+"/jobs/job_http_001/claim", JobClaim{
@@ -66,6 +72,11 @@ func TestHTTPServerLifecycle(t *testing.T) {
 		ArtifactHash: "sha256:http",
 		ConfigHash:   "sha256:http-config",
 	}, http.StatusOK)
+	var persistedArtifact Artifact
+	getJSONInto(t, server.URL+"/artifacts/job_http_001", http.StatusOK, &persistedArtifact)
+	if persistedArtifact.ArtifactType != "mlx_smoke_result" || persistedArtifact.ArtifactHash != "sha256:http" {
+		t.Fatalf("unexpected persisted artifact: %+v", persistedArtifact)
+	}
 
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/events?count=20", nil)
 	if err != nil {
@@ -85,6 +96,21 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	}
 	if len(events) < 6 {
 		t.Fatalf("expected at least 6 lifecycle events, got %d", len(events))
+	}
+}
+
+func getJSONInto(t *testing.T, url string, status int, output any) {
+	t.Helper()
+	response, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != status {
+		t.Fatalf("unexpected status for %s: got %s want %d", url, response.Status, status)
+	}
+	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+		t.Fatal(err)
 	}
 }
 

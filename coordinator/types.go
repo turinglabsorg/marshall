@@ -1,6 +1,9 @@
 package coordinator
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Run struct {
 	RunID     string `json:"run_id"`
@@ -19,15 +22,16 @@ type Worker struct {
 }
 
 type Job struct {
-	JobID      string `json:"job_id"`
-	RunID      string `json:"run_id"`
-	JobType    string `json:"job_type"`
-	Backend    string `json:"backend"`
-	DatasetURI string `json:"dataset_uri"`
-	Status     string `json:"status,omitempty"`
-	WorkerID   string `json:"worker_id,omitempty"`
-	PeerID     string `json:"peer_id,omitempty"`
-	CreatedAt  string `json:"created_at,omitempty"`
+	JobID      string          `json:"job_id"`
+	RunID      string          `json:"run_id"`
+	JobType    string          `json:"job_type"`
+	Backend    string          `json:"backend"`
+	DatasetURI string          `json:"dataset_uri"`
+	Status     string          `json:"status,omitempty"`
+	WorkerID   string          `json:"worker_id,omitempty"`
+	PeerID     string          `json:"peer_id,omitempty"`
+	JobSpec    json.RawMessage `json:"job_spec,omitempty"`
+	CreatedAt  string          `json:"created_at,omitempty"`
 }
 
 type JobClaim struct {

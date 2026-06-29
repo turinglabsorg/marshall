@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -51,6 +52,24 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	evalSpec := json.RawMessage(`{"job_id":"job_eval_001","run_id":"run_test_001","round_id":"round_001","job_type":"evaluate_adapter","backend":"mlx","adapter":{"adapter_id":"job_adapter_001","artifact_uri":"file://artifacts/job_adapter_001/adapters","artifact_hash":"sha256:adapter"},"eval_shard":{"id":"eval_jsonl","uri":"file://datasets/eval.jsonl","token_estimate":1,"hash":"sha256:eval"},"model":"mlx-community/Qwen2.5-0.5B-Instruct-4bit","max_examples":40,"max_tokens":8}`)
+	if _, err := store.CreateJob(ctx, Job{
+		JobID:      "job_eval_001",
+		RunID:      "run_test_001",
+		JobType:    "evaluate_adapter",
+		Backend:    "mlx",
+		DatasetURI: "file://datasets/eval.jsonl",
+		JobSpec:    evalSpec,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	evalJob, err := store.GetJob(ctx, "job_eval_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evalJob.JobType != "evaluate_adapter" || string(evalJob.JobSpec) != string(evalSpec) {
+		t.Fatalf("unexpected persisted eval job: %+v", evalJob)
+	}
 
 	claim, err := store.ClaimJob(ctx, JobClaim{
 		JobID:        "job_test_001",
@@ -97,6 +116,37 @@ func TestRedisStoreLifecycle(t *testing.T) {
 		ConfigHash:   "sha256:config",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	evalClaim, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_eval_001",
+		WorkerID:     "worker_mlx_001",
+		PeerID:       "12D3KooWTest",
+		LeaseSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !evalClaim.Accepted {
+		t.Fatalf("expected eval claim to be accepted: %+v", evalClaim)
+	}
+	if _, err := store.PublishArtifact(ctx, Artifact{
+		JobID:        "job_eval_001",
+		WorkerID:     "worker_mlx_001",
+		PeerID:       "12D3KooWTest",
+		ArtifactType: "adapter_evaluation",
+		ArtifactURI:  "file://eval-artifacts/job_eval_001/metrics.json",
+		ArtifactHash: "sha256:eval-artifact",
+		ConfigHash:   "sha256:eval-config",
+		MetricsURI:   "file://eval-artifacts/job_eval_001/metrics.json",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	evalArtifact, err := store.GetArtifact(ctx, "job_eval_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evalArtifact.ArtifactType != "adapter_evaluation" || evalArtifact.MetricsURI == "" {
+		t.Fatalf("unexpected persisted eval artifact: %+v", evalArtifact)
 	}
 
 	events, err := store.Events(ctx, 20)

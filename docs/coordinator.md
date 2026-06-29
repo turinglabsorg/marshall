@@ -12,6 +12,8 @@ The DHT/p2p layer should be used for discovery, routing, and artifact provider l
 
 The TypeScript libp2p control peer can be configured with `coordinatorUrl`. In that mode it still speaks the p2p protocols to workers, but persists run/job initialization, worker registration, job claims, job statuses, and artifact manifests through the Go coordinator HTTP API.
 
+When the control peer creates jobs it sends the full `MarshallJob` payload as `job_spec`. Redis keeps this alongside the derived job fields, so `evaluate_adapter` jobs retain their adapter reference, eval shard hash, model, and evaluation limits as coordinator state.
+
 ## Runtime
 
 ```bash
@@ -34,9 +36,11 @@ GET  /health
 POST /runs
 POST /workers
 POST /jobs
+GET  /jobs/{job_id}
 POST /jobs/{job_id}/claim
 POST /jobs/{job_id}/status
 POST /artifacts
+GET  /artifacts/{job_id}
 GET  /events?count=100
 ```
 
