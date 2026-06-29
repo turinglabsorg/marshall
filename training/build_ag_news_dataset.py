@@ -144,7 +144,9 @@ def write_dataset(
 
     train_shards = split_records(records["train"], shard_count)
     valid_shards = split_records(records["valid"], shard_count)
-    for index, (train_shard, valid_shard) in enumerate(zip(train_shards, valid_shards, strict=True), start=1):
+    if len(train_shards) != len(valid_shards):
+        raise ValueError("train and validation shard counts differ")
+    for index, (train_shard, valid_shard) in enumerate(zip(train_shards, valid_shards), start=1):
         shard_dir = f"shards/shard-{index:03d}"
         files[f"{shard_dir}/train.jsonl"] = to_train_jsonl(train_shard)
         files[f"{shard_dir}/valid.jsonl"] = to_train_jsonl(valid_shard)
