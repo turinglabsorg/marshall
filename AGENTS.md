@@ -40,6 +40,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
+- `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, and ACK payloads.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, and verifies artifact manifest publication.
@@ -53,9 +54,11 @@ nvm use
 npm run typecheck
 npm test
 npm run demo:compiled
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
 ```
 
 The p2p integration test opens real TCP sockets on `127.0.0.1`, so sandboxed agents may need escalated execution for test/runtime commands.
+The MLX smoke test requires Apple Silicon plus an MLX-capable Python environment.
 
 ## Development Rules
 

@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:mlx:smoke": "${MARSHALL_PYTHON:-python3} training/mlx_linear_smoke.py",
     "test:watch": "vitest",
     "demo": "tsx src/demo.ts",
     "demo:compiled": "npm run build && node dist/src/demo.js"

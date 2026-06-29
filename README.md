@@ -49,6 +49,7 @@ marshall/
     training-runner.ts
   training/
     tiny_char_lm.py
+    mlx_linear_smoke.py
   examples/
     datasets/
       tiny-italian.jsonl
@@ -74,6 +75,7 @@ It proves:
 - the control peer can assign one `train_toy_model` job and accept the worker artifact manifest only when it matches the assigned worker;
 - the worker can run a real stdlib-only Python character bigram training job against `examples/datasets/tiny-italian.jsonl`;
 - the training runner emits `model.json`, `metrics.json`, `train.log`, and a `toy_language_model` manifest.
+- `training/mlx_linear_smoke.py` verifies that a remote Apple Silicon worker can run a tiny MLX gradient-descent job on GPU.
 
 ## Development
 
@@ -85,7 +87,9 @@ npm install
 npm run build
 npm test
 npm run demo:compiled
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
 ```
 
 The integration test opens real TCP sockets on `127.0.0.1`, starts a control peer and worker peer, and verifies the full p2p job lifecycle.
 It also runs the toy trainer and asserts that the loss decreases before publishing the artifact manifest.
+The MLX smoke test is intended for Apple Silicon workers with MLX installed and verifies GPU execution.

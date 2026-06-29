@@ -48,6 +48,8 @@ Before the MLX LoRA backend is wired in, the prototype includes a deliberately t
 
 This path is only for runtime validation of the p2p worker lifecycle, dataset ingestion, training execution, metric emission, and artifact manifest publication.
 
+For Apple Silicon runtime validation, `training/mlx_linear_smoke.py` runs a tiny MLX gradient-descent job and requires `Device(gpu, 0)`.
+
 ## Done Criteria
 
 The MVP is done when:
