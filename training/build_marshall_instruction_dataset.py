@@ -12,6 +12,7 @@ from typing import Any
 
 
 SEED = 7727
+SHARD_COUNT = 4
 
 SYSTEMS = {
     "summary": "You summarize Marshall coordinator events with concise operational language.",
@@ -62,7 +63,9 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for name, content in files.items():
-        (args.output_dir / name).write_text(content, encoding="utf8")
+        path = args.output_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf8")
     validate_files(args.output_dir)
     print(f"wrote dataset to {args.output_dir}")
 
@@ -83,12 +86,20 @@ def build_dataset_files() -> dict[str, str]:
     test = records[210:240]
     eval_records = build_eval_records()
 
-    return {
+    files = {
         "train.jsonl": to_jsonl(train),
         "valid.jsonl": to_jsonl(valid),
         "test.jsonl": to_jsonl(test),
         "eval.jsonl": to_jsonl(eval_records),
     }
+    train_shards = split_records(train, SHARD_COUNT)
+    valid_shards = split_records(valid, SHARD_COUNT)
+    for index, (train_shard, valid_shard) in enumerate(zip(train_shards, valid_shards), start=1):
+        shard_dir = f"shards/shard-{index:03d}"
+        files[f"{shard_dir}/train.jsonl"] = to_jsonl(train_shard)
+        files[f"{shard_dir}/valid.jsonl"] = to_jsonl(valid_shard)
+
+    return files
 
 
 def build_chat_records() -> list[dict[str, Any]]:
@@ -313,6 +324,13 @@ def to_jsonl(records: list[dict[str, Any]]) -> str:
     return "".join(json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n" for record in records)
 
 
+def split_records(records: list[dict[str, Any]], shard_count: int) -> list[list[dict[str, Any]]]:
+    shards = [[] for _ in range(shard_count)]
+    for index, record in enumerate(records):
+        shards[index % shard_count].append(record)
+    return shards
+
+
 def validate_files(output_dir: Path) -> None:
     chat_prompts: set[str] = set()
     counts = {}
@@ -335,10 +353,32 @@ def validate_files(output_dir: Path) -> None:
     for index, record in enumerate(eval_records, start=1):
         validate_eval_record(output_dir / "eval.jsonl", index, record, chat_prompts)
 
+    shard_train_prompts: set[str] = set()
+    for shard_index in range(1, SHARD_COUNT + 1):
+        shard_dir = output_dir / "shards" / f"shard-{shard_index:03d}"
+        shard_train = read_jsonl(shard_dir / "train.jsonl")
+        shard_valid = read_jsonl(shard_dir / "valid.jsonl")
+        if not shard_train:
+            raise ValueError(f"{shard_dir}/train.jsonl has no records")
+        if not shard_valid:
+            raise ValueError(f"{shard_dir}/valid.jsonl has no records")
+        for path, records in [(shard_dir / "train.jsonl", shard_train), (shard_dir / "valid.jsonl", shard_valid)]:
+            for record_index, record in enumerate(records, start=1):
+                validate_chat_record(path, record_index, record)
+        for record in shard_train:
+            prompt = record["messages"][1]["content"]
+            if prompt in shard_train_prompts:
+                raise ValueError(f"duplicate train prompt across shards: {prompt}")
+            shard_train_prompts.add(prompt)
+
+    train_prompt_count = len(read_jsonl(output_dir / "train.jsonl"))
+    if len(shard_train_prompts) != train_prompt_count:
+        raise ValueError(f"shards cover {len(shard_train_prompts)} train prompts, expected {train_prompt_count}")
+
     print(
         "validated "
         + ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
-        + f", eval.jsonl={len(eval_records)}"
+        + f", eval.jsonl={len(eval_records)}, shards={SHARD_COUNT}"
     )
 
 

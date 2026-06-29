@@ -85,6 +85,11 @@ marshall/
         valid.jsonl
         test.jsonl
         eval.jsonl
+        shards/
+          shard-001/
+          shard-002/
+          shard-003/
+          shard-004/
   docs/
     architecture.md
     p2p.md
@@ -112,6 +117,7 @@ It proves:
 - `train_adapter` runs a tiny MLX-LM LoRA job against `examples/datasets/marshall-instructions` and emits a `lora_adapter` artifact manifest.
 - `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes `eval.json` metrics.
+- `MARSHALL_JOB_COUNT` lets the control CLI create multiple jobs in one run; `train_adapter` uses dataset shards for multi-worker claims.
 
 ## CLI Runtime
 
@@ -121,6 +127,7 @@ Start a control peer with a Redis-backed coordinator:
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 \
 MARSHALL_CONTROL_LISTEN=/ip4/0.0.0.0/tcp/4001 \
 MARSHALL_JOB_TYPE=train_adapter \
+MARSHALL_JOB_COUNT=2 \
 npm run control:start
 ```
 

@@ -37,6 +37,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/node.ts` creates TCP + Noise + Yamux libp2p nodes with optional bootstrap and mDNS discovery.
 - `src/identity.ts` persists Ed25519 private keys on disk.
 - `src/control-cli.ts` starts a long-running configurable libp2p control peer.
+- `src/control-cli.ts` supports `MARSHALL_JOB_COUNT` / `--job-count`; multi-job adapter runs use deterministic dataset shard jobs.
 - `src/worker-cli.ts` starts a one-job worker that registers, claims, runs, publishes an artifact, and exits.
 - `src/jobs.ts` defines local `train_toy_model`, `train_mlx_smoke`, and `train_adapter` job builders.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
@@ -51,10 +52,10 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes eval metrics.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
-- `examples/datasets/marshall-instructions/{train,valid,test,eval}.jsonl` is the tiny chat/eval dataset for Marshall coordinator-event summaries.
+- `examples/datasets/marshall-instructions/{train,valid,test,eval}.jsonl` plus `shards/shard-*/{train,valid}.jsonl` is the tiny chat/eval dataset for Marshall coordinator-event summaries and multi-worker adapter claims.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, and ACK payloads.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
-- `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, and verifies artifact manifest publication.
+- `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers two workers claiming independent jobs concurrently.
 - `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, job claims, statuses, artifacts, and append-only events in Redis.

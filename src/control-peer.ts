@@ -117,7 +117,11 @@ export class ControlPeer {
 
   private async handleJobClaim(stream: Stream): Promise<void> {
     const claim = JobClaimSchema.parse(await readJson(stream));
-    const job = this.jobs.find((candidate) => candidate.job_type === claim.job_type && candidate.backend === claim.backend);
+    const job = this.jobs.find((candidate) =>
+      candidate.job_type === claim.job_type
+      && candidate.backend === claim.backend
+      && !this.state.assignedJobs.has(candidate.job_id),
+    );
 
     let response: JobClaimResponse = job
       ? { accepted: true, job }

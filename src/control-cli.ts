@@ -1,20 +1,19 @@
 import { ControlPeer } from "./control-peer.js";
-import { createTrainingJob } from "./jobs.js";
+import { createTrainingJobs } from "./jobs.js";
 import type { TrainingJob } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
 const jobType = jobTypeArg(args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? "train_toy_model");
+const jobCount = numberArg(args["job-count"] ?? process.env.MARSHALL_JOB_COUNT, 1);
 const control = await ControlPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_CONTROL_KEY ?? ".marshall/control.key",
   listen: splitList(args.listen ?? process.env.MARSHALL_CONTROL_LISTEN ?? "/ip4/0.0.0.0/tcp/4001"),
   coordinatorUrl: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL,
-  jobs: [
-    createTrainingJob(jobType, {
-      jobId: args["job-id"] ?? process.env.MARSHALL_JOB_ID,
-      runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID,
-      roundId: args["round-id"] ?? process.env.MARSHALL_ROUND_ID,
-    }),
-  ],
+  jobs: createTrainingJobs(jobType, jobCount, {
+    jobId: args["job-id"] ?? process.env.MARSHALL_JOB_ID,
+    runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID,
+    roundId: args["round-id"] ?? process.env.MARSHALL_ROUND_ID,
+  }),
 });
 
 console.log(JSON.stringify({
@@ -22,6 +21,7 @@ console.log(JSON.stringify({
   peer_id: control.peerId,
   addrs: control.multiaddrs.map((addr) => addr.toString()),
   job_type: jobType,
+  job_count: jobCount,
   coordinator_url: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL ?? null,
 }, null, 2));
 
@@ -57,6 +57,17 @@ function jobTypeArg(value: string): TrainingJob["job_type"] {
     return value;
   }
   throw new Error(`unsupported CLI job type: ${value}`);
+}
+
+function numberArg(value: string | undefined, fallback: number): number {
+  if (value == null) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`invalid positive integer: ${value}`);
+  }
+  return parsed;
 }
 
 async function waitForShutdown(onShutdown: () => Promise<void>): Promise<void> {
