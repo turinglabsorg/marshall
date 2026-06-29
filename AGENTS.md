@@ -16,7 +16,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - Node.js 22+ runtime for current js-libp2p dependencies.
 - TypeScript libp2p for the p2p substrate.
 - Python stdlib toy training runner for lightweight end-to-end smoke tests.
-- Python MLX runner for Apple Silicon LoRA jobs.
+- Python MLX-LM runner for Apple Silicon LoRA jobs.
 - Go for the native coordinator daemon.
 - Redis for coordinator state and append-only event logs.
 - Local filesystem artifacts for MVP storage.
@@ -38,16 +38,20 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/identity.ts` persists Ed25519 private keys on disk.
 - `src/control-cli.ts` starts a long-running configurable libp2p control peer.
 - `src/worker-cli.ts` starts a one-job worker that registers, claims, runs, publishes an artifact, and exits.
-- `src/jobs.ts` defines local `train_toy_model` and `train_mlx_smoke` job builders.
+- `src/jobs.ts` defines local `train_toy_model`, `train_mlx_smoke`, and `train_adapter` job builders.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
+- `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
+- `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, and validates adapter files.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
-- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, and ACK payloads.
+- `examples/datasets/marshall-instructions/{train,valid}.jsonl` is the tiny chat dataset for Marshall coordinator-event summaries.
+- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, and ACK payloads.
+- `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, and verifies artifact manifest publication.
 - `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
@@ -65,6 +69,7 @@ npm run typecheck
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora
 go test ./...
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
@@ -72,6 +77,7 @@ MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
 
 The p2p integration test opens real TCP sockets on `127.0.0.1`, so sandboxed agents may need escalated execution for test/runtime commands.
 The MLX smoke test requires Apple Silicon plus an MLX-capable Python environment.
+The MLX LoRA test requires Apple Silicon plus `mlx-lm` installed in the worker Python environment.
 Redis coordinator tests require a real Redis instance; use `redis:7-alpine` for local integration testing.
 The coordinator bridge test requires a running Go coordinator backed by Redis.
 
