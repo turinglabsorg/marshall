@@ -91,6 +91,10 @@ async function runClaimedJob(job: TrainingJob) {
       learningRate: numberArg(args["learning-rate"] ?? process.env.MARSHALL_LEARNING_RATE, 1e-5),
       numLayers: numberArg(args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS, 4),
       maxSeqLength: numberArg(args["max-seq-length"] ?? process.env.MARSHALL_MAX_SEQ_LENGTH, 512),
+      stepsPerReport: numberArg(args["steps-per-report"] ?? process.env.MARSHALL_STEPS_PER_REPORT, 10),
+      stepsPerEval: numberArg(args["steps-per-eval"] ?? process.env.MARSHALL_STEPS_PER_EVAL, 20),
+      valBatches: numberArg(args["val-batches"] ?? process.env.MARSHALL_VAL_BATCHES, -1),
+      seed: numberArg(args.seed ?? process.env.MARSHALL_SEED, 42),
       maskPrompt: args["no-mask-prompt"] === "true"
         ? false
         : booleanArg(args["mask-prompt"] ?? process.env.MARSHALL_MASK_PROMPT, true),

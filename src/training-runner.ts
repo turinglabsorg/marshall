@@ -55,6 +55,10 @@ export interface MlxLoraRunnerOptions {
   learningRate?: number;
   numLayers?: number;
   maxSeqLength?: number;
+  stepsPerReport?: number;
+  stepsPerEval?: number;
+  valBatches?: number;
+  seed?: number;
   maskPrompt?: boolean;
   gradCheckpoint?: boolean;
 }
@@ -126,6 +130,10 @@ export async function runMlxLoraTraining(job: TrainingJob, options: MlxLoraRunne
   const learningRate = options.learningRate ?? 1e-5;
   const numLayers = options.numLayers ?? 4;
   const maxSeqLength = options.maxSeqLength ?? 512;
+  const stepsPerReport = options.stepsPerReport ?? 10;
+  const stepsPerEval = options.stepsPerEval ?? 20;
+  const valBatches = options.valBatches ?? -1;
+  const seed = options.seed ?? 42;
   const maskPrompt = options.maskPrompt ?? true;
   const gradCheckpoint = options.gradCheckpoint ?? false;
 
@@ -155,6 +163,14 @@ export async function runMlxLoraTraining(job: TrainingJob, options: MlxLoraRunne
     String(numLayers),
     "--max-seq-length",
     String(maxSeqLength),
+    "--steps-per-report",
+    String(stepsPerReport),
+    "--steps-per-eval",
+    String(stepsPerEval),
+    "--val-batches",
+    String(valBatches),
+    "--seed",
+    String(seed),
     maskPrompt ? "--mask-prompt" : "--no-mask-prompt",
   ];
   if (gradCheckpoint) {
@@ -174,6 +190,10 @@ export async function runMlxLoraTraining(job: TrainingJob, options: MlxLoraRunne
     learningRate,
     numLayers,
     maxSeqLength,
+    stepsPerReport,
+    stepsPerEval,
+    valBatches,
+    seed,
     maskPrompt,
     gradCheckpoint,
   }));

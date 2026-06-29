@@ -48,8 +48,8 @@ export function createAdapterTrainingJob(options: TrainingJobOptions = {}): Trai
     dataset_shard: {
       id: "marshall_instructions_local",
       uri: "file://examples/datasets/marshall-instructions",
-      token_estimate: 8_000,
-      hash: "sha256:633b1de13fa093d1ea4b263f9a356835a764d0532ec900ee701bbc764ea54e88",
+      token_estimate: 70_000,
+      hash: "sha256:49dc3107aaa27c18390de86fcfbc7b4ee633bbbcd0f2051e9c6f0bca4d7d543f",
     },
   });
 }

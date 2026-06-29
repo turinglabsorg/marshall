@@ -47,9 +47,11 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
-- `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, and validates adapter files.
+- `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
+- `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
+- `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes eval metrics.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
-- `examples/datasets/marshall-instructions/{train,valid}.jsonl` is the tiny chat dataset for Marshall coordinator-event summaries.
+- `examples/datasets/marshall-instructions/{train,valid,test,eval}.jsonl` is the tiny chat/eval dataset for Marshall coordinator-event summaries.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, and ACK payloads.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, and verifies artifact manifest publication.
@@ -66,10 +68,12 @@ Use Node.js 22+.
 ```bash
 nvm use
 npm run typecheck
+npm run dataset:marshall:check
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora:eval
 go test ./...
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
@@ -77,7 +81,7 @@ MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
 
 The p2p integration test opens real TCP sockets on `127.0.0.1`, so sandboxed agents may need escalated execution for test/runtime commands.
 The MLX smoke test requires Apple Silicon plus an MLX-capable Python environment.
-The MLX LoRA test requires Apple Silicon plus `mlx-lm` installed in the worker Python environment.
+The MLX LoRA train/eval tests require Apple Silicon plus `mlx-lm` installed in the worker Python environment.
 Redis coordinator tests require a real Redis instance; use `redis:7-alpine` for local integration testing.
 The coordinator bridge test requires a running Go coordinator backed by Redis.
 

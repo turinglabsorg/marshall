@@ -17,7 +17,8 @@ from typing import Any
 import mlx.core as mx
 
 
-TRAIN_LOSS_RE = re.compile(r"train(?:ing)?\s+loss[:= ]+([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
+TRAIN_LOSS_RE = re.compile(r"train\s+loss\s+([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
+VAL_LOSS_RE = re.compile(r"val\s+loss\s+([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 
 
 def main() -> None:
@@ -51,6 +52,14 @@ def main() -> None:
         str(args.num_layers),
         "--max-seq-length",
         str(args.max_seq_length),
+        "--steps-per-report",
+        str(args.steps_per_report),
+        "--steps-per-eval",
+        str(args.steps_per_eval),
+        "--val-batches",
+        str(args.val_batches),
+        "--seed",
+        str(args.seed),
     ]
     if args.mask_prompt:
         command.append("--mask-prompt")
@@ -83,7 +92,9 @@ def main() -> None:
     if not artifact_files:
         raise RuntimeError(f"mlx_lm.lora produced no adapter files in {adapter_dir}")
 
-    losses = parse_train_losses(completed.stdout + "\n" + completed.stderr)
+    output = completed.stdout + "\n" + completed.stderr
+    train_losses = parse_losses(TRAIN_LOSS_RE, output)
+    val_losses = parse_losses(VAL_LOSS_RE, output)
     metrics: dict[str, Any] = {
         "job_id": args.job_id,
         "run_id": args.run_id,
@@ -100,16 +111,24 @@ def main() -> None:
         "learning_rate": args.learning_rate,
         "num_layers": args.num_layers,
         "max_seq_length": args.max_seq_length,
+        "steps_per_report": args.steps_per_report,
+        "steps_per_eval": args.steps_per_eval,
+        "val_batches": args.val_batches,
+        "seed": args.seed,
         "mask_prompt": args.mask_prompt,
         "grad_checkpoint": args.grad_checkpoint,
         "artifact_files": artifact_files,
         "stdout_log": str(stdout_path),
         "stderr_log": str(stderr_path),
     }
-    if losses:
-        metrics["train_loss_start"] = losses[0]
-        metrics["train_loss_end"] = losses[-1]
-        metrics["train_loss_delta"] = losses[0] - losses[-1]
+    if train_losses:
+        metrics["train_loss_start"] = train_losses[0]
+        metrics["train_loss_end"] = train_losses[-1]
+        metrics["train_loss_delta"] = train_losses[0] - train_losses[-1]
+    if val_losses:
+        metrics["val_loss_start"] = val_losses[0]
+        metrics["val_loss_end"] = val_losses[-1]
+        metrics["val_loss_delta"] = val_losses[0] - val_losses[-1]
 
     (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf8")
     print(json.dumps(metrics, indent=2))
@@ -128,6 +147,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--num-layers", type=int, default=4)
     parser.add_argument("--max-seq-length", type=int, default=512)
+    parser.add_argument("--steps-per-report", type=int, default=10)
+    parser.add_argument("--steps-per-eval", type=int, default=20)
+    parser.add_argument("--val-batches", type=int, default=-1)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--mask-prompt", action="store_true", default=True)
     parser.add_argument("--no-mask-prompt", action="store_false", dest="mask_prompt")
     parser.add_argument("--grad-checkpoint", action="store_true")
@@ -139,7 +162,7 @@ def lora_command() -> list[str]:
     if executable:
         return [executable]
 
-    venv_executable = Path(sys.executable).resolve().parent / "mlx_lm.lora"
+    venv_executable = Path(sys.executable).parent / "mlx_lm.lora"
     if venv_executable.exists():
         return [str(venv_executable)]
 
@@ -187,8 +210,8 @@ def sha256_file(path: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def parse_train_losses(output: str) -> list[float]:
-    return [float(match.group(1)) for match in TRAIN_LOSS_RE.finditer(output)]
+def parse_losses(pattern: re.Pattern[str], output: str) -> list[float]:
+    return [float(match.group(1)) for match in pattern.finditer(output)]
 
 
 def tail(value: str, lines: int = 30) -> str:

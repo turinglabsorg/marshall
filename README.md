@@ -83,6 +83,8 @@ marshall/
       marshall-instructions/
         train.jsonl
         valid.jsonl
+        test.jsonl
+        eval.jsonl
   docs/
     architecture.md
     p2p.md
@@ -108,6 +110,8 @@ It proves:
 - `training/mlx_linear_smoke.py` verifies that a remote Apple Silicon worker can run a tiny MLX gradient-descent job on GPU.
 - `train_mlx_smoke` can be assigned through the p2p lifecycle and emits an `mlx_smoke_result` artifact manifest.
 - `train_adapter` runs a tiny MLX-LM LoRA job against `examples/datasets/marshall-instructions` and emits a `lora_adapter` artifact manifest.
+- `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
+- `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes `eval.json` metrics.
 
 ## CLI Runtime
 
@@ -142,10 +146,12 @@ Use Node.js 22 or newer.
 nvm use
 npm install
 npm run build
+npm run dataset:marshall:check
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora:eval
 go test ./...
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
