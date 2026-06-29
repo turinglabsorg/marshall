@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -36,6 +36,41 @@ describe("dataset cache", () => {
       });
       expect(second.cacheHit).toBe(true);
       expect(second.path).toBe(first.path);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("hashes a cached single eval JSONL like the source file", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "marshall-eval-cache-test-"));
+    try {
+      const sourcePath = "examples/datasets/marshall-instructions/eval.jsonl";
+      const cachePath = join(tempDir, "cache");
+      await mkdir(cachePath, { recursive: true });
+      await cp(sourcePath, join(cachePath, "eval.jsonl"));
+
+      expect(await hashDatasetPath(cachePath)).toBe(await hashDatasetPath(sourcePath));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prepares a single eval JSONL as a file path", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "marshall-eval-prepare-test-"));
+    try {
+      const sourcePath = "examples/datasets/marshall-instructions/eval.jsonl";
+      const prepared = await prepareDatasetShard({
+        id: "marshall_eval_file",
+        uri: `file://${sourcePath}`,
+        token_estimate: 100,
+        hash: await hashDatasetPath(sourcePath),
+      }, {
+        projectRoot: process.cwd(),
+        cacheRoot: join(tempDir, "cache"),
+      });
+
+      expect(prepared.path.endsWith("eval.jsonl")).toBe(true);
+      expect(await hashDatasetPath(prepared.path)).toBe(prepared.hash);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

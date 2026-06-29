@@ -24,14 +24,18 @@ try {
   if (!claim.accepted || claim.job == null) {
     throw new Error("demo worker did not receive a job");
   }
+  if (claim.job.job_type !== "train_toy_model") {
+    throw new Error(`demo worker received unexpected job type ${claim.job.job_type}`);
+  }
+  const job = claim.job;
 
   await worker.reportJobStatus({
-    job_id: claim.job.job_id,
+    job_id: job.job_id,
     status: "running",
     message: "toy training runner started",
   });
 
-  const training = await runToyTraining(claim.job, {
+  const training = await runToyTraining(job, {
     outputRoot: join(tempDir, "artifacts"),
     epochs: 25,
     learningRate: 0.35,
@@ -39,7 +43,7 @@ try {
 
   await worker.publishArtifactManifest(training.manifest);
   await worker.reportJobStatus({
-    job_id: claim.job.job_id,
+    job_id: job.job_id,
     status: "completed",
     message: `toy training completed with loss ${training.metrics.loss_end.toFixed(4)}`,
   });
@@ -47,7 +51,7 @@ try {
   console.log(JSON.stringify({
     controlPeerId: control.peerId,
     controlAddr: control.multiaddrs[0].toString(),
-    jobType: claim.job.job_type,
+    jobType: job.job_type,
     examples: training.metrics.examples,
     tokens: training.metrics.tokens,
     lossStart: training.metrics.loss_start,

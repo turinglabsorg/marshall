@@ -51,14 +51,18 @@ describe("Marshall p2p substrate", () => {
     const claim = await worker.claimToyTrainingJob(2_000);
     expect(claim.accepted).toBe(true);
     expect(claim.job?.job_type).toBe("train_toy_model");
+    if (claim.job == null || claim.job.job_type !== "train_toy_model") {
+      throw new Error("expected train_toy_model job");
+    }
+    const job = claim.job;
 
     await worker.reportJobStatus({
-      job_id: claim.job!.job_id,
+      job_id: job.job_id,
       status: "running",
       message: "toy training runner started",
     });
 
-    const training = await runToyTraining(claim.job!, {
+    const training = await runToyTraining(job, {
       outputRoot: join(tempDir, "artifacts"),
       datasetCacheRoot: join(tempDir, "dataset-cache"),
       epochs: 25,
@@ -74,20 +78,20 @@ describe("Marshall p2p substrate", () => {
     await worker.publishArtifactManifest(training.manifest);
 
     await worker.reportJobStatus({
-      job_id: claim.job!.job_id,
+      job_id: job.job_id,
       status: "completed",
       message: "toy training runner completed",
     });
 
     expect(control.state.registrations).toHaveLength(1);
     expect(control.state.heartbeats).toHaveLength(1);
-    expect(control.state.assignedJobs.get(claim.job!.job_id)).toBe("mac-worker-test-01");
+    expect(control.state.assignedJobs.get(job.job_id)).toBe("mac-worker-test-01");
     expect(control.state.statuses.map((status) => status.status)).toEqual(["running", "completed"]);
     expect(control.state.manifests).toHaveLength(1);
     expect(control.state.manifests[0]).toMatchObject({
       peer_id: worker.peerId,
       worker_id: "mac-worker-test-01",
-      job_id: claim.job!.job_id,
+      job_id: job.job_id,
       artifact_type: "toy_language_model",
       artifact_hash: training.manifest.artifact_hash,
       metrics_uri: training.manifest.metrics_uri,
@@ -124,13 +128,17 @@ describe("Marshall p2p substrate", () => {
     expect(new Set(claims.map((claim) => claim.job!.job_id)).size).toBe(4);
 
     const trainingRuns = await Promise.all(claims.map(async (claim, index) => {
+      if (claim.job == null || claim.job.job_type !== "train_toy_model") {
+        throw new Error("expected train_toy_model job");
+      }
+      const job = claim.job;
       const currentWorker = workers[index];
       await currentWorker.reportJobStatus({
-        job_id: claim.job!.job_id,
+        job_id: job.job_id,
         status: "running",
         message: "toy training runner started",
       });
-      const training = await runToyTraining(claim.job!, {
+      const training = await runToyTraining(job, {
         outputRoot: join(tempDir, "artifacts"),
         datasetCacheRoot: join(tempDir, "dataset-cache"),
         epochs: 15,
@@ -138,7 +146,7 @@ describe("Marshall p2p substrate", () => {
       });
       await currentWorker.publishArtifactManifest(training.manifest);
       await currentWorker.reportJobStatus({
-        job_id: claim.job!.job_id,
+        job_id: job.job_id,
         status: "completed",
         message: "toy training runner completed",
       });

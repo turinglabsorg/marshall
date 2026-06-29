@@ -95,6 +95,9 @@ External datasets must stay out of the repo until license and distribution polic
 ## Development Rules
 
 - Keep all docs in English.
+- Build and test Marshall as a product, not as manual orchestration. Do not replace missing product behavior with shell loops, ad hoc scripts, or the agent acting as the coordinator.
+- E2E validation must go through Marshall contracts: coordinator creates jobs, workers claim and run them, artifacts are published, evaluation jobs are scheduled, leaderboard/top-K is derived from artifacts, and only then merge/selection runs.
+- Manual shell commands are allowed only to start/stop services, inspect state, or run tests. If a repeated/manual operational step is needed to prove the system, implement it as Marshall code or documented CLI behavior first.
 - Do not add blockchain, token, payment, or incentive code before validation and reputation work.
 - Do not build synchronous distributed training.
 - Do not assume all workers are equally capable.

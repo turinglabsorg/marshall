@@ -3,7 +3,7 @@ import type {
   ArtifactManifest,
   JobClaim,
   JobStatus,
-  TrainingJob,
+  MarshallJob,
   WorkerRegistration,
 } from "./schemas.js";
 
@@ -31,7 +31,7 @@ export class CoordinatorClient {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
   }
 
-  async initializeJobs(jobs: TrainingJob[]): Promise<void> {
+  async initializeJobs(jobs: MarshallJob[]): Promise<void> {
     const runIds = new Set<string>();
 
     for (const job of jobs) {
@@ -48,7 +48,7 @@ export class CoordinatorClient {
         run_id: job.run_id,
         job_type: job.job_type,
         backend: job.backend,
-        dataset_uri: job.dataset_shard.uri,
+        dataset_uri: job.job_type === "evaluate_adapter" ? job.eval_shard.uri : job.dataset_shard.uri,
       }, EventSchema);
     }
   }

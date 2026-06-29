@@ -1,21 +1,25 @@
+import { readFileSync } from "node:fs";
 import { ControlPeer } from "./control-peer.js";
 import { createTrainingJobs, type AdapterDatasetProfile } from "./jobs.js";
-import type { TrainingJob } from "./schemas.js";
+import { MarshallJobSchema, type JobType, type TrainingJob } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
 const jobType = jobTypeArg(args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? "train_toy_model");
 const jobCount = numberArg(args["job-count"] ?? process.env.MARSHALL_JOB_COUNT, 1);
-const control = await ControlPeer.create({
-  privateKeyPath: args.key ?? process.env.MARSHALL_CONTROL_KEY ?? ".marshall/control.key",
-  listen: splitList(args.listen ?? process.env.MARSHALL_CONTROL_LISTEN ?? "/ip4/0.0.0.0/tcp/4001"),
-  coordinatorUrl: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL,
-  jobs: createTrainingJobs(jobType, jobCount, {
+const jobs = args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE
+  ? readJobsFile(args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE!)
+  : createTrainingJobs(trainingJobTypeArg(jobType), jobCount, {
     jobId: args["job-id"] ?? process.env.MARSHALL_JOB_ID,
     runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID,
     roundId: args["round-id"] ?? process.env.MARSHALL_ROUND_ID,
     adapterDataset: adapterDatasetArg(args["adapter-dataset"] ?? process.env.MARSHALL_ADAPTER_DATASET),
     adapterDatasetDir: args["adapter-dataset-dir"] ?? process.env.MARSHALL_ADAPTER_DATASET_DIR,
-  }),
+  });
+const control = await ControlPeer.create({
+  privateKeyPath: args.key ?? process.env.MARSHALL_CONTROL_KEY ?? ".marshall/control.key",
+  listen: splitList(args.listen ?? process.env.MARSHALL_CONTROL_LISTEN ?? "/ip4/0.0.0.0/tcp/4001"),
+  coordinatorUrl: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL,
+  jobs,
 });
 
 console.log(JSON.stringify({
@@ -23,7 +27,8 @@ console.log(JSON.stringify({
   peer_id: control.peerId,
   addrs: control.multiaddrs.map((addr) => addr.toString()),
   job_type: jobType,
-  job_count: jobCount,
+  job_count: jobs.length,
+  jobs_file: args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE ?? null,
   adapter_dataset: args["adapter-dataset"] ?? process.env.MARSHALL_ADAPTER_DATASET ?? "marshall_instructions",
   coordinator_url: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL ?? null,
 }, null, 2));
@@ -55,11 +60,31 @@ function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function jobTypeArg(value: string): TrainingJob["job_type"] {
-  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter") {
+function jobTypeArg(value: string): JobType {
+  if (
+    value === "train_toy_model"
+    || value === "train_mlx_smoke"
+    || value === "train_adapter"
+    || value === "evaluate_adapter"
+  ) {
     return value;
   }
   throw new Error(`unsupported CLI job type: ${value}`);
+}
+
+function trainingJobTypeArg(value: JobType): TrainingJob["job_type"] {
+  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter") {
+    return value;
+  }
+  throw new Error(`${value} requires --jobs-file or MARSHALL_JOBS_FILE`);
+}
+
+function readJobsFile(path: string) {
+  const raw = JSON.parse(readFileSync(path, "utf8"));
+  if (!Array.isArray(raw)) {
+    throw new Error(`${path} must contain a JSON array of Marshall jobs`);
+  }
+  return raw.map((job) => MarshallJobSchema.parse(job));
 }
 
 function adapterDatasetArg(value: string | undefined): AdapterDatasetProfile | undefined {

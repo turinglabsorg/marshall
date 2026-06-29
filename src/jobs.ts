@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { TrainingJobSchema, type Backend, type TrainingJob } from "./schemas.js";
+import { TrainingJobSchema, type Backend, type JobType, type TrainingJob } from "./schemas.js";
 
 export type AdapterDatasetProfile = "marshall_instructions" | "ag_news";
 
@@ -173,8 +173,8 @@ export function createAdapterTrainingShardJobs(count: number, options: TrainingJ
   });
 }
 
-export function defaultBackendForJob(jobType: TrainingJob["job_type"]): Backend {
-  return jobType === "train_mlx_smoke" || jobType === "train_adapter" ? "mlx" : "cpu";
+export function defaultBackendForJob(jobType: JobType): Backend {
+  return jobType === "train_mlx_smoke" || jobType === "train_adapter" || jobType === "evaluate_adapter" ? "mlx" : "cpu";
 }
 
 export function createTrainingJobs(

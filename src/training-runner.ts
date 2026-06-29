@@ -2,13 +2,16 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { prepareDatasetShard } from "./dataset-cache.js";
 import {
+  AdapterEvaluationMetricsSchema,
   MlxLoraMetricsSchema,
   MlxSmokeMetricsSchema,
   ToyTrainingMetricsSchema,
   TrainingArtifactManifestSchema,
+  type AdapterEvaluationJob,
+  type AdapterEvaluationMetrics,
   type MlxLoraMetrics,
   type MlxSmokeMetrics,
   type ToyTrainingMetrics,
@@ -69,6 +72,21 @@ export interface MlxLoraRunnerOptions {
 export interface MlxLoraRun {
   manifest: TrainingArtifactManifest;
   metrics: MlxLoraMetrics;
+  outputDir: string;
+  stdout: string;
+  stderr: string;
+}
+
+export interface AdapterEvaluationRunnerOptions {
+  outputRoot: string;
+  projectRoot?: string;
+  pythonBin?: string;
+  datasetCacheRoot?: string;
+}
+
+export interface AdapterEvaluationRun {
+  manifest: TrainingArtifactManifest;
+  metrics: AdapterEvaluationMetrics;
   outputDir: string;
   stdout: string;
   stderr: string;
@@ -272,6 +290,92 @@ export async function runMlxSmokeTraining(job: TrainingJob, options: MlxSmokeRun
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+export async function runAdapterEvaluation(
+  job: AdapterEvaluationJob,
+  options: AdapterEvaluationRunnerOptions,
+): Promise<AdapterEvaluationRun> {
+  const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  const preparedEval = await prepareDatasetShard(job.eval_shard, {
+    projectRoot,
+    cacheRoot: options.datasetCacheRoot,
+  });
+  const evalPath = preparedEval.path;
+  const adapterPath = resolveArtifactUri(job.adapter.artifact_uri, projectRoot);
+  const outputDir = resolve(options.outputRoot, job.job_id);
+  const scriptPath = resolve(projectRoot, "training/mlx_ag_news_eval.py");
+  const rawEvalPath = join(outputDir, "eval.json");
+  const metricsPath = join(outputDir, "metrics.json");
+
+  await mkdir(outputDir, { recursive: true });
+
+  const args = [
+    scriptPath,
+    "--eval-file",
+    evalPath,
+    "--output-dir",
+    outputDir,
+    "--model",
+    job.model,
+    "--adapter-path",
+    adapterPath,
+    "--max-examples",
+    String(job.max_examples ?? 80),
+    "--max-tokens",
+    String(job.max_tokens ?? 8),
+  ];
+  const result = await runProcess(options.pythonBin ?? "python3", args);
+  const rawMetrics = JSON.parse(await readFile(rawEvalPath, "utf8"));
+  const metrics = AdapterEvaluationMetricsSchema.parse({
+    job_id: job.job_id,
+    run_id: job.run_id,
+    round_id: job.round_id,
+    adapter_id: job.adapter.adapter_id,
+    adapter_artifact_hash: job.adapter.artifact_hash,
+    eval_shard_id: job.eval_shard.id,
+    eval_shard_hash: job.eval_shard.hash,
+    ...rawMetrics,
+  });
+  await writeFile(metricsPath, JSON.stringify(metrics, null, 2) + "\n", "utf8");
+
+  const configHash = sha256Text(JSON.stringify({
+    job_type: job.job_type,
+    backend: job.backend,
+    script: "training/mlx_ag_news_eval.py",
+    model: job.model,
+    adapter_id: job.adapter.adapter_id,
+    adapter_hash: job.adapter.artifact_hash,
+    eval_hash: job.eval_shard.hash,
+    max_examples: job.max_examples ?? 80,
+    max_tokens: job.max_tokens ?? 8,
+  }));
+  const manifest = TrainingArtifactManifestSchema.parse({
+    job_id: job.job_id,
+    artifact_type: "adapter_evaluation",
+    artifact_uri: pathToFileURL(metricsPath).toString(),
+    artifact_hash: await sha256File(metricsPath),
+    config_hash: configHash,
+    created_at: new Date().toISOString(),
+    metrics_uri: pathToFileURL(metricsPath).toString(),
+  });
+  await writeFile(join(outputDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
+
+  return {
+    manifest,
+    metrics,
+    outputDir,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+function resolveArtifactUri(uri: string, projectRoot: string): string {
+  if (uri.startsWith("file://")) {
+    const path = fileURLToPath(uri);
+    return path.startsWith("/") ? path : resolve(projectRoot, path);
+  }
+  return uri.startsWith("/") ? uri : resolve(projectRoot, uri);
 }
 
 async function runProcess(command: string, args: string[]): Promise<{ stdout: string; stderr: string }> {

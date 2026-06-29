@@ -13,7 +13,7 @@ import {
   type ArtifactManifest,
   type JobClaimResponse,
   type JobStatus,
-  type TrainingJob,
+  type MarshallJob,
   type WorkerHeartbeat,
   type WorkerRegistration,
   type WorkerRegistrationResponse,
@@ -26,7 +26,7 @@ import { readJson, writeJson } from "./wire.js";
 export interface ControlPeerOptions {
   privateKeyPath: string;
   listen?: string[];
-  jobs?: TrainingJob[];
+  jobs?: MarshallJob[];
   coordinatorUrl?: string;
 }
 
@@ -49,7 +49,7 @@ export class ControlPeer {
 
   private constructor(
     readonly node: Libp2p,
-    private readonly jobs: TrainingJob[],
+    private readonly jobs: MarshallJob[],
     private readonly coordinator?: CoordinatorClient,
   ) {}
 
@@ -196,6 +196,6 @@ export class ControlPeer {
   }
 }
 
-function defaultToyTrainingJob(): TrainingJob {
+function defaultToyTrainingJob(): MarshallJob {
   return createToyTrainingJob();
 }

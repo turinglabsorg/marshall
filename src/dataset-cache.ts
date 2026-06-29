@@ -99,6 +99,10 @@ export async function hashDatasetPath(path: string): Promise<string> {
   const fileNames = new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name));
   const names = DATASET_FILES.filter((name) => fileNames.has(name));
 
+  if (names.length === 1 && fileNames.size === 1) {
+    return hashDatasetPath(join(path, names[0]));
+  }
+
   if (names.length === 0) {
     const jsonlFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"));
     if (jsonlFiles.length === 1) {
@@ -163,7 +167,7 @@ async function trainingPathForCache(cachePath: string): Promise<string> {
   const entries = await readdir(cachePath, { withFileTypes: true });
   const fileEntries = entries.filter((entry) => entry.isFile());
   const jsonlFiles = fileEntries.filter((entry) => entry.name.endsWith(".jsonl"));
-  if (jsonlFiles.length === 1 && !fileEntries.some((entry) => DATASET_FILES.includes(entry.name as (typeof DATASET_FILES)[number]))) {
+  if (jsonlFiles.length === 1 && fileEntries.length === 1) {
     return join(cachePath, jsonlFiles[0].name);
   }
   return cachePath;
