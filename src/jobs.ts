@@ -1,9 +1,49 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { TrainingJobSchema, type Backend, type TrainingJob } from "./schemas.js";
+
+export type AdapterDatasetProfile = "marshall_instructions" | "ag_news";
 
 export interface TrainingJobOptions {
   jobId?: string;
   runId?: string;
   roundId?: string;
+  adapterDataset?: AdapterDatasetProfile;
+  adapterDatasetDir?: string;
+}
+
+interface AdapterDatasetShardDefinition {
+  id: string;
+  uri: string;
+  tokenEstimate: number;
+  hash: string;
+}
+
+interface AdapterDatasetDefinition {
+  datasetId: string;
+  datasetVersion: string;
+  schema: string;
+  license: string;
+  root: AdapterDatasetShardDefinition;
+  shards: AdapterDatasetShardDefinition[];
+}
+
+interface AdapterDatasetManifest {
+  dataset_id?: unknown;
+  version?: unknown;
+  schema?: unknown;
+  license?: unknown;
+  root_uri?: unknown;
+  root_hash?: unknown;
+  token_estimate?: unknown;
+  shards?: unknown;
+}
+
+interface AdapterDatasetManifestShard {
+  shard_id?: unknown;
+  uri?: unknown;
+  sha256?: unknown;
+  token_estimate?: unknown;
 }
 
 const MARSHALL_INSTRUCTIONS_DATASET_ID = "marshall-ops-synthetic-v1";
@@ -11,7 +51,7 @@ const MARSHALL_INSTRUCTIONS_DATASET_VERSION = "2026-06-29";
 const MARSHALL_INSTRUCTIONS_SCHEMA = "mlx-chat-jsonl";
 const MARSHALL_INSTRUCTIONS_LICENSE = "MIT";
 const MARSHALL_INSTRUCTIONS_DATASET_HASH = "sha256:420fb2db6fafc0eafaf88a205318b1dd7662579cea030cbdc5b55c1a471e4cc5";
-const MARSHALL_INSTRUCTIONS_SHARDS = [
+const MARSHALL_INSTRUCTIONS_SHARDS: AdapterDatasetShardDefinition[] = [
   {
     id: "marshall_instructions_shard_001",
     uri: "file://examples/datasets/marshall-instructions/shards/shard-001",
@@ -37,6 +77,20 @@ const MARSHALL_INSTRUCTIONS_SHARDS = [
     hash: "sha256:d4ad8da0d4956b41d82fe52c47672f2720d3ac68538505469eacff01e3ac13be",
   },
 ] as const;
+
+const MARSHALL_INSTRUCTIONS_DATASET: AdapterDatasetDefinition = {
+  datasetId: MARSHALL_INSTRUCTIONS_DATASET_ID,
+  datasetVersion: MARSHALL_INSTRUCTIONS_DATASET_VERSION,
+  schema: MARSHALL_INSTRUCTIONS_SCHEMA,
+  license: MARSHALL_INSTRUCTIONS_LICENSE,
+  root: {
+    id: "marshall_instructions_local",
+    uri: "file://examples/datasets/marshall-instructions",
+    tokenEstimate: 70_000,
+    hash: MARSHALL_INSTRUCTIONS_DATASET_HASH,
+  },
+  shards: MARSHALL_INSTRUCTIONS_SHARDS,
+};
 
 export function createToyTrainingJob(options: TrainingJobOptions = {}): TrainingJob {
   return TrainingJobSchema.parse({
@@ -71,6 +125,7 @@ export function createMlxSmokeJob(options: TrainingJobOptions = {}): TrainingJob
 }
 
 export function createAdapterTrainingJob(options: TrainingJobOptions = {}): TrainingJob {
+  const dataset = adapterDatasetDefinition(options);
   return TrainingJobSchema.parse({
     job_id: options.jobId ?? "job_adapter_001",
     run_id: options.runId ?? "run_adapter_001",
@@ -78,24 +133,25 @@ export function createAdapterTrainingJob(options: TrainingJobOptions = {}): Trai
     job_type: "train_adapter",
     backend: "mlx",
     dataset_shard: {
-      dataset_id: MARSHALL_INSTRUCTIONS_DATASET_ID,
-      dataset_version: MARSHALL_INSTRUCTIONS_DATASET_VERSION,
-      schema: MARSHALL_INSTRUCTIONS_SCHEMA,
-      license: MARSHALL_INSTRUCTIONS_LICENSE,
-      id: "marshall_instructions_local",
-      uri: "file://examples/datasets/marshall-instructions",
-      token_estimate: 70_000,
-      hash: MARSHALL_INSTRUCTIONS_DATASET_HASH,
+      dataset_id: dataset.datasetId,
+      dataset_version: dataset.datasetVersion,
+      schema: dataset.schema,
+      license: dataset.license,
+      id: dataset.root.id,
+      uri: dataset.root.uri,
+      token_estimate: dataset.root.tokenEstimate,
+      hash: dataset.root.hash,
     },
   });
 }
 
 export function createAdapterTrainingShardJobs(count: number, options: TrainingJobOptions = {}): TrainingJob[] {
-  if (!Number.isInteger(count) || count < 1 || count > MARSHALL_INSTRUCTIONS_SHARDS.length) {
-    throw new Error(`adapter shard job count must be between 1 and ${MARSHALL_INSTRUCTIONS_SHARDS.length}`);
+  const dataset = adapterDatasetDefinition(options);
+  if (!Number.isInteger(count) || count < 1 || count > dataset.shards.length) {
+    throw new Error(`adapter shard job count must be between 1 and ${dataset.shards.length}`);
   }
 
-  return MARSHALL_INSTRUCTIONS_SHARDS.slice(0, count).map((shard, index) => {
+  return dataset.shards.slice(0, count).map((shard, index) => {
     const suffix = String(index + 1).padStart(3, "0");
     return TrainingJobSchema.parse({
       job_id: options.jobId == null ? `job_adapter_shard_${suffix}` : `${options.jobId}_shard_${suffix}`,
@@ -104,10 +160,10 @@ export function createAdapterTrainingShardJobs(count: number, options: TrainingJ
       job_type: "train_adapter",
       backend: "mlx",
       dataset_shard: {
-        dataset_id: MARSHALL_INSTRUCTIONS_DATASET_ID,
-        dataset_version: MARSHALL_INSTRUCTIONS_DATASET_VERSION,
-        schema: MARSHALL_INSTRUCTIONS_SCHEMA,
-        license: MARSHALL_INSTRUCTIONS_LICENSE,
+        dataset_id: dataset.datasetId,
+        dataset_version: dataset.datasetVersion,
+        schema: dataset.schema,
+        license: dataset.license,
         id: shard.id,
         uri: shard.uri,
         token_estimate: shard.tokenEstimate,
@@ -158,4 +214,60 @@ export function createTrainingJob(jobType: TrainingJob["job_type"], options: Tra
     return createToyTrainingJob(options);
   }
   throw new Error(`no default local job builder for ${jobType}`);
+}
+
+function adapterDatasetDefinition(options: TrainingJobOptions): AdapterDatasetDefinition {
+  if (options.adapterDataset === "ag_news") {
+    return readAdapterDatasetManifest(options.adapterDatasetDir ?? ".marshall/datasets/ag-news");
+  }
+  return MARSHALL_INSTRUCTIONS_DATASET;
+}
+
+function readAdapterDatasetManifest(datasetDir: string): AdapterDatasetDefinition {
+  const manifestPath = join(datasetDir, "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as AdapterDatasetManifest;
+  const shards = arrayValue(manifest.shards, `${manifestPath}: shards`).map((item, index) => {
+    const shard = item as AdapterDatasetManifestShard;
+    return {
+      id: stringValue(shard.shard_id, `${manifestPath}: shards[${index}].shard_id`),
+      uri: stringValue(shard.uri, `${manifestPath}: shards[${index}].uri`),
+      tokenEstimate: numberValue(shard.token_estimate, `${manifestPath}: shards[${index}].token_estimate`),
+      hash: stringValue(shard.sha256, `${manifestPath}: shards[${index}].sha256`),
+    };
+  });
+
+  return {
+    datasetId: stringValue(manifest.dataset_id, `${manifestPath}: dataset_id`),
+    datasetVersion: stringValue(manifest.version, `${manifestPath}: version`),
+    schema: stringValue(manifest.schema, `${manifestPath}: schema`),
+    license: typeof manifest.license === "string" ? manifest.license : "unknown",
+    root: {
+      id: `${stringValue(manifest.dataset_id, `${manifestPath}: dataset_id`)}_local`,
+      uri: typeof manifest.root_uri === "string" ? manifest.root_uri : `file://${datasetDir}`,
+      tokenEstimate: numberValue(manifest.token_estimate, `${manifestPath}: token_estimate`),
+      hash: stringValue(manifest.root_hash, `${manifestPath}: root_hash`),
+    },
+    shards,
+  };
+}
+
+function stringValue(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`invalid manifest field ${field}`);
+  }
+  return value;
+}
+
+function numberValue(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`invalid manifest field ${field}`);
+  }
+  return value;
+}
+
+function arrayValue(value: unknown, field: string): unknown[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`invalid manifest field ${field}`);
+  }
+  return value;
 }

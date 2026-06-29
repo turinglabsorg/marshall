@@ -1,5 +1,5 @@
 import { ControlPeer } from "./control-peer.js";
-import { createTrainingJobs } from "./jobs.js";
+import { createTrainingJobs, type AdapterDatasetProfile } from "./jobs.js";
 import type { TrainingJob } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -13,6 +13,8 @@ const control = await ControlPeer.create({
     jobId: args["job-id"] ?? process.env.MARSHALL_JOB_ID,
     runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID,
     roundId: args["round-id"] ?? process.env.MARSHALL_ROUND_ID,
+    adapterDataset: adapterDatasetArg(args["adapter-dataset"] ?? process.env.MARSHALL_ADAPTER_DATASET),
+    adapterDatasetDir: args["adapter-dataset-dir"] ?? process.env.MARSHALL_ADAPTER_DATASET_DIR,
   }),
 });
 
@@ -22,6 +24,7 @@ console.log(JSON.stringify({
   addrs: control.multiaddrs.map((addr) => addr.toString()),
   job_type: jobType,
   job_count: jobCount,
+  adapter_dataset: args["adapter-dataset"] ?? process.env.MARSHALL_ADAPTER_DATASET ?? "marshall_instructions",
   coordinator_url: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL ?? null,
 }, null, 2));
 
@@ -57,6 +60,16 @@ function jobTypeArg(value: string): TrainingJob["job_type"] {
     return value;
   }
   throw new Error(`unsupported CLI job type: ${value}`);
+}
+
+function adapterDatasetArg(value: string | undefined): AdapterDatasetProfile | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+  if (value === "marshall_instructions" || value === "ag_news") {
+    return value;
+  }
+  throw new Error(`unsupported adapter dataset: ${value}`);
 }
 
 function numberArg(value: string | undefined, fallback: number): number {

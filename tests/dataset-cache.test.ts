@@ -3,9 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { hashDatasetPath, prepareDatasetShard } from "../src/dataset-cache.js";
-import { createTrainingJobs } from "../src/jobs.js";
+import { createTrainingJob, createTrainingJobs } from "../src/jobs.js";
 
 describe("dataset cache", () => {
+  it("hashes a full split dataset in manifest order", async () => {
+    const job = createTrainingJob("train_adapter");
+
+    expect(await hashDatasetPath("examples/datasets/marshall-instructions")).toBe(job.dataset_shard.hash);
+  });
+
   it("hashes and caches a sharded dataset directory", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "marshall-dataset-cache-test-"));
     try {

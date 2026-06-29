@@ -96,10 +96,8 @@ export async function hashDatasetPath(path: string): Promise<string> {
 
   const digest = createHash("sha256");
   const entries = await readdir(path, { withFileTypes: true });
-  const names = entries
-    .filter((entry) => entry.isFile() && DATASET_FILES.includes(entry.name as (typeof DATASET_FILES)[number]))
-    .map((entry) => entry.name)
-    .sort((left, right) => left.localeCompare(right));
+  const fileNames = new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name));
+  const names = DATASET_FILES.filter((name) => fileNames.has(name));
 
   if (names.length === 0) {
     const jsonlFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"));

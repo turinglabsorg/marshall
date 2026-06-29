@@ -71,6 +71,8 @@ marshall/
     tiny_char_lm.py
     mlx_linear_smoke.py
     mlx_lora_smoke.py
+    build_ag_news_dataset.py
+    mlx_ag_news_eval.py
   coordinator/
     redis_store.go
     http.go
@@ -120,6 +122,7 @@ It proves:
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes `eval.json` metrics.
 - `MARSHALL_JOB_COUNT` lets the control CLI create multiple jobs in one run; `train_adapter` uses dataset shards for multi-worker claims.
 - workers materialize only the assigned shard into a content-addressed cache under `.marshall/cache/datasets/<sha256>` before training.
+- `training/build_ag_news_dataset.py` builds a local private AG News classification dataset under `.marshall/datasets/ag-news`, and `training/mlx_ag_news_eval.py` scores base-model or adapter exact-label accuracy.
 
 ## CLI Runtime
 
@@ -130,6 +133,17 @@ MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 \
 MARSHALL_CONTROL_LISTEN=/ip4/0.0.0.0/tcp/4001 \
 MARSHALL_JOB_TYPE=train_adapter \
 MARSHALL_JOB_COUNT=2 \
+npm run control:start
+```
+
+Use the local AG News profile after building the dataset:
+
+```bash
+npm run dataset:ag-news:build
+MARSHALL_ADAPTER_DATASET=ag_news \
+MARSHALL_ADAPTER_DATASET_DIR=.marshall/datasets/ag-news \
+MARSHALL_JOB_TYPE=train_adapter \
+MARSHALL_JOB_COUNT=4 \
 npm run control:start
 ```
 
@@ -157,11 +171,14 @@ nvm use
 npm install
 npm run build
 npm run dataset:marshall:check
+npm run dataset:ag-news:build
+npm run dataset:ag-news:check
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora:eval
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:ag-news:eval
 go test ./...
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test

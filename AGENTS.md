@@ -51,10 +51,13 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
 - `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes eval metrics.
+- `training/build_ag_news_dataset.py` downloads AG News CSVs into `.marshall/cache/raw/ag-news`, builds local train/valid/test/eval JSONL plus 4 shards under `.marshall/datasets/ag-news`, and writes a manifest consumed by adapter job creation.
+- `training/mlx_ag_news_eval.py` evaluates base models or LoRA adapters on AG News exact-label accuracy.
 - `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
 - `examples/datasets/marshall-instructions/manifest.json`, `{train,valid,test,eval}.jsonl`, and `shards/shard-*/{train,valid}.jsonl` are the private synthetic MIT dataset artifacts for Marshall coordinator-event summaries and multi-worker adapter claims.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, and ACK payloads. `TrainingJob.dataset_shard` may include dataset metadata (`dataset_id`, `dataset_version`, `schema`, `license`) and must include a hash verified by workers before training.
+- `src/jobs.ts` supports `adapterDataset: "ag_news"` through a local manifest. The control CLI exposes this as `--adapter-dataset ag_news` or `MARSHALL_ADAPTER_DATASET=ag_news`, with `--adapter-dataset-dir` / `MARSHALL_ADAPTER_DATASET_DIR` pointing at the local dataset directory.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers four workers claiming independent jobs concurrently.
 - `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set.
