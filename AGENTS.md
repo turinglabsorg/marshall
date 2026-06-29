@@ -38,7 +38,9 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/identity.ts` persists Ed25519 private keys on disk.
 - `src/control-cli.ts` starts a long-running configurable libp2p control peer.
 - `src/control-cli.ts` supports `MARSHALL_JOB_COUNT` / `--job-count`; multi-job adapter runs use deterministic dataset shard jobs.
+- `src/control-cli.ts` supports `--jobs-file` / `MARSHALL_JOBS_FILE` for mixed Marshall job definitions, including `evaluate_adapter` jobs generated from adapter artifacts.
 - `src/worker-cli.ts` starts a one-job worker that registers, claims, runs, publishes an artifact, and exits.
+- `src/worker-pool-cli.ts` starts bounded concurrent worker processes against a control peer. Use this for product E2E proof instead of manual shell loops.
 - `src/jobs.ts` defines local `train_toy_model`, `train_mlx_smoke`, and `train_adapter` job builders.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured.
@@ -46,6 +48,9 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.
+- `src/training-runner.ts` wraps `training/mlx_ag_news_eval.py` for `evaluate_adapter` jobs and emits an `adapter_evaluation` artifact manifest.
+- `src/evaluation-jobs-cli.ts` scans `lora_adapter` manifests and creates `evaluate_adapter` jobs for a held-out eval shard.
+- `src/leaderboard-cli.ts` scans `adapter_evaluation` metrics and writes `leaderboard.json`, `top_k.json`, and `optimized_model.json`.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
 - `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
@@ -54,10 +59,10 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `training/build_ag_news_dataset.py` downloads AG News CSVs into `.marshall/cache/raw/ag-news`, builds local train/valid/test/eval JSONL plus 4 shards under `.marshall/datasets/ag-news`, and writes a manifest consumed by adapter job creation.
 - `npm run dataset:ag-news:micro:build` uses the same real AG News builder to create many non-fake micro-shards under `.marshall/datasets/ag-news-micro`; `MARSHALL_MICRO_SHARDS` controls the shard/job count.
 - `training/mlx_ag_news_eval.py` evaluates base models or LoRA adapters on AG News exact-label accuracy.
-- `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training.
+- `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training or evaluation. Single JSONL eval shards remain addressable as files after caching.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
 - `examples/datasets/marshall-instructions/manifest.json`, `{train,valid,test,eval}.jsonl`, and `shards/shard-*/{train,valid}.jsonl` are the private synthetic MIT dataset artifacts for Marshall coordinator-event summaries and multi-worker adapter claims.
-- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, and ACK payloads. `TrainingJob.dataset_shard` may include dataset metadata (`dataset_id`, `dataset_version`, `schema`, `license`) and must include a hash verified by workers before training.
+- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, `AdapterEvaluationJob`, `MarshallJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, adapter evaluation metrics, and ACK payloads. `TrainingJob.dataset_shard` and `AdapterEvaluationJob.eval_shard` must include hashes verified by workers before training or evaluation.
 - `src/jobs.ts` supports `adapterDataset: "ag_news"` through a local manifest. The control CLI exposes this as `--adapter-dataset ag_news` or `MARSHALL_ADAPTER_DATASET=ag_news`, with `--adapter-dataset-dir` / `MARSHALL_ADAPTER_DATASET_DIR` pointing at the local dataset directory.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers four workers claiming independent jobs concurrently.
@@ -83,6 +88,17 @@ MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora:eval
 go test ./...
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
+```
+
+Product E2E validation should use this shape:
+
+```bash
+npm run control:start -- --job-type train_adapter --job-count 4 --adapter-dataset ag_news
+npm run worker:pool -- --control <control-multiaddr> --job-type train_adapter --concurrency 4 --max-jobs 4
+npm run eval:jobs -- --artifacts-dir <adapter-artifacts> --eval-file <eval.jsonl> --output <eval-jobs.json>
+npm run control:start -- --job-type evaluate_adapter --jobs-file <eval-jobs.json>
+npm run worker:pool -- --control <control-multiaddr> --job-type evaluate_adapter --concurrency 4 --max-jobs 4
+npm run leaderboard:adapters -- --eval-artifacts-dir <eval-artifacts> --output-dir <leaderboard-dir>
 ```
 
 The p2p integration test opens real TCP sockets on `127.0.0.1`, so sandboxed agents may need escalated execution for test/runtime commands.
