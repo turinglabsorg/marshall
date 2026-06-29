@@ -55,7 +55,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `examples/datasets/marshall-instructions/{train,valid,test,eval}.jsonl` plus `shards/shard-*/{train,valid}.jsonl` is the tiny chat/eval dataset for Marshall coordinator-event summaries and multi-worker adapter claims.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, and ACK payloads.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
-- `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers two workers claiming independent jobs concurrently.
+- `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers four workers claiming independent jobs concurrently.
 - `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, job claims, statuses, artifacts, and append-only events in Redis.
