@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+
+# Build outputs
+dist/
+build/
+.turbo/
+
+# Local state
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+artifacts/
+datasets/
+models/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
