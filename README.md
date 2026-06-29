@@ -14,6 +14,22 @@ The first product is not a model. The first product is the network substrate:
 
 Marshall should behave like a compute marketplace for bounded AI jobs, not like a synchronous GPU cluster.
 
+## Coordinator
+
+Marshall now includes a native Go coordinator prototype backed by Redis:
+
+- `cmd/marshall-coordinator` exposes a small HTTP admin API;
+- `coordinator/redis_store.go` stores derived state in Redis hashes/sets;
+- Redis Streams provide the append-only event log;
+- job claims are atomic through a Redis Lua script.
+
+Run it locally with Redis:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+MARSHALL_REDIS_ADDR=127.0.0.1:6379 go run ./cmd/marshall-coordinator
+```
+
 ## First Concrete Target
 
 Build a real 3-worker p2p loop:
@@ -50,6 +66,12 @@ marshall/
   training/
     tiny_char_lm.py
     mlx_linear_smoke.py
+  coordinator/
+    redis_store.go
+    http.go
+  cmd/
+    marshall-coordinator/
+      main.go
   examples/
     datasets/
       tiny-italian.jsonl
@@ -88,8 +110,11 @@ npm run build
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
+go test ./...
+MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
 ```
 
 The integration test opens real TCP sockets on `127.0.0.1`, starts a control peer and worker peer, and verifies the full p2p job lifecycle.
 It also runs the toy trainer and asserts that the loss decreases before publishing the artifact manifest.
 The MLX smoke test is intended for Apple Silicon workers with MLX installed and verifies GPU execution.
+The Redis-backed coordinator integration tests require a reachable Redis server.

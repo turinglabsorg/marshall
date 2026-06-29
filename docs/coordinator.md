@@ -1,0 +1,81 @@
+# Marshall Coordinator
+
+The coordinator is the authoritative runtime state for the MVP.
+
+It is native Go and uses Redis for speed and operational simplicity:
+
+- Redis hashes/sets hold derived state for runs, workers, jobs, claims, and artifacts;
+- Redis Streams hold the append-only event log;
+- Redis Lua makes job claims atomic.
+
+The DHT/p2p layer should be used for discovery, routing, and artifact provider lookup. Redis-backed coordinator state remains the source of truth for job ownership, lifecycle transitions, artifact acceptance, and round advancement.
+
+## Runtime
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+MARSHALL_REDIS_ADDR=127.0.0.1:6379 go run ./cmd/marshall-coordinator
+```
+
+Environment:
+
+```text
+MARSHALL_HTTP_ADDR=127.0.0.1:8080
+MARSHALL_REDIS_ADDR=127.0.0.1:6379
+MARSHALL_REDIS_PREFIX=marshall
+```
+
+## HTTP Surface
+
+```text
+GET  /health
+POST /runs
+POST /workers
+POST /jobs
+POST /jobs/{job_id}/claim
+POST /jobs/{job_id}/status
+POST /artifacts
+GET  /events?count=100
+```
+
+## Event Types
+
+```text
+run_created
+worker_registered
+job_created
+job_claimed
+job_status_updated
+artifact_published
+```
+
+## Redis Keys
+
+```text
+marshall:events
+marshall:runs
+marshall:workers
+marshall:jobs
+marshall:artifacts
+marshall:run:<run_id>
+marshall:run:<run_id>:jobs
+marshall:worker:<worker_id>
+marshall:job:<job_id>
+marshall:job:<job_id>:lease
+marshall:artifact:<job_id>
+```
+
+## Testing
+
+Compile-only and skipped Redis integration:
+
+```bash
+go test ./...
+```
+
+Runtime integration against real Redis:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
+```

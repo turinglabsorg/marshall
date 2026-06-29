@@ -39,15 +39,16 @@ Responsibilities:
 
 Initial stack:
 
-- FastAPI for admin/dashboard APIs;
-- SQLite;
+- native Go coordinator for admin APIs and scheduling state;
+- Redis hashes/sets for derived coordinator state;
+- Redis Streams for the append-only event log;
 - local filesystem artifact storage;
 - TypeScript libp2p control peer for worker connectivity.
 
 Scale path:
 
 - Postgres;
-- Redis or NATS for coordinator internals;
+- NATS for additional coordinator internals if Redis Streams become insufficient;
 - S3-compatible object storage;
 - dedicated libp2p relay nodes;
 - Prometheus/Grafana.
@@ -201,6 +202,15 @@ Minimum tables:
 - `merges`;
 - `dataset_shards`;
 - `reputation_events`.
+
+In the current prototype these are represented as Redis keys:
+
+- `marshall:events` as the append-only stream;
+- `marshall:run:<run_id>` hashes;
+- `marshall:worker:<worker_id>` hashes;
+- `marshall:job:<job_id>` hashes;
+- `marshall:job:<job_id>:lease` lease keys;
+- `marshall:artifact:<job_id>` hashes.
 
 ## Network Surface
 

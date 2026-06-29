@@ -17,8 +17,8 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - TypeScript libp2p for the p2p substrate.
 - Python stdlib toy training runner for lightweight end-to-end smoke tests.
 - Python MLX runner for Apple Silicon LoRA jobs.
-- FastAPI for coordinator admin APIs.
-- SQLite for MVP metadata.
+- Go for the native coordinator daemon.
+- Redis for coordinator state and append-only event logs.
 - Local filesystem artifacts for MVP storage.
 
 ## First Protocols
@@ -44,6 +44,10 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, and ACK payloads.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, and verifies artifact manifest publication.
+- `cmd/marshall-coordinator` is the native Go coordinator entry point.
+- `coordinator/redis_store.go` stores runs, workers, jobs, job claims, statuses, artifacts, and append-only events in Redis.
+- `coordinator/http.go` exposes the initial coordinator HTTP admin API.
+- `coordinator/*_integration_test.go` verifies the Redis store and HTTP lifecycle against a real Redis server when `MARSHALL_REDIS_ADDR` is set.
 
 ## Verification
 
@@ -55,10 +59,13 @@ npm run typecheck
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
+go test ./...
+MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
 ```
 
 The p2p integration test opens real TCP sockets on `127.0.0.1`, so sandboxed agents may need escalated execution for test/runtime commands.
 The MLX smoke test requires Apple Silicon plus an MLX-capable Python environment.
+Redis coordinator tests require a real Redis instance; use `redis:7-alpine` for local integration testing.
 
 ## Development Rules
 
@@ -68,3 +75,4 @@ The MLX smoke test requires Apple Silicon plus an MLX-capable Python environment
 - Do not assume all workers are equally capable.
 - Runtime-test networking changes with at least one control peer and one worker peer before marking them done.
 - For backend/API functions, add integration tests.
+- Runtime-test coordinator storage/API changes against real Redis before pushing.

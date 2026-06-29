@@ -37,8 +37,10 @@
 
 ## Milestone 3: Coordinator
 
-- Create FastAPI app.
-- Add SQLite migrations.
+- Create native Go coordinator daemon.
+- Add Redis-backed state store.
+- Add Redis Streams append-only event log.
+- Add atomic Redis job claim leases.
 - Store libp2p worker registrations.
 - Store job claims and status updates.
 - Store artifact manifests.
