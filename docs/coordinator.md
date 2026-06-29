@@ -93,6 +93,17 @@ MARSHALL_REDIS_ADDR=127.0.0.1:6379 MARSHALL_HTTP_ADDR=127.0.0.1:8080 go run ./cm
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
 ```
 
+Full AG News product E2E against the coordinator:
+
+```bash
+MARSHALL_REDIS_ADDR=127.0.0.1:6379 MARSHALL_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/marshall-coordinator
+npm run e2e:ag-news:compiled -- \
+  --coordinator-url http://127.0.0.1:8080 \
+  --python ~/.marshall/mlx-venv/bin/python
+```
+
+The runner performs train, evaluate, leaderboard/package, and query validation. When `--coordinator-url` is set it also verifies that train and eval jobs reached `completed` state and that their artifacts are readable from the coordinator API.
+
 ## Control And Worker CLI
 
 The TypeScript runtime can now be started as separate processes.

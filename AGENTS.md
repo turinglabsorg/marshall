@@ -51,6 +51,9 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/training-runner.ts` wraps `training/mlx_ag_news_eval.py` for `evaluate_adapter` jobs and emits an `adapter_evaluation` artifact manifest.
 - `src/evaluation-jobs-cli.ts` scans `lora_adapter` manifests and creates `evaluate_adapter` jobs for a held-out eval shard.
 - `src/leaderboard-cli.ts` scans `adapter_evaluation` metrics and writes `leaderboard.json`, `top_k.json`, and `optimized_model.json`.
+- `src/model-package-cli.ts` packages the selected optimized model as base model + LoRA adapter metadata and emits an `optimized_model_package` manifest.
+- `src/model-query-cli.ts` queries a packaged optimized model against a selected eval record and can fail unless the answer is correct.
+- `src/e2e-ag-news-cli.ts` runs the AG News product E2E path: training worker pool, evaluation worker pool, leaderboard, package, query, and optional coordinator persistence verification.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
 - `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
@@ -99,6 +102,14 @@ npm run eval:jobs -- --artifacts-dir <adapter-artifacts> --eval-file <eval.jsonl
 npm run control:start -- --job-type evaluate_adapter --jobs-file <eval-jobs.json>
 npm run worker:pool -- --control <control-multiaddr> --job-type evaluate_adapter --concurrency 4 --max-jobs 4
 npm run leaderboard:adapters -- --eval-artifacts-dir <eval-artifacts> --output-dir <leaderboard-dir>
+npm run model:package -- --optimized-model <leaderboard-dir>/optimized_model.json --output-dir <package-dir>
+npm run model:query -- --package <package-dir>/model_package.json --eval-file <eval.jsonl> --require-correct true
+```
+
+Prefer the single product runner when validating the whole AG News path:
+
+```bash
+npm run e2e:ag-news:compiled -- --coordinator-url http://127.0.0.1:8080 --python ~/.marshall/mlx-venv/bin/python
 ```
 
 The p2p integration test opens real TCP sockets on `127.0.0.1`, so sandboxed agents may need escalated execution for test/runtime commands.

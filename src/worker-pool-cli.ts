@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +19,7 @@ const concurrency = numberArg(args.concurrency ?? process.env.MARSHALL_WORKER_PO
 const maxJobs = numberArg(args["max-jobs"] ?? process.env.MARSHALL_WORKER_POOL_MAX_JOBS, 1);
 const workerPrefix = args["worker-id-prefix"] ?? process.env.MARSHALL_WORKER_ID_PREFIX ?? "marshall-worker";
 const keyDir = args["key-dir"] ?? process.env.MARSHALL_WORKER_KEY_DIR ?? ".marshall/worker-pool-keys";
-const workerScript = args["worker-script"] ?? fileURLToPath(new URL("./worker-cli.js", import.meta.url));
+const workerScript = args["worker-script"] ?? siblingScript("worker-cli");
 
 await mkdir(keyDir, { recursive: true });
 
@@ -80,7 +81,7 @@ async function runWorker(index: number): Promise<void> {
   ];
 
   await mkdir(dirname(resolve(keyDir, `${workerPrefix}-${suffix}.key`)), { recursive: true });
-  const result = await runProcess(process.execPath, workerArgs);
+  const result = await runProcess(scriptCommand(workerScript), scriptArgs(workerScript, workerArgs));
   if (result.exitCode !== 0) {
     throw new Error(result.stderr || result.stdout || `worker ${suffix} exited ${result.exitCode}`);
   }
@@ -134,6 +135,25 @@ function runProcess(command: string, values: string[]): Promise<{ stdout: string
       resolveProcess({ stdout, stderr, exitCode });
     });
   });
+}
+
+function scriptCommand(scriptPath: string): string {
+  if (scriptPath.endsWith(".ts")) {
+    return resolve("node_modules/.bin/tsx");
+  }
+  return process.execPath;
+}
+
+function scriptArgs(scriptPath: string, values: string[]): string[] {
+  return scriptPath.endsWith(".ts") ? values : values;
+}
+
+function siblingScript(baseName: string): string {
+  const jsPath = fileURLToPath(new URL(`./${baseName}.js`, import.meta.url));
+  if (existsSync(jsPath)) {
+    return jsPath;
+  }
+  return jsPath.replace(/\.js$/, ".ts");
 }
 
 function parseArgs(values: string[]): Record<string, string> {

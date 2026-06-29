@@ -11,6 +11,7 @@ import {
   WorkerRegistrationSchema,
   type Ack,
   type ArtifactManifest,
+  type JobClaim,
   type JobClaimResponse,
   type JobStatus,
   type MarshallJob,
@@ -117,28 +118,40 @@ export class ControlPeer {
 
   private async handleJobClaim(stream: Stream): Promise<void> {
     const claim = JobClaimSchema.parse(await readJson(stream));
-    const job = this.jobs.find((candidate) =>
-      candidate.job_type === claim.job_type
-      && candidate.backend === claim.backend
-      && !this.state.assignedJobs.has(candidate.job_id),
-    );
+    const response = await this.claimCompatibleJob(claim);
+    await writeJson(stream, JobClaimResponseSchema.parse(response));
+  }
 
-    let response: JobClaimResponse = job
-      ? { accepted: true, job }
-      : { accepted: false, job: null, reason: "no compatible job available" };
+  private async claimCompatibleJob(claim: JobClaim): Promise<JobClaimResponse> {
+    let lastRejection: string | undefined;
+    for (const job of this.jobs) {
+      if (
+        job.job_type !== claim.job_type
+        || job.backend !== claim.backend
+        || this.state.assignedJobs.has(job.job_id)
+      ) {
+        continue;
+      }
 
-    if (job != null && this.coordinator != null) {
+      this.state.assignedJobs.set(job.job_id, claim.worker_id);
+      if (this.coordinator == null) {
+        return { accepted: true, job };
+      }
+
       try {
         const coordinatorClaim = await this.coordinator.claimJob(job.job_id, {
           ...claim,
           job_type: job.job_type,
           backend: job.backend,
         });
-        response = coordinatorClaim.accepted
-          ? { accepted: true, job }
-          : { accepted: false, job: null, reason: coordinatorClaim.reason ?? "coordinator rejected job claim" };
+        if (coordinatorClaim.accepted) {
+          return { accepted: true, job };
+        }
+        this.state.assignedJobs.delete(job.job_id);
+        lastRejection = coordinatorClaim.reason ?? "coordinator rejected job claim";
       } catch (error) {
-        response = {
+        this.state.assignedJobs.delete(job.job_id);
+        return {
           accepted: false,
           job: null,
           reason: error instanceof Error ? error.message : "coordinator rejected job claim",
@@ -146,11 +159,11 @@ export class ControlPeer {
       }
     }
 
-    if (response.accepted && job) {
-      this.state.assignedJobs.set(job.job_id, claim.worker_id);
-    }
-
-    await writeJson(stream, JobClaimResponseSchema.parse(response));
+    return {
+      accepted: false,
+      job: null,
+      reason: lastRejection ?? "no compatible job available",
+    };
   }
 
   private async handleJobStatus(stream: Stream): Promise<void> {

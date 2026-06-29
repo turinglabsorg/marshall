@@ -138,7 +138,7 @@ export const ArtifactManifestSchema = z.object({
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   job_id: z.string().min(1),
-  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation"]),
+  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation", "optimized_model_package"]),
   artifact_uri: z.string().min(1),
   artifact_hash: z.string().min(1),
   config_hash: z.string().min(1),

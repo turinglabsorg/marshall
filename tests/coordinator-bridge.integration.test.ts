@@ -176,6 +176,68 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
     expect(artifact.artifact_hash).toBe("sha256:eval-artifact-bridge");
     expect(artifact.metrics_uri).toBe(`file://eval-artifacts/${job.job_id}/metrics.json`);
   }, 20_000);
+
+  it("assigns unique evaluate_adapter jobs under concurrent coordinator-backed claims", async () => {
+    const suffix = Date.now().toString(36);
+    const jobs: AdapterEvaluationJob[] = Array.from({ length: 4 }, (_, index) => {
+      const id = String(index + 1).padStart(3, "0");
+      return {
+        job_id: `job_eval_bridge_${suffix}_${id}`,
+        run_id: `run_eval_bridge_${suffix}`,
+        round_id: "round_001",
+        job_type: "evaluate_adapter",
+        backend: "mlx",
+        model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+        adapter: {
+          adapter_id: `job_adapter_bridge_${suffix}_${id}`,
+          artifact_uri: `file://artifacts/job_adapter_bridge_${id}/adapters`,
+          artifact_hash: `sha256:adapter-bridge-${id}`,
+          config_hash: `sha256:adapter-config-bridge-${id}`,
+          source_job_id: `job_adapter_bridge_${suffix}_${id}`,
+        },
+        eval_shard: {
+          id: "eval_jsonl",
+          uri: "file://datasets/ag-news/eval.jsonl",
+          token_estimate: 1,
+          hash: "sha256:eval-bridge",
+        },
+        max_examples: 40,
+        max_tokens: 8,
+      };
+    });
+    const concurrentWorkers: WorkerPeer[] = [];
+
+    try {
+      control = await ControlPeer.create({
+        privateKeyPath: join(tempDir, "control.key"),
+        coordinatorUrl,
+        jobs,
+      });
+      for (let index = 0; index < 4; index += 1) {
+        concurrentWorkers.push(await WorkerPeer.create({
+          privateKeyPath: join(tempDir, `worker-${index}.key`),
+          workerId: `mac-worker-eval-concurrent-${suffix}-${index}`,
+          controlAddr: control.multiaddrs[0],
+          backend: "mlx",
+          supportedJobs: ["evaluate_adapter"],
+        }));
+      }
+
+      await Promise.all(concurrentWorkers.map((item) => item.register()));
+      const claims = await Promise.all(concurrentWorkers.map((item) => item.claimJob("evaluate_adapter", 8_000)));
+      expect(claims.every((claim) => claim.accepted)).toBe(true);
+      expect(new Set(claims.map((claim) => claim.job?.job_id)).size).toBe(4);
+
+      const coordinator = new CoordinatorClient(coordinatorUrl!);
+      for (const claim of claims) {
+        expect(claim.job?.job_type).toBe("evaluate_adapter");
+        const persisted = await coordinator.getJob(claim.job!.job_id);
+        expect(persisted.status).toBe("claimed");
+      }
+    } finally {
+      await Promise.all(concurrentWorkers.map((item) => item.stop()));
+    }
+  }, 20_000);
 });
 
 async function coordinatorEvents(): Promise<Array<{ type: string; fields: Record<string, string> }>> {
