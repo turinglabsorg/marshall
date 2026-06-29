@@ -7,14 +7,14 @@ import {
   JobClaimSchema,
   JobClaimResponseSchema,
   JobStatusSchema,
-  TrainAdapterJobSchema,
+  TrainingJobSchema,
   WorkerHeartbeatSchema,
   WorkerRegistrationSchema,
   type Ack,
   type ArtifactManifest,
   type JobClaimResponse,
   type JobStatus,
-  type TrainAdapterJob,
+  type TrainingJob,
   type WorkerHeartbeat,
   type WorkerRegistration,
   type WorkerRegistrationResponse,
@@ -24,7 +24,7 @@ import { readJson, writeJson } from "./wire.js";
 
 export interface ControlPeerOptions {
   privateKeyPath: string;
-  jobs?: TrainAdapterJob[];
+  jobs?: TrainingJob[];
 }
 
 export interface ControlPeerState {
@@ -46,7 +46,7 @@ export class ControlPeer {
 
   private constructor(
     readonly node: Libp2p,
-    private readonly jobs: TrainAdapterJob[],
+    private readonly jobs: TrainingJob[],
   ) {}
 
   static async create(options: ControlPeerOptions): Promise<ControlPeer> {
@@ -54,7 +54,7 @@ export class ControlPeer {
       privateKeyPath: options.privateKeyPath,
       listen: ["/ip4/127.0.0.1/tcp/0"],
     });
-    const peer = new ControlPeer(node, options.jobs ?? [defaultTrainAdapterJob()]);
+    const peer = new ControlPeer(node, options.jobs ?? [defaultToyTrainingJob()]);
     await peer.registerHandlers();
     return peer;
   }
@@ -135,17 +135,18 @@ export class ControlPeer {
   }
 }
 
-function defaultTrainAdapterJob(): TrainAdapterJob {
-  return TrainAdapterJobSchema.parse({
-    job_id: "job_local_001",
-    run_id: "run_local_001",
+function defaultToyTrainingJob(): TrainingJob {
+  return TrainingJobSchema.parse({
+    job_id: "job_toy_001",
+    run_id: "run_toy_001",
     round_id: "round_001",
-    job_type: "train_adapter",
-    backend: "mlx",
+    job_type: "train_toy_model",
+    backend: "cpu",
     dataset_shard: {
-      id: "shard_local_001",
+      id: "tiny_italian_local",
+      uri: "file://examples/datasets/tiny-italian.jsonl",
       token_estimate: 2_000,
-      hash: "sha256:dataset-local",
+      hash: "sha256:067c5c80ae7ae08a2d33868b85e149de94878dd13c7689a64561d9dd3d0751dd",
     },
   });
 }

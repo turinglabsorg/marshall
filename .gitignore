@@ -17,6 +17,8 @@ build/
 *.sqlite3
 artifacts/
 datasets/
+!examples/datasets/
+!examples/datasets/**
 models/
 
 # OS/editor

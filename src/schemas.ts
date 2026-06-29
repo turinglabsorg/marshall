@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const JobTypeSchema = z.enum([
+  "train_toy_model",
   "train_adapter",
   "evaluate_model",
   "tokenize_dataset",
@@ -44,14 +45,15 @@ export const JobClaimSchema = z.object({
   max_tokens: z.number().positive(),
 });
 
-export const TrainAdapterJobSchema = z.object({
+export const TrainingJobSchema = z.object({
   job_id: z.string().min(1),
   run_id: z.string().min(1),
   round_id: z.string().min(1),
-  job_type: z.literal("train_adapter"),
-  backend: z.literal("mlx"),
+  job_type: z.enum(["train_toy_model", "train_adapter"]),
+  backend: BackendSchema,
   dataset_shard: z.object({
     id: z.string().min(1),
+    uri: z.string().min(1),
     token_estimate: z.number().positive(),
     hash: z.string().min(1),
   }),
@@ -59,7 +61,7 @@ export const TrainAdapterJobSchema = z.object({
 
 export const JobClaimResponseSchema = z.object({
   accepted: z.boolean(),
-  job: TrainAdapterJobSchema.nullable(),
+  job: TrainingJobSchema.nullable(),
   reason: z.string().optional(),
 });
 
@@ -75,11 +77,30 @@ export const ArtifactManifestSchema = z.object({
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   job_id: z.string().min(1),
-  artifact_type: z.literal("lora_adapter"),
+  artifact_type: z.enum(["toy_language_model", "lora_adapter"]),
   artifact_uri: z.string().min(1),
   artifact_hash: z.string().min(1),
   config_hash: z.string().min(1),
   created_at: z.string().min(1),
+  metrics_uri: z.string().min(1).optional(),
+});
+
+export const TrainingArtifactManifestSchema = ArtifactManifestSchema.omit({
+  peer_id: true,
+  worker_id: true,
+});
+
+export const ToyTrainingMetricsSchema = z.object({
+  job_id: z.string().min(1),
+  dataset: z.string().min(1),
+  examples: z.number().int().positive(),
+  tokens: z.number().int().positive(),
+  vocab_size: z.number().int().positive(),
+  epochs: z.number().int().positive(),
+  learning_rate: z.number().positive(),
+  loss_start: z.number().positive(),
+  loss_end: z.number().positive(),
+  loss_delta: z.number(),
 });
 
 export const AckSchema = z.object({
@@ -87,12 +108,16 @@ export const AckSchema = z.object({
   reason: z.string().optional(),
 });
 
+export type JobType = z.infer<typeof JobTypeSchema>;
+export type Backend = z.infer<typeof BackendSchema>;
 export type WorkerRegistration = z.infer<typeof WorkerRegistrationSchema>;
 export type WorkerRegistrationResponse = z.infer<typeof WorkerRegistrationResponseSchema>;
 export type WorkerHeartbeat = z.infer<typeof WorkerHeartbeatSchema>;
 export type JobClaim = z.infer<typeof JobClaimSchema>;
-export type TrainAdapterJob = z.infer<typeof TrainAdapterJobSchema>;
+export type TrainingJob = z.infer<typeof TrainingJobSchema>;
 export type JobClaimResponse = z.infer<typeof JobClaimResponseSchema>;
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
+export type TrainingArtifactManifest = z.infer<typeof TrainingArtifactManifestSchema>;
+export type ToyTrainingMetrics = z.infer<typeof ToyTrainingMetricsSchema>;
 export type Ack = z.infer<typeof AckSchema>;

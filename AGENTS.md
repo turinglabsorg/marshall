@@ -15,6 +15,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 
 - Node.js 22+ runtime for current js-libp2p dependencies.
 - TypeScript libp2p for the p2p substrate.
+- Python stdlib toy training runner for lightweight end-to-end smoke tests.
 - Python MLX runner for Apple Silicon LoRA jobs.
 - FastAPI for coordinator admin APIs.
 - SQLite for MVP metadata.
@@ -37,8 +38,11 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/identity.ts` persists Ed25519 private keys on disk.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
-- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainAdapterJob`, job status, artifact manifest, and ACK payloads.
-- `tests/p2p.integration.test.ts` starts real libp2p peers on localhost and verifies the full first lifecycle.
+- `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
+- `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
+- `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
+- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, and ACK payloads.
+- `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, and verifies artifact manifest publication.
 
 ## Verification
 

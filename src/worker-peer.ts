@@ -11,7 +11,9 @@ import {
   JobClaimResponseSchema,
   WorkerRegistrationResponseSchema,
   type ArtifactManifest,
+  type Backend,
   type JobClaimResponse,
+  type JobType,
   type JobStatus,
   type WorkerRegistration,
 } from "./schemas.js";
@@ -21,6 +23,8 @@ export interface WorkerPeerOptions {
   privateKeyPath: string;
   workerId: string;
   controlAddr: Multiaddr;
+  backend?: Backend;
+  supportedJobs?: JobType[];
   memoryGb?: number;
   tokensPerSecond?: number;
 }
@@ -53,10 +57,10 @@ export class WorkerPeer {
       peer_id: this.peerId,
       worker_id: this.options.workerId,
       public_key: await this.publicKey(),
-      backend: "mlx",
-      device_family: "apple_silicon",
+      backend: this.options.backend ?? "cpu",
+      device_family: this.options.backend === "mlx" ? "apple_silicon" : "generic_cpu",
       memory_gb: this.options.memoryGb ?? 32,
-      supported_jobs: ["train_adapter", "evaluate_model", "tokenize_dataset"],
+      supported_jobs: this.options.supportedJobs ?? ["train_toy_model", "evaluate_model", "tokenize_dataset"],
       benchmarks: {
         tokens_per_second: this.options.tokensPerSecond ?? 1000,
       },
@@ -88,16 +92,20 @@ export class WorkerPeer {
     }
   }
 
-  async claimTrainAdapterJob(maxTokens = 2_000): Promise<JobClaimResponse> {
+  async claimJob(jobType: JobType, maxTokens = 2_000): Promise<JobClaimResponse> {
     return JobClaimResponseSchema.parse(
       await requestJson(this.node, this.options.controlAddr, PROTOCOLS.jobClaim, {
         peer_id: this.peerId,
         worker_id: this.options.workerId,
-        job_type: "train_adapter",
-        backend: "mlx",
+        job_type: jobType,
+        backend: this.options.backend ?? "cpu",
         max_tokens: maxTokens,
       }),
     );
+  }
+
+  async claimToyTrainingJob(maxTokens = 2_000): Promise<JobClaimResponse> {
+    return this.claimJob("train_toy_model", maxTokens);
   }
 
   async reportJobStatus(status: Omit<JobStatus, "peer_id" | "worker_id">): Promise<void> {

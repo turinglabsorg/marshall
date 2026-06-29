@@ -43,6 +43,15 @@ The first milestone is complete when workers discover the network through libp2p
 
 ```text
 marshall/
+  src/
+    control-peer.ts
+    worker-peer.ts
+    training-runner.ts
+  training/
+    tiny_char_lm.py
+  examples/
+    datasets/
+      tiny-italian.jsonl
   docs/
     architecture.md
     p2p.md
@@ -50,11 +59,11 @@ marshall/
     backlog.md
 ```
 
-The implementation should start with the libp2p substrate and the MVP contracts in `docs/mvp.md`.
+The implementation starts with the libp2p substrate, a lightweight local training smoke test, and the MVP contracts in `docs/mvp.md`.
 
 ## Prototype Status
 
-The first p2p substrate prototype is implemented.
+The first p2p substrate and toy training prototype is implemented.
 
 It proves:
 
@@ -62,7 +71,9 @@ It proves:
 - a worker peer can dial it over libp2p;
 - the worker can register over `/marshall/worker/register/1.0.0`;
 - the worker can send heartbeat, job claim, job status, and artifact manifest messages over versioned libp2p streams;
-- the control peer can assign one `TrainAdapterJob` and accept the worker artifact manifest only when it matches the assigned worker.
+- the control peer can assign one `train_toy_model` job and accept the worker artifact manifest only when it matches the assigned worker;
+- the worker can run a real stdlib-only Python character bigram training job against `examples/datasets/tiny-italian.jsonl`;
+- the training runner emits `model.json`, `metrics.json`, `train.log`, and a `toy_language_model` manifest.
 
 ## Development
 
@@ -77,3 +88,4 @@ npm run demo:compiled
 ```
 
 The integration test opens real TCP sockets on `127.0.0.1`, starts a control peer and worker peer, and verifies the full p2p job lifecycle.
+It also runs the toy trainer and asserts that the loss decreases before publishing the artifact manifest.

@@ -27,6 +27,7 @@
 
 ## Milestone 2: Local MLX Baseline
 
+- Add a stdlib-only toy character language model trainer for fast local smoke tests.
 - Select a TinyLlama-class base model.
 - Prepare a small Italian JSONL shard.
 - Run local MLX LoRA training on one Mac.

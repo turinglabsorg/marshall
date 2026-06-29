@@ -36,6 +36,18 @@ Excluded:
 - production dashboard;
 - full-model training.
 
+## Current Smoke Training Path
+
+Before the MLX LoRA backend is wired in, the prototype includes a deliberately tiny local training path:
+
+- job type: `train_toy_model`;
+- backend: `cpu`;
+- dataset: `examples/datasets/tiny-italian.jsonl`;
+- trainer: `training/tiny_char_lm.py`;
+- output artifact type: `toy_language_model`.
+
+This path is only for runtime validation of the p2p worker lifecycle, dataset ingestion, training execution, metric emission, and artifact manifest publication.
+
 ## Done Criteria
 
 The MVP is done when:

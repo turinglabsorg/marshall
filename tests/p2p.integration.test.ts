@@ -1,8 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ControlPeer } from "../src/control-peer.js";
+import { runToyTraining } from "../src/training-runner.js";
 import { WorkerPeer } from "../src/worker-peer.js";
 
 describe("Marshall p2p substrate", () => {
@@ -22,7 +24,7 @@ describe("Marshall p2p substrate", () => {
     control = undefined;
   });
 
-  it("registers a worker, assigns a job, receives status, and accepts an artifact manifest over libp2p", async () => {
+  it("registers a worker, trains a toy model, and publishes the artifact manifest over libp2p", async () => {
     control = await ControlPeer.create({
       privateKeyPath: join(tempDir, "control.key"),
     });
@@ -42,29 +44,34 @@ describe("Marshall p2p substrate", () => {
 
     await worker.heartbeat("idle");
 
-    const claim = await worker.claimTrainAdapterJob(2_000);
+    const claim = await worker.claimToyTrainingJob(2_000);
     expect(claim.accepted).toBe(true);
-    expect(claim.job?.job_type).toBe("train_adapter");
+    expect(claim.job?.job_type).toBe("train_toy_model");
 
     await worker.reportJobStatus({
       job_id: claim.job!.job_id,
       status: "running",
-      message: "integration runner started",
+      message: "toy training runner started",
     });
 
-    await worker.publishArtifactManifest({
-      job_id: claim.job!.job_id,
-      artifact_type: "lora_adapter",
-      artifact_uri: `file://artifacts/${claim.job!.job_id}/adapter.safetensors`,
-      artifact_hash: "sha256:test-adapter",
-      config_hash: "sha256:test-config",
-      created_at: new Date().toISOString(),
+    const training = await runToyTraining(claim.job!, {
+      outputRoot: join(tempDir, "artifacts"),
+      epochs: 25,
+      learningRate: 0.35,
     });
+
+    expect(training.metrics.examples).toBe(5);
+    expect(training.metrics.loss_end).toBeLessThan(training.metrics.loss_start);
+    expect(training.metrics.loss_delta).toBeGreaterThan(0);
+    const artifactStat = await stat(fileURLToPath(training.manifest.artifact_uri));
+    expect(artifactStat.isFile()).toBe(true);
+
+    await worker.publishArtifactManifest(training.manifest);
 
     await worker.reportJobStatus({
       job_id: claim.job!.job_id,
       status: "completed",
-      message: "integration runner completed",
+      message: "toy training runner completed",
     });
 
     expect(control.state.registrations).toHaveLength(1);
@@ -76,8 +83,9 @@ describe("Marshall p2p substrate", () => {
       peer_id: worker.peerId,
       worker_id: "mac-worker-test-01",
       job_id: claim.job!.job_id,
-      artifact_type: "lora_adapter",
-      artifact_hash: "sha256:test-adapter",
+      artifact_type: "toy_language_model",
+      artifact_hash: training.manifest.artifact_hash,
+      metrics_uri: training.manifest.metrics_uri,
     });
   }, 15_000);
 });
