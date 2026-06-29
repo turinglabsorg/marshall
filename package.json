@@ -10,6 +10,10 @@
     "test": "vitest run",
     "test:mlx:smoke": "${MARSHALL_PYTHON:-python3} training/mlx_linear_smoke.py",
     "test:watch": "vitest",
+    "control:start": "tsx src/control-cli.ts",
+    "worker:start": "tsx src/worker-cli.ts",
+    "control:start:compiled": "npm run build && node dist/src/control-cli.js",
+    "worker:start:compiled": "npm run build && node dist/src/worker-cli.js",
     "demo": "tsx src/demo.ts",
     "demo:compiled": "npm run build && node dist/src/demo.js"
   },

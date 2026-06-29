@@ -88,3 +88,27 @@ End-to-end p2p bridge test against a running coordinator:
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 MARSHALL_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/marshall-coordinator
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
 ```
+
+## Control And Worker CLI
+
+The TypeScript runtime can now be started as separate processes.
+
+Control peer:
+
+```bash
+MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 \
+MARSHALL_CONTROL_LISTEN=/ip4/0.0.0.0/tcp/4001 \
+MARSHALL_JOB_TYPE=train_mlx_smoke \
+npm run control:start
+```
+
+Worker:
+
+```bash
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python \
+npm run worker:start -- \
+  --control /ip4/<host>/tcp/4001/p2p/<control-peer-id> \
+  --job-type train_mlx_smoke \
+  --backend mlx \
+  --worker-id macbook-mlx-01
+```

@@ -7,7 +7,6 @@ import {
   JobClaimSchema,
   JobClaimResponseSchema,
   JobStatusSchema,
-  TrainingJobSchema,
   WorkerHeartbeatSchema,
   WorkerRegistrationSchema,
   type Ack,
@@ -20,11 +19,13 @@ import {
   type WorkerRegistrationResponse,
 } from "./schemas.js";
 import { CoordinatorClient } from "./coordinator-client.js";
+import { createToyTrainingJob } from "./jobs.js";
 import { createMarshallNode } from "./node.js";
 import { readJson, writeJson } from "./wire.js";
 
 export interface ControlPeerOptions {
   privateKeyPath: string;
+  listen?: string[];
   jobs?: TrainingJob[];
   coordinatorUrl?: string;
 }
@@ -55,7 +56,7 @@ export class ControlPeer {
   static async create(options: ControlPeerOptions): Promise<ControlPeer> {
     const node = await createMarshallNode({
       privateKeyPath: options.privateKeyPath,
-      listen: ["/ip4/127.0.0.1/tcp/0"],
+      listen: options.listen ?? ["/ip4/127.0.0.1/tcp/0"],
     });
     const jobs = options.jobs ?? [defaultToyTrainingJob()];
     const coordinator = options.coordinatorUrl == null ? undefined : new CoordinatorClient(options.coordinatorUrl);
@@ -192,17 +193,5 @@ export class ControlPeer {
 }
 
 function defaultToyTrainingJob(): TrainingJob {
-  return TrainingJobSchema.parse({
-    job_id: "job_toy_001",
-    run_id: "run_toy_001",
-    round_id: "round_001",
-    job_type: "train_toy_model",
-    backend: "cpu",
-    dataset_shard: {
-      id: "tiny_italian_local",
-      uri: "file://examples/datasets/tiny-italian.jsonl",
-      token_estimate: 2_000,
-      hash: "sha256:067c5c80ae7ae08a2d33868b85e149de94878dd13c7689a64561d9dd3d0751dd",
-    },
-  });
+  return createToyTrainingJob();
 }

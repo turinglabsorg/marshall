@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const JobTypeSchema = z.enum([
   "train_toy_model",
+  "train_mlx_smoke",
   "train_adapter",
   "evaluate_model",
   "tokenize_dataset",
@@ -49,7 +50,7 @@ export const TrainingJobSchema = z.object({
   job_id: z.string().min(1),
   run_id: z.string().min(1),
   round_id: z.string().min(1),
-  job_type: z.enum(["train_toy_model", "train_adapter"]),
+  job_type: z.enum(["train_toy_model", "train_mlx_smoke", "train_adapter"]),
   backend: BackendSchema,
   dataset_shard: z.object({
     id: z.string().min(1),
@@ -77,7 +78,7 @@ export const ArtifactManifestSchema = z.object({
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   job_id: z.string().min(1),
-  artifact_type: z.enum(["toy_language_model", "lora_adapter"]),
+  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter"]),
   artifact_uri: z.string().min(1),
   artifact_hash: z.string().min(1),
   config_hash: z.string().min(1),
@@ -103,6 +104,15 @@ export const ToyTrainingMetricsSchema = z.object({
   loss_delta: z.number(),
 });
 
+export const MlxSmokeMetricsSchema = z.object({
+  backend: z.literal("mlx"),
+  device: z.string().min(1),
+  weight: z.number(),
+  loss_start: z.number().nonnegative(),
+  loss_end: z.number().nonnegative(),
+  loss_delta: z.number(),
+});
+
 export const AckSchema = z.object({
   accepted: z.boolean(),
   reason: z.string().optional(),
@@ -120,4 +130,5 @@ export type JobStatus = z.infer<typeof JobStatusSchema>;
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
 export type TrainingArtifactManifest = z.infer<typeof TrainingArtifactManifestSchema>;
 export type ToyTrainingMetrics = z.infer<typeof ToyTrainingMetricsSchema>;
+export type MlxSmokeMetrics = z.infer<typeof MlxSmokeMetricsSchema>;
 export type Ack = z.infer<typeof AckSchema>;

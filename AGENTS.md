@@ -36,10 +36,14 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 
 - `src/node.ts` creates TCP + Noise + Yamux libp2p nodes with optional bootstrap and mDNS discovery.
 - `src/identity.ts` persists Ed25519 private keys on disk.
+- `src/control-cli.ts` starts a long-running configurable libp2p control peer.
+- `src/worker-cli.ts` starts a one-job worker that registers, claims, runs, publishes an artifact, and exits.
+- `src/jobs.ts` defines local `train_toy_model` and `train_mlx_smoke` job builders.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
+- `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.

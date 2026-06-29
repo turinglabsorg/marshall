@@ -23,6 +23,7 @@ export interface WorkerPeerOptions {
   privateKeyPath: string;
   workerId: string;
   controlAddr: Multiaddr;
+  listen?: string[];
   backend?: Backend;
   supportedJobs?: JobType[];
   memoryGb?: number;
@@ -38,7 +39,7 @@ export class WorkerPeer {
   static async create(options: WorkerPeerOptions): Promise<WorkerPeer> {
     const node = await createMarshallNode({
       privateKeyPath: options.privateKeyPath,
-      listen: ["/ip4/127.0.0.1/tcp/0"],
+      listen: options.listen ?? ["/ip4/127.0.0.1/tcp/0"],
       bootstrapAddrs: [options.controlAddr.toString()],
     });
     return new WorkerPeer(node, options);
@@ -106,6 +107,10 @@ export class WorkerPeer {
 
   async claimToyTrainingJob(maxTokens = 2_000): Promise<JobClaimResponse> {
     return this.claimJob("train_toy_model", maxTokens);
+  }
+
+  async claimMlxSmokeJob(maxTokens = 4): Promise<JobClaimResponse> {
+    return this.claimJob("train_mlx_smoke", maxTokens);
   }
 
   async reportJobStatus(status: Omit<JobStatus, "peer_id" | "worker_id">): Promise<void> {
