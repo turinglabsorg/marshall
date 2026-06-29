@@ -52,6 +52,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes eval metrics.
 - `training/build_ag_news_dataset.py` downloads AG News CSVs into `.marshall/cache/raw/ag-news`, builds local train/valid/test/eval JSONL plus 4 shards under `.marshall/datasets/ag-news`, and writes a manifest consumed by adapter job creation.
+- `npm run dataset:ag-news:micro:build` uses the same real AG News builder to create many non-fake micro-shards under `.marshall/datasets/ag-news-micro`; `MARSHALL_MICRO_SHARDS` controls the shard/job count.
 - `training/mlx_ag_news_eval.py` evaluates base models or LoRA adapters on AG News exact-label accuracy.
 - `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.

@@ -147,6 +147,17 @@ MARSHALL_JOB_COUNT=4 \
 npm run control:start
 ```
 
+For large-scale scheduling tests without fake adapters, build a micro-sharded AG News dataset. Each shard still contains real AG News examples and each job trains a real LoRA adapter:
+
+```bash
+MARSHALL_MICRO_SHARDS=128 npm run dataset:ag-news:micro:build
+MARSHALL_ADAPTER_DATASET=ag_news \
+MARSHALL_ADAPTER_DATASET_DIR=.marshall/datasets/ag-news-micro \
+MARSHALL_JOB_TYPE=train_adapter \
+MARSHALL_JOB_COUNT=128 \
+npm run control:start
+```
+
 Start a worker against a control multiaddr:
 
 ```bash
@@ -173,6 +184,8 @@ npm run build
 npm run dataset:marshall:check
 npm run dataset:ag-news:build
 npm run dataset:ag-news:check
+MARSHALL_MICRO_SHARDS=128 npm run dataset:ag-news:micro:build
+MARSHALL_MICRO_SHARDS=128 npm run dataset:ag-news:micro:check
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
