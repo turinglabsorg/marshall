@@ -13,6 +13,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 
 ## Initial Stack
 
+- Node.js 22+ runtime for current js-libp2p dependencies.
 - TypeScript libp2p for the p2p substrate.
 - Python MLX runner for Apple Silicon LoRA jobs.
 - FastAPI for coordinator admin APIs.

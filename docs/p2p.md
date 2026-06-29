@@ -13,6 +13,10 @@ Reasons:
 - good fit with existing AgentLab tooling;
 - worker MLX runners can remain Python processes invoked by the worker peer.
 
+Runtime:
+
+- Node.js 22 or newer is required for current js-libp2p dependencies.
+
 The first worker process can be:
 
 ```text

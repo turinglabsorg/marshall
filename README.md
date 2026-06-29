@@ -51,3 +51,29 @@ marshall/
 ```
 
 The implementation should start with the libp2p substrate and the MVP contracts in `docs/mvp.md`.
+
+## Prototype Status
+
+The first p2p substrate prototype is implemented.
+
+It proves:
+
+- a libp2p control peer can listen on localhost over TCP;
+- a worker peer can dial it over libp2p;
+- the worker can register over `/marshall/worker/register/1.0.0`;
+- the worker can send heartbeat, job claim, job status, and artifact manifest messages over versioned libp2p streams;
+- the control peer can assign one `TrainAdapterJob` and accept the worker artifact manifest only when it matches the assigned worker.
+
+## Development
+
+Use Node.js 22 or newer.
+
+```bash
+nvm use
+npm install
+npm run build
+npm test
+npm run demo:compiled
+```
+
+The integration test opens real TCP sockets on `127.0.0.1`, starts a control peer and worker peer, and verifies the full p2p job lifecycle.
