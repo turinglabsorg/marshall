@@ -10,6 +10,8 @@ It is native Go and uses Redis for speed and operational simplicity:
 
 The DHT/p2p layer should be used for discovery, routing, and artifact provider lookup. Redis-backed coordinator state remains the source of truth for job ownership, lifecycle transitions, artifact acceptance, and round advancement.
 
+The TypeScript libp2p control peer can be configured with `coordinatorUrl`. In that mode it still speaks the p2p protocols to workers, but persists run/job initialization, worker registration, job claims, job statuses, and artifact manifests through the Go coordinator HTTP API.
+
 ## Runtime
 
 ```bash
@@ -78,4 +80,11 @@ Runtime integration against real Redis:
 ```bash
 docker run --rm -p 6379:6379 redis:7-alpine
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
+```
+
+End-to-end p2p bridge test against a running coordinator:
+
+```bash
+MARSHALL_REDIS_ADDR=127.0.0.1:6379 MARSHALL_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/marshall-coordinator
+MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
 ```

@@ -37,6 +37,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/node.ts` creates TCP + Noise + Yamux libp2p nodes with optional bootstrap and mDNS discovery.
 - `src/identity.ts` persists Ed25519 private keys on disk.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
+- `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
@@ -44,6 +45,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, and ACK payloads.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, and verifies artifact manifest publication.
+- `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, job claims, statuses, artifacts, and append-only events in Redis.
 - `coordinator/http.go` exposes the initial coordinator HTTP admin API.
@@ -61,11 +63,13 @@ npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
 go test ./...
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
+MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
 ```
 
 The p2p integration test opens real TCP sockets on `127.0.0.1`, so sandboxed agents may need escalated execution for test/runtime commands.
 The MLX smoke test requires Apple Silicon plus an MLX-capable Python environment.
 Redis coordinator tests require a real Redis instance; use `redis:7-alpine` for local integration testing.
+The coordinator bridge test requires a running Go coordinator backed by Redis.
 
 ## Development Rules
 

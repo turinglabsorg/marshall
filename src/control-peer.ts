@@ -19,12 +19,14 @@ import {
   type WorkerRegistration,
   type WorkerRegistrationResponse,
 } from "./schemas.js";
+import { CoordinatorClient } from "./coordinator-client.js";
 import { createMarshallNode } from "./node.js";
 import { readJson, writeJson } from "./wire.js";
 
 export interface ControlPeerOptions {
   privateKeyPath: string;
   jobs?: TrainingJob[];
+  coordinatorUrl?: string;
 }
 
 export interface ControlPeerState {
@@ -47,6 +49,7 @@ export class ControlPeer {
   private constructor(
     readonly node: Libp2p,
     private readonly jobs: TrainingJob[],
+    private readonly coordinator?: CoordinatorClient,
   ) {}
 
   static async create(options: ControlPeerOptions): Promise<ControlPeer> {
@@ -54,7 +57,10 @@ export class ControlPeer {
       privateKeyPath: options.privateKeyPath,
       listen: ["/ip4/127.0.0.1/tcp/0"],
     });
-    const peer = new ControlPeer(node, options.jobs ?? [defaultToyTrainingJob()]);
+    const jobs = options.jobs ?? [defaultToyTrainingJob()];
+    const coordinator = options.coordinatorUrl == null ? undefined : new CoordinatorClient(options.coordinatorUrl);
+    const peer = new ControlPeer(node, jobs, coordinator);
+    await coordinator?.initializeJobs(jobs);
     await peer.registerHandlers();
     return peer;
   }
@@ -81,6 +87,17 @@ export class ControlPeer {
 
   private async handleWorkerRegister(stream: Stream): Promise<void> {
     const registration = WorkerRegistrationSchema.parse(await readJson(stream));
+    try {
+      await this.coordinator?.registerWorker(registration);
+    } catch (error) {
+      await writeJson(stream, {
+        accepted: false,
+        worker_id: registration.worker_id,
+        peer_id: registration.peer_id,
+      });
+      return;
+    }
+
     this.state.registrations.push(registration);
     const response: WorkerRegistrationResponse = {
       accepted: true,
@@ -101,11 +118,30 @@ export class ControlPeer {
     const claim = JobClaimSchema.parse(await readJson(stream));
     const job = this.jobs.find((candidate) => candidate.job_type === claim.job_type && candidate.backend === claim.backend);
 
-    const response: JobClaimResponse = job
+    let response: JobClaimResponse = job
       ? { accepted: true, job }
       : { accepted: false, job: null, reason: "no compatible job available" };
 
-    if (job) {
+    if (job != null && this.coordinator != null) {
+      try {
+        const coordinatorClaim = await this.coordinator.claimJob(job.job_id, {
+          ...claim,
+          job_type: job.job_type,
+          backend: job.backend,
+        });
+        response = coordinatorClaim.accepted
+          ? { accepted: true, job }
+          : { accepted: false, job: null, reason: coordinatorClaim.reason ?? "coordinator rejected job claim" };
+      } catch (error) {
+        response = {
+          accepted: false,
+          job: null,
+          reason: error instanceof Error ? error.message : "coordinator rejected job claim",
+        };
+      }
+    }
+
+    if (response.accepted && job) {
       this.state.assignedJobs.set(job.job_id, claim.worker_id);
     }
 
@@ -114,6 +150,16 @@ export class ControlPeer {
 
   private async handleJobStatus(stream: Stream): Promise<void> {
     const status = JobStatusSchema.parse(await readJson(stream));
+    try {
+      await this.coordinator?.updateJobStatus(status);
+    } catch (error) {
+      await writeJson(stream, AckSchema.parse({
+        accepted: false,
+        reason: error instanceof Error ? error.message : "coordinator rejected job status",
+      }));
+      return;
+    }
+
     this.state.statuses.push(status);
     await writeJson(stream, AckSchema.parse({ accepted: true }));
   }
@@ -126,6 +172,16 @@ export class ControlPeer {
       await writeJson(stream, AckSchema.parse({
         accepted: false,
         reason: "artifact producer does not match assigned worker",
+      }));
+      return;
+    }
+
+    try {
+      await this.coordinator?.publishArtifact(manifest);
+    } catch (error) {
+      await writeJson(stream, AckSchema.parse({
+        accepted: false,
+        reason: error instanceof Error ? error.message : "coordinator rejected artifact manifest",
       }));
       return;
     }

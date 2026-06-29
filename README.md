@@ -22,6 +22,7 @@ Marshall now includes a native Go coordinator prototype backed by Redis:
 - `coordinator/redis_store.go` stores derived state in Redis hashes/sets;
 - Redis Streams provide the append-only event log;
 - job claims are atomic through a Redis Lua script.
+- the TypeScript libp2p control peer can bridge worker lifecycle events into the coordinator through `coordinatorUrl`.
 
 Run it locally with Redis:
 
@@ -61,6 +62,7 @@ The first milestone is complete when workers discover the network through libp2p
 marshall/
   src/
     control-peer.ts
+    coordinator-client.ts
     worker-peer.ts
     training-runner.ts
   training/
@@ -112,9 +114,11 @@ npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
 go test ./...
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
+MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
 ```
 
 The integration test opens real TCP sockets on `127.0.0.1`, starts a control peer and worker peer, and verifies the full p2p job lifecycle.
 It also runs the toy trainer and asserts that the loss decreases before publishing the artifact manifest.
 The MLX smoke test is intended for Apple Silicon workers with MLX installed and verifies GPU execution.
 The Redis-backed coordinator integration tests require a reachable Redis server.
+The coordinator bridge test requires the Go coordinator running and verifies that p2p worker registration, job claim, status, and artifact publication are persisted as coordinator events.
