@@ -70,6 +70,7 @@ marshall/
   training/
     tiny_char_lm.py
     mlx_linear_smoke.py
+    mlx_lora_smoke.py
   coordinator/
     redis_store.go
     http.go
@@ -79,6 +80,9 @@ marshall/
   examples/
     datasets/
       tiny-italian.jsonl
+      marshall-instructions/
+        train.jsonl
+        valid.jsonl
   docs/
     architecture.md
     p2p.md
@@ -103,6 +107,7 @@ It proves:
 - the training runner emits `model.json`, `metrics.json`, `train.log`, and a `toy_language_model` manifest.
 - `training/mlx_linear_smoke.py` verifies that a remote Apple Silicon worker can run a tiny MLX gradient-descent job on GPU.
 - `train_mlx_smoke` can be assigned through the p2p lifecycle and emits an `mlx_smoke_result` artifact manifest.
+- `train_adapter` runs a tiny MLX-LM LoRA job against `examples/datasets/marshall-instructions` and emits a `lora_adapter` artifact manifest.
 
 ## CLI Runtime
 
@@ -111,7 +116,7 @@ Start a control peer with a Redis-backed coordinator:
 ```bash
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 \
 MARSHALL_CONTROL_LISTEN=/ip4/0.0.0.0/tcp/4001 \
-MARSHALL_JOB_TYPE=train_mlx_smoke \
+MARSHALL_JOB_TYPE=train_adapter \
 npm run control:start
 ```
 
@@ -121,9 +126,12 @@ Start a worker against a control multiaddr:
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python \
 npm run worker:start -- \
   --control /ip4/127.0.0.1/tcp/4001/p2p/<control-peer-id> \
-  --job-type train_mlx_smoke \
+  --job-type train_adapter \
   --backend mlx \
-  --worker-id macbook-mlx-01
+  --worker-id macbook-mlx-01 \
+  --iters 20 \
+  --batch-size 1 \
+  --num-layers 4
 ```
 
 ## Development
@@ -137,6 +145,7 @@ npm run build
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora
 go test ./...
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test

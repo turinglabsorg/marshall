@@ -113,6 +113,36 @@ export const MlxSmokeMetricsSchema = z.object({
   loss_delta: z.number(),
 });
 
+export const MlxLoraMetricsSchema = z.object({
+  job_id: z.string().min(1),
+  run_id: z.string().min(1),
+  round_id: z.string().min(1),
+  backend: z.literal("mlx"),
+  device: z.string().min(1),
+  model: z.string().min(1),
+  dataset: z.string().min(1),
+  adapter_path: z.string().min(1),
+  train_examples: z.number().int().positive(),
+  valid_examples: z.number().int().nonnegative(),
+  iters: z.number().int().positive(),
+  batch_size: z.number().int().positive(),
+  learning_rate: z.number().positive(),
+  num_layers: z.number().int().positive(),
+  max_seq_length: z.number().int().positive(),
+  mask_prompt: z.boolean(),
+  grad_checkpoint: z.boolean(),
+  train_loss_start: z.number().nonnegative().optional(),
+  train_loss_end: z.number().nonnegative().optional(),
+  train_loss_delta: z.number().optional(),
+  artifact_files: z.array(z.object({
+    path: z.string().min(1),
+    bytes: z.number().int().nonnegative(),
+    sha256: z.string().min(1),
+  })).min(1),
+  stdout_log: z.string().min(1),
+  stderr_log: z.string().min(1),
+});
+
 export const AckSchema = z.object({
   accepted: z.boolean(),
   reason: z.string().optional(),
@@ -131,4 +161,5 @@ export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
 export type TrainingArtifactManifest = z.infer<typeof TrainingArtifactManifestSchema>;
 export type ToyTrainingMetrics = z.infer<typeof ToyTrainingMetricsSchema>;
 export type MlxSmokeMetrics = z.infer<typeof MlxSmokeMetricsSchema>;
+export type MlxLoraMetrics = z.infer<typeof MlxLoraMetricsSchema>;
 export type Ack = z.infer<typeof AckSchema>;

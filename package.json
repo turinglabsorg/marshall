@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:mlx:smoke": "${MARSHALL_PYTHON:-python3} training/mlx_linear_smoke.py",
+    "test:mlx:lora": "${MARSHALL_PYTHON:-python3} training/mlx_lora_smoke.py --dataset-dir examples/datasets/marshall-instructions --output-dir .marshall/manual-lora --job-id job_manual_lora --run-id run_manual_lora --round-id round_001 --iters ${MARSHALL_ITERS:-20}",
     "test:watch": "vitest",
     "control:start": "tsx src/control-cli.ts",
     "worker:start": "tsx src/worker-cli.ts",

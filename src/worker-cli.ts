@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { multiaddr } from "@multiformats/multiaddr";
 import { defaultBackendForJob } from "./jobs.js";
 import type { Backend, JobType, TrainingJob } from "./schemas.js";
-import { runMlxSmokeTraining, runToyTraining } from "./training-runner.js";
+import { runMlxLoraTraining, runMlxSmokeTraining, runToyTraining } from "./training-runner.js";
 import { WorkerPeer } from "./worker-peer.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -30,7 +30,7 @@ let claimedJob: TrainingJob | undefined;
 try {
   await worker.register();
   await worker.heartbeat("idle");
-  const claim = await worker.claimJob(jobType, jobType === "train_mlx_smoke" ? 4 : 2_000);
+  const claim = await worker.claimJob(jobType, maxTokensForJob(jobType));
 
   if (!claim.accepted || claim.job == null) {
     throw new Error(`no job assigned: ${claim.reason ?? "unknown reason"}`);
@@ -81,6 +81,22 @@ try {
 
 async function runClaimedJob(job: TrainingJob) {
   const outputRoot = args["artifacts-dir"] ?? process.env.MARSHALL_ARTIFACTS_DIR ?? ".marshall/artifacts";
+  if (job.job_type === "train_adapter") {
+    return runMlxLoraTraining(job, {
+      outputRoot,
+      pythonBin: args.python ?? process.env.MARSHALL_PYTHON,
+      model: args.model ?? process.env.MARSHALL_MODEL,
+      iters: numberArg(args.iters ?? process.env.MARSHALL_ITERS, 20),
+      batchSize: numberArg(args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE, 1),
+      learningRate: numberArg(args["learning-rate"] ?? process.env.MARSHALL_LEARNING_RATE, 1e-5),
+      numLayers: numberArg(args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS, 4),
+      maxSeqLength: numberArg(args["max-seq-length"] ?? process.env.MARSHALL_MAX_SEQ_LENGTH, 512),
+      maskPrompt: args["no-mask-prompt"] === "true"
+        ? false
+        : booleanArg(args["mask-prompt"] ?? process.env.MARSHALL_MASK_PROMPT, true),
+      gradCheckpoint: booleanArg(args["grad-checkpoint"] ?? process.env.MARSHALL_GRAD_CHECKPOINT, false),
+    });
+  }
   if (job.job_type === "train_mlx_smoke") {
     return runMlxSmokeTraining(job, {
       outputRoot,
@@ -94,6 +110,16 @@ async function runClaimedJob(job: TrainingJob) {
     });
   }
   throw new Error(`worker CLI cannot run job type: ${job.job_type}`);
+}
+
+function maxTokensForJob(value: JobType): number {
+  if (value === "train_mlx_smoke") {
+    return 4;
+  }
+  if (value === "train_adapter") {
+    return 8_000;
+  }
+  return 2_000;
 }
 
 function parseArgs(values: string[]): Record<string, string> {
@@ -119,8 +145,8 @@ function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_mlx_smoke"> {
-  if (value === "train_toy_model" || value === "train_mlx_smoke") {
+function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_mlx_smoke" | "train_adapter"> {
+  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter") {
     return value;
   }
   throw new Error(`unsupported worker CLI job type: ${value}`);
@@ -142,4 +168,17 @@ function numberArg(value: string | undefined, fallback: number): number {
     throw new Error(`invalid number: ${value}`);
   }
   return parsed;
+}
+
+function booleanArg(value: string | undefined, fallback: boolean): boolean {
+  if (value == null) {
+    return fallback;
+  }
+  if (value === "true" || value === "1" || value === "yes") {
+    return true;
+  }
+  if (value === "false" || value === "0" || value === "no") {
+    return false;
+  }
+  throw new Error(`invalid boolean: ${value}`);
 }

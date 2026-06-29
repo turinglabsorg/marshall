@@ -38,13 +38,32 @@ export function createMlxSmokeJob(options: TrainingJobOptions = {}): TrainingJob
   });
 }
 
+export function createAdapterTrainingJob(options: TrainingJobOptions = {}): TrainingJob {
+  return TrainingJobSchema.parse({
+    job_id: options.jobId ?? "job_adapter_001",
+    run_id: options.runId ?? "run_adapter_001",
+    round_id: options.roundId ?? "round_001",
+    job_type: "train_adapter",
+    backend: "mlx",
+    dataset_shard: {
+      id: "marshall_instructions_local",
+      uri: "file://examples/datasets/marshall-instructions",
+      token_estimate: 8_000,
+      hash: "sha256:633b1de13fa093d1ea4b263f9a356835a764d0532ec900ee701bbc764ea54e88",
+    },
+  });
+}
+
 export function defaultBackendForJob(jobType: TrainingJob["job_type"]): Backend {
-  return jobType === "train_mlx_smoke" ? "mlx" : "cpu";
+  return jobType === "train_mlx_smoke" || jobType === "train_adapter" ? "mlx" : "cpu";
 }
 
 export function createTrainingJob(jobType: TrainingJob["job_type"], options: TrainingJobOptions = {}): TrainingJob {
   if (jobType === "train_mlx_smoke") {
     return createMlxSmokeJob(options);
+  }
+  if (jobType === "train_adapter") {
+    return createAdapterTrainingJob(options);
   }
   if (jobType === "train_toy_model") {
     return createToyTrainingJob(options);

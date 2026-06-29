@@ -53,7 +53,7 @@ function splitList(value: string): string[] {
 }
 
 function jobTypeArg(value: string): TrainingJob["job_type"] {
-  if (value === "train_toy_model" || value === "train_mlx_smoke") {
+  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter") {
     return value;
   }
   throw new Error(`unsupported CLI job type: ${value}`);

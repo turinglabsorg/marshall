@@ -1,12 +1,14 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  MlxLoraMetricsSchema,
   MlxSmokeMetricsSchema,
   ToyTrainingMetricsSchema,
   TrainingArtifactManifestSchema,
+  type MlxLoraMetrics,
   type MlxSmokeMetrics,
   type ToyTrainingMetrics,
   type TrainingArtifactManifest,
@@ -38,6 +40,28 @@ export interface MlxSmokeRunnerOptions {
 export interface MlxSmokeRun {
   manifest: TrainingArtifactManifest;
   metrics: MlxSmokeMetrics;
+  outputDir: string;
+  stdout: string;
+  stderr: string;
+}
+
+export interface MlxLoraRunnerOptions {
+  outputRoot: string;
+  projectRoot?: string;
+  pythonBin?: string;
+  model?: string;
+  iters?: number;
+  batchSize?: number;
+  learningRate?: number;
+  numLayers?: number;
+  maxSeqLength?: number;
+  maskPrompt?: boolean;
+  gradCheckpoint?: boolean;
+}
+
+export interface MlxLoraRun {
+  manifest: TrainingArtifactManifest;
+  metrics: MlxLoraMetrics;
   outputDir: string;
   stdout: string;
   stderr: string;
@@ -75,6 +99,94 @@ export async function runToyTraining(job: TrainingJob, options: ToyTrainingRunne
   const metrics = ToyTrainingMetricsSchema.parse(
     JSON.parse(await readFile(join(outputDir, "metrics.json"), "utf8")),
   );
+
+  return {
+    manifest,
+    metrics,
+    outputDir,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+export async function runMlxLoraTraining(job: TrainingJob, options: MlxLoraRunnerOptions): Promise<MlxLoraRun> {
+  if (job.job_type !== "train_adapter") {
+    throw new Error(`unsupported MLX LoRA job type: ${job.job_type}`);
+  }
+
+  const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  const datasetPath = resolveDatasetUri(job.dataset_shard.uri, projectRoot);
+  const outputDir = resolve(options.outputRoot, job.job_id);
+  const scriptPath = resolve(projectRoot, "training/mlx_lora_smoke.py");
+  const adapterDir = join(outputDir, "adapters");
+  const metricsPath = join(outputDir, "metrics.json");
+  const model = options.model ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit";
+  const iters = options.iters ?? 20;
+  const batchSize = options.batchSize ?? 1;
+  const learningRate = options.learningRate ?? 1e-5;
+  const numLayers = options.numLayers ?? 4;
+  const maxSeqLength = options.maxSeqLength ?? 512;
+  const maskPrompt = options.maskPrompt ?? true;
+  const gradCheckpoint = options.gradCheckpoint ?? false;
+
+  await mkdir(outputDir, { recursive: true });
+
+  const args = [
+    scriptPath,
+    "--dataset-dir",
+    datasetPath,
+    "--output-dir",
+    outputDir,
+    "--job-id",
+    job.job_id,
+    "--run-id",
+    job.run_id,
+    "--round-id",
+    job.round_id,
+    "--model",
+    model,
+    "--iters",
+    String(iters),
+    "--batch-size",
+    String(batchSize),
+    "--learning-rate",
+    String(learningRate),
+    "--num-layers",
+    String(numLayers),
+    "--max-seq-length",
+    String(maxSeqLength),
+    maskPrompt ? "--mask-prompt" : "--no-mask-prompt",
+  ];
+  if (gradCheckpoint) {
+    args.push("--grad-checkpoint");
+  }
+
+  const result = await runProcess(options.pythonBin ?? "python3", args);
+  const metrics = MlxLoraMetricsSchema.parse(JSON.parse(await readFile(metricsPath, "utf8")));
+  const configHash = sha256Text(JSON.stringify({
+    job_type: job.job_type,
+    backend: job.backend,
+    script: "training/mlx_lora_smoke.py",
+    dataset_hash: job.dataset_shard.hash,
+    model,
+    iters,
+    batchSize,
+    learningRate,
+    numLayers,
+    maxSeqLength,
+    maskPrompt,
+    gradCheckpoint,
+  }));
+  const manifest = TrainingArtifactManifestSchema.parse({
+    job_id: job.job_id,
+    artifact_type: "lora_adapter",
+    artifact_uri: pathToFileURL(adapterDir).toString(),
+    artifact_hash: await sha256Path(adapterDir),
+    config_hash: configHash,
+    created_at: new Date().toISOString(),
+    metrics_uri: pathToFileURL(metricsPath).toString(),
+  });
+  await writeFile(join(outputDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
 
   return {
     manifest,
@@ -173,6 +285,40 @@ async function sha256File(path: string): Promise<string> {
   const hash = createHash("sha256");
   hash.update(await readFile(path));
   return `sha256:${hash.digest("hex")}`;
+}
+
+async function sha256Path(path: string): Promise<string> {
+  const info = await stat(path);
+  if (info.isFile()) {
+    return sha256File(path);
+  }
+  if (!info.isDirectory()) {
+    throw new Error(`cannot hash non-file path: ${path}`);
+  }
+
+  const hash = createHash("sha256");
+  await hashDirectory(hash, path, path);
+  return `sha256:${hash.digest("hex")}`;
+}
+
+async function hashDirectory(hash: ReturnType<typeof createHash>, root: string, current: string): Promise<void> {
+  const entries = (await readdir(current, { withFileTypes: true }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of entries) {
+    const path = join(current, entry.name);
+    const rel = relative(root, path).replaceAll("\\", "/");
+    if (entry.isDirectory()) {
+      hash.update(`dir\0${rel}\0`);
+      await hashDirectory(hash, root, path);
+      continue;
+    }
+    if (entry.isFile()) {
+      const content = await readFile(path);
+      hash.update(`file\0${rel}\0${content.byteLength}\0`);
+      hash.update(content);
+    }
+  }
 }
 
 function sha256Text(value: string): string {
