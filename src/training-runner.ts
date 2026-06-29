@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { prepareDatasetShard } from "./dataset-cache.js";
 import {
   MlxLoraMetricsSchema,
   MlxSmokeMetricsSchema,
@@ -19,6 +20,7 @@ export interface ToyTrainingRunnerOptions {
   outputRoot: string;
   projectRoot?: string;
   pythonBin?: string;
+  datasetCacheRoot?: string;
   epochs?: number;
   learningRate?: number;
 }
@@ -49,6 +51,7 @@ export interface MlxLoraRunnerOptions {
   outputRoot: string;
   projectRoot?: string;
   pythonBin?: string;
+  datasetCacheRoot?: string;
   model?: string;
   iters?: number;
   batchSize?: number;
@@ -77,7 +80,11 @@ export async function runToyTraining(job: TrainingJob, options: ToyTrainingRunne
   }
 
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const datasetPath = resolveDatasetUri(job.dataset_shard.uri, projectRoot);
+  const preparedDataset = await prepareDatasetShard(job.dataset_shard, {
+    projectRoot,
+    cacheRoot: options.datasetCacheRoot,
+  });
+  const datasetPath = preparedDataset.path;
   const outputDir = resolve(options.outputRoot, job.job_id);
   const scriptPath = resolve(projectRoot, "training/tiny_char_lm.py");
 
@@ -119,7 +126,11 @@ export async function runMlxLoraTraining(job: TrainingJob, options: MlxLoraRunne
   }
 
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const datasetPath = resolveDatasetUri(job.dataset_shard.uri, projectRoot);
+  const preparedDataset = await prepareDatasetShard(job.dataset_shard, {
+    projectRoot,
+    cacheRoot: options.datasetCacheRoot,
+  });
+  const datasetPath = preparedDataset.path;
   const outputDir = resolve(options.outputRoot, job.job_id);
   const scriptPath = resolve(projectRoot, "training/mlx_lora_smoke.py");
   const adapterDir = join(outputDir, "adapters");
@@ -261,15 +272,6 @@ export async function runMlxSmokeTraining(job: TrainingJob, options: MlxSmokeRun
     stdout: result.stdout,
     stderr: result.stderr,
   };
-}
-
-function resolveDatasetUri(uri: string, projectRoot: string): string {
-  if (!uri.startsWith("file://")) {
-    throw new Error(`unsupported dataset URI: ${uri}`);
-  }
-
-  const path = uri.slice("file://".length);
-  return path.startsWith("/") ? path : resolve(projectRoot, path);
 }
 
 async function runProcess(command: string, args: string[]): Promise<{ stdout: string; stderr: string }> {

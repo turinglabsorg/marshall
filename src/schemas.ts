@@ -53,6 +53,10 @@ export const TrainingJobSchema = z.object({
   job_type: z.enum(["train_toy_model", "train_mlx_smoke", "train_adapter"]),
   backend: BackendSchema,
   dataset_shard: z.object({
+    dataset_id: z.string().min(1).optional(),
+    dataset_version: z.string().min(1).optional(),
+    schema: z.string().min(1).optional(),
+    license: z.string().min(1).optional(),
     id: z.string().min(1),
     uri: z.string().min(1),
     token_estimate: z.number().positive(),

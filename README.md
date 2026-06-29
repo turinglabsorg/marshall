@@ -81,6 +81,7 @@ marshall/
     datasets/
       tiny-italian.jsonl
       marshall-instructions/
+        manifest.json
         train.jsonl
         valid.jsonl
         test.jsonl
@@ -118,6 +119,7 @@ It proves:
 - `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes `eval.json` metrics.
 - `MARSHALL_JOB_COUNT` lets the control CLI create multiple jobs in one run; `train_adapter` uses dataset shards for multi-worker claims.
+- workers materialize only the assigned shard into a content-addressed cache under `.marshall/cache/datasets/<sha256>` before training.
 
 ## CLI Runtime
 
@@ -140,6 +142,7 @@ npm run worker:start -- \
   --job-type train_adapter \
   --backend mlx \
   --worker-id macbook-mlx-01 \
+  --dataset-cache-dir .marshall/cache/datasets \
   --iters 20 \
   --batch-size 1 \
   --num-layers 4
@@ -169,3 +172,9 @@ It also runs the toy trainer and asserts that the loss decreases before publishi
 The MLX smoke test is intended for Apple Silicon workers with MLX installed and verifies GPU execution.
 The Redis-backed coordinator integration tests require a reachable Redis server.
 The coordinator bridge test requires the Go coordinator running and verifies that p2p worker registration, job claim, status, and artifact publication are persisted as coordinator events.
+
+Dataset artifacts are private/local for now. The repository carries only the synthetic MIT Marshall structure-validation dataset; external datasets should stay outside the repo until license and distribution policy are reviewed.
+
+## License
+
+Marshall source code is MIT licensed. The project remains private for structure validation; external datasets and generated training artifacts are not published from this repository.

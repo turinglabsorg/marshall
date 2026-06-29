@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import sys
@@ -13,6 +14,10 @@ from typing import Any
 
 SEED = 7727
 SHARD_COUNT = 4
+DATASET_ID = "marshall-ops-synthetic-v1"
+DATASET_VERSION = "2026-06-29"
+DATASET_LICENSE = "MIT"
+DATASET_SCHEMA = "mlx-chat-jsonl"
 
 SYSTEMS = {
     "summary": "You summarize Marshall coordinator events with concise operational language.",
@@ -98,6 +103,7 @@ def build_dataset_files() -> dict[str, str]:
         shard_dir = f"shards/shard-{index:03d}"
         files[f"{shard_dir}/train.jsonl"] = to_jsonl(train_shard)
         files[f"{shard_dir}/valid.jsonl"] = to_jsonl(valid_shard)
+    files["manifest.json"] = build_manifest(files)
 
     return files
 
@@ -324,6 +330,40 @@ def to_jsonl(records: list[dict[str, Any]]) -> str:
     return "".join(json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n" for record in records)
 
 
+def build_manifest(files: dict[str, str]) -> str:
+    shards = []
+    for index in range(1, SHARD_COUNT + 1):
+        shard_path = f"shards/shard-{index:03d}"
+        shards.append({
+            "shard_id": f"marshall_instructions_shard_{index:03d}",
+            "split": "train_valid",
+            "uri": f"file://examples/datasets/marshall-instructions/{shard_path}",
+            "sha256": hash_split_files(files, [f"{shard_path}/train.jsonl", f"{shard_path}/valid.jsonl"]),
+            "token_estimate": 18_000,
+        })
+
+    manifest = {
+        "dataset_id": DATASET_ID,
+        "version": DATASET_VERSION,
+        "license": DATASET_LICENSE,
+        "visibility": "private-structure-validation",
+        "schema": DATASET_SCHEMA,
+        "root_hash": hash_split_files(files, ["train.jsonl", "valid.jsonl", "test.jsonl", "eval.jsonl"]),
+        "notes": "Synthetic Marshall coordinator-event dataset for validating private worker, shard, cache, training, and evaluation flow. External datasets are intentionally excluded.",
+        "shards": shards,
+    }
+    return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+
+
+def hash_split_files(files: dict[str, str], names: list[str]) -> str:
+    digest = hashlib.sha256()
+    for name in names:
+        content = files[name].encode("utf8")
+        digest.update(f"file\0{Path(name).name}\0{len(content)}\0".encode("utf8"))
+        digest.update(content)
+    return f"sha256:{digest.hexdigest()}"
+
+
 def split_records(records: list[dict[str, Any]], shard_count: int) -> list[list[dict[str, Any]]]:
     shards = [[] for _ in range(shard_count)]
     for index, record in enumerate(records):
@@ -352,6 +392,7 @@ def validate_files(output_dir: Path) -> None:
         raise ValueError("eval.jsonl needs at least 12 records")
     for index, record in enumerate(eval_records, start=1):
         validate_eval_record(output_dir / "eval.jsonl", index, record, chat_prompts)
+    validate_manifest(output_dir / "manifest.json")
 
     shard_train_prompts: set[str] = set()
     for shard_index in range(1, SHARD_COUNT + 1):
@@ -380,6 +421,21 @@ def validate_files(output_dir: Path) -> None:
         + ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
         + f", eval.jsonl={len(eval_records)}, shards={SHARD_COUNT}"
     )
+
+
+def validate_manifest(path: Path) -> None:
+    manifest = json.loads(path.read_text(encoding="utf8"))
+    if manifest.get("dataset_id") != DATASET_ID:
+        raise ValueError(f"{path}: invalid dataset_id")
+    if manifest.get("version") != DATASET_VERSION:
+        raise ValueError(f"{path}: invalid version")
+    if manifest.get("license") != DATASET_LICENSE:
+        raise ValueError(f"{path}: invalid license")
+    if manifest.get("schema") != DATASET_SCHEMA:
+        raise ValueError(f"{path}: invalid schema")
+    shards = manifest.get("shards")
+    if not isinstance(shards, list) or len(shards) != SHARD_COUNT:
+        raise ValueError(f"{path}: expected {SHARD_COUNT} shards")
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:

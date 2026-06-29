@@ -60,6 +60,7 @@ describe("Marshall p2p substrate", () => {
 
     const training = await runToyTraining(claim.job!, {
       outputRoot: join(tempDir, "artifacts"),
+      datasetCacheRoot: join(tempDir, "dataset-cache"),
       epochs: 25,
       learningRate: 0.35,
     });
@@ -131,6 +132,7 @@ describe("Marshall p2p substrate", () => {
       });
       const training = await runToyTraining(claim.job!, {
         outputRoot: join(tempDir, "artifacts"),
+        datasetCacheRoot: join(tempDir, "dataset-cache"),
         epochs: 15,
         learningRate: 0.35,
       });

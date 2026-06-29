@@ -81,9 +81,11 @@ try {
 
 async function runClaimedJob(job: TrainingJob) {
   const outputRoot = args["artifacts-dir"] ?? process.env.MARSHALL_ARTIFACTS_DIR ?? ".marshall/artifacts";
+  const datasetCacheRoot = args["dataset-cache-dir"] ?? process.env.MARSHALL_DATASET_CACHE_DIR;
   if (job.job_type === "train_adapter") {
     return runMlxLoraTraining(job, {
       outputRoot,
+      datasetCacheRoot,
       pythonBin: args.python ?? process.env.MARSHALL_PYTHON,
       model: args.model ?? process.env.MARSHALL_MODEL,
       iters: numberArg(args.iters ?? process.env.MARSHALL_ITERS, 20),
@@ -110,6 +112,7 @@ async function runClaimedJob(job: TrainingJob) {
   if (job.job_type === "train_toy_model") {
     return runToyTraining(job, {
       outputRoot,
+      datasetCacheRoot,
       pythonBin: args.python ?? process.env.MARSHALL_PYTHON,
     });
   }

@@ -51,8 +51,9 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
 - `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes eval metrics.
+- `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
-- `examples/datasets/marshall-instructions/{train,valid,test,eval}.jsonl` plus `shards/shard-*/{train,valid}.jsonl` is the tiny chat/eval dataset for Marshall coordinator-event summaries and multi-worker adapter claims.
+- `examples/datasets/marshall-instructions/manifest.json`, `{train,valid,test,eval}.jsonl`, and `shards/shard-*/{train,valid}.jsonl` are the private synthetic MIT dataset artifacts for Marshall coordinator-event summaries and multi-worker adapter claims.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, and ACK payloads.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers four workers claiming independent jobs concurrently.
@@ -85,6 +86,7 @@ The MLX smoke test requires Apple Silicon plus an MLX-capable Python environment
 The MLX LoRA train/eval tests require Apple Silicon plus `mlx-lm` installed in the worker Python environment.
 Redis coordinator tests require a real Redis instance; use `redis:7-alpine` for local integration testing.
 The coordinator bridge test requires a running Go coordinator backed by Redis.
+External datasets must stay out of the repo until license and distribution policy are explicitly reviewed.
 
 ## Development Rules
 
