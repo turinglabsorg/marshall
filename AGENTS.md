@@ -17,6 +17,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - Worker registration, job claim, job status, heartbeat, and artifact manifests must work over libp2p streams.
 - HTTP endpoints are admin/debug/dashboard conveniences, not the primary worker network.
 - Target public participation: unknown workers may onboard, but trusted work requires validator verdicts, reputation, and coordinator-enforced suspension for bad actors.
+- `ROADMAP.md` is the product/architecture roadmap for future larger-parameter fine-tuning, replicated inference, and trusted cluster modes. Keep public permissionless swarm work separate from trusted model-parallel cluster work.
 
 ## Initial Stack
 
