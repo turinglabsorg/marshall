@@ -13,6 +13,7 @@ const jobPrefix = args["job-prefix"] ?? args["job-id"] ?? process.env.MARSHALL_J
 const runRoot = args["run-root"] ?? process.env.MARSHALL_RUN_ROOT ?? join(".marshall", "runs", runId);
 const datasetDir = args["dataset-dir"] ?? process.env.MARSHALL_ADAPTER_DATASET_DIR ?? ".marshall/datasets/ag-news";
 const evalFile = args["eval-file"] ?? process.env.MARSHALL_EVAL_FILE ?? join(datasetDir, "eval.jsonl");
+const model = requiredArg("model", args.model ?? process.env.MARSHALL_MODEL);
 const coordinatorUrl = args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL;
 const coordinatorToken = args["coordinator-token"] ?? process.env.MARSHALL_COORDINATOR_TOKEN;
 const swarmToken = args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN;
@@ -115,6 +116,8 @@ await runScript(evalJobsScript, [
   "--adapter-job-prefix", jobPrefix,
   "--eval-file", evalFile,
   "--artifact-uri-mode", "p2p",
+  "--eval-kind", "ag_news",
+  "--model", model,
   "--output", evalJobsFile,
   "--run-id", `${runId}_eval`,
   "--job-prefix", `${jobPrefix}_eval`,
@@ -617,6 +620,13 @@ function parseArgs(values: string[]): Record<string, string> {
     index += 1;
   }
   return parsed;
+}
+
+function requiredArg(name: string, value: string | undefined): string {
+  if (value == null || value.trim() === "") {
+    throw new Error(`--${name} is required`);
+  }
+  return value;
 }
 
 function numberArg(value: string | undefined, fallback: number): number {

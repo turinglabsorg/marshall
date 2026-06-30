@@ -107,12 +107,13 @@ export const AdapterEvaluationJobSchema = z.object({
   round_id: z.string().min(1),
   job_type: z.literal("evaluate_adapter"),
   backend: BackendSchema,
+  eval_kind: z.enum(["ag_news", "instruction_terms"]),
   model: z.string().min(1),
   adapter: AdapterReferenceSchema,
   eval_shard: DatasetShardSchema,
   labels: z.array(z.string().min(1)).min(1).optional(),
-  max_examples: z.number().int().positive().optional(),
-  max_tokens: z.number().int().positive().optional(),
+  max_examples: z.number().int().positive(),
+  max_tokens: z.number().int().positive(),
 });
 
 export const ArtifactValidationVerdictSchema = z.enum(["accepted", "poor", "rejected", "malicious"]);
@@ -159,6 +160,7 @@ export const AdapterEvaluationMetricsSchema = z.object({
   adapter_artifact_hash: z.string().min(1),
   eval_shard_id: z.string().min(1),
   eval_shard_hash: z.string().min(1),
+  eval_kind: z.enum(["ag_news", "instruction_terms"]),
   model: z.string().min(1),
   adapter_path: z.string().min(1).nullable(),
   eval_file: z.string().min(1),

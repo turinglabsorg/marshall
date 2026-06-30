@@ -5,10 +5,94 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { hashDatasetPath } from "../src/dataset-cache.js";
-import type { TrainingJob } from "../src/schemas.js";
-import { runMlxLoraTraining } from "../src/training-runner.js";
+import { AdapterEvaluationJobSchema, type AdapterEvaluationJob, type TrainingJob } from "../src/schemas.js";
+import { runAdapterEvaluation, runMlxLoraTraining } from "../src/training-runner.js";
 
 describe("training runner", () => {
+  it("rejects adapter evaluation jobs without an explicit evaluation kind", () => {
+    expect(() => AdapterEvaluationJobSchema.parse({
+      job_id: "job_eval_missing_kind",
+      run_id: "run_eval_missing_kind",
+      round_id: "round_001",
+      job_type: "evaluate_adapter",
+      backend: "mlx",
+      model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      adapter: {
+        adapter_id: "job_adapter_missing_kind",
+        artifact_uri: "file://artifacts/job_adapter_missing_kind/adapters",
+        artifact_hash: "sha256:adapter-missing-kind",
+      },
+      eval_shard: {
+        id: "eval_missing_kind",
+        uri: "file://datasets/eval.jsonl",
+        token_estimate: 1,
+        hash: "sha256:eval-missing-kind",
+      },
+      max_examples: 2,
+      max_tokens: 32,
+    })).toThrow();
+  });
+
+  it("normalizes instruction-term adapter evaluations into leaderboard metrics", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "marshall-instruction-eval-test-"));
+    try {
+      const projectRoot = join(tempDir, "project");
+      const datasetRoot = join(tempDir, "dataset");
+      const adapterDir = join(tempDir, "adapter");
+      const outputRoot = join(tempDir, "outputs");
+      const cacheRoot = join(tempDir, "cache");
+      const evalPath = join(datasetRoot, "instruction-eval.jsonl");
+      const fakeScriptPath = join(projectRoot, "training", "mlx_lora_eval.py");
+
+      await mkdir(datasetRoot, { recursive: true });
+      await mkdir(adapterDir, { recursive: true });
+      await mkdir(join(projectRoot, "training"), { recursive: true });
+      await writeFile(evalPath, "{\"id\":\"case-1\"}\n", "utf8");
+      await writeFile(fakeScriptPath, fakeInstructionEvalScript(), "utf8");
+
+      const job: AdapterEvaluationJob = {
+        job_id: "job_instruction_eval",
+        run_id: "run_instruction_eval",
+        round_id: "round_001",
+        job_type: "evaluate_adapter",
+        backend: "mlx",
+        eval_kind: "instruction_terms",
+        model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+        adapter: {
+          adapter_id: "job_instruction_adapter",
+          artifact_uri: pathToFileURL(adapterDir).toString(),
+          artifact_hash: "sha256:instruction-adapter",
+        },
+        eval_shard: {
+          id: "instruction_eval",
+          uri: pathToFileURL(evalPath).toString(),
+          token_estimate: 1,
+          hash: await hashDatasetPath(evalPath),
+        },
+        max_examples: 2,
+        max_tokens: 64,
+      };
+
+      const result = await runAdapterEvaluation(job, {
+        projectRoot,
+        outputRoot,
+        datasetCacheRoot: cacheRoot,
+        pythonBin: process.execPath,
+      });
+
+      expect(result.metrics.eval_kind).toBe("instruction_terms");
+      expect(result.metrics.labels).toEqual(["pass", "fail"]);
+      expect(result.metrics.examples).toBe(2);
+      expect(result.metrics.correct).toBe(1);
+      expect(result.metrics.accuracy).toBe(0.5);
+      expect(result.metrics.invalid_rate).toBe(0);
+      expect(result.metrics.results.map((item) => item.predicted_label)).toEqual(["pass", "fail"]);
+      expect(result.manifest.artifact_type).toBe("adapter_evaluation");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("passes a dataset directory to MLX LoRA even when the cache has one train file", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "marshall-lora-runner-test-"));
     try {
@@ -63,6 +147,46 @@ describe("training runner", () => {
     }
   });
 });
+
+function fakeInstructionEvalScript(): string {
+  return `
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+
+const args = parseArgs(process.argv.slice(2));
+const outputDir = args["output-dir"];
+mkdirSync(outputDir, { recursive: true });
+writeFileSync(join(outputDir, "eval.json"), JSON.stringify({
+  model: args.model,
+  adapter_path: args["adapter-path"],
+  eval_file: args["eval-file"],
+  examples: 2,
+  passed: 1,
+  pass_rate: 0.5,
+  results: [
+    { id: "case-1", output: "contains the required term", passed: true },
+    { id: "case-2", output: "misses it", passed: false }
+  ]
+}, null, 2) + "\\n", "utf8");
+
+function parseArgs(values) {
+  const parsed = {};
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (!value.startsWith("--")) continue;
+    const key = value.slice(2);
+    const next = values[index + 1];
+    if (next == null || next.startsWith("--")) {
+      parsed[key] = "true";
+      continue;
+    }
+    parsed[key] = next;
+    index += 1;
+  }
+  return parsed;
+}
+`;
+}
 
 function fakeMlxLoraScript(): string {
   return `

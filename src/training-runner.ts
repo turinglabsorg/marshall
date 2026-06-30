@@ -314,6 +314,8 @@ export async function runAdapterEvaluation(
   job: AdapterEvaluationJob,
   options: AdapterEvaluationRunnerOptions,
 ): Promise<AdapterEvaluationRun> {
+  const evalKind = job.eval_kind;
+  const evalScript = adapterEvaluationScript(evalKind);
   const projectRoot = resolve(options.projectRoot ?? process.cwd());
   const preparedEval = await prepareDatasetShard(job.eval_shard, {
     projectRoot,
@@ -322,7 +324,7 @@ export async function runAdapterEvaluation(
   const evalPath = preparedEval.path;
   const adapterPath = resolveArtifactUri(job.adapter.artifact_uri, projectRoot);
   const outputDir = resolve(options.outputRoot, job.job_id);
-  const scriptPath = resolve(projectRoot, "training/mlx_ag_news_eval.py");
+  const scriptPath = resolve(projectRoot, evalScript);
   const rawEvalPath = join(outputDir, "eval.json");
   const metricsPath = join(outputDir, "metrics.json");
 
@@ -339,13 +341,15 @@ export async function runAdapterEvaluation(
     "--adapter-path",
     adapterPath,
     "--max-examples",
-    String(job.max_examples ?? 80),
+    String(job.max_examples),
     "--max-tokens",
-    String(job.max_tokens ?? 8),
+    String(job.max_tokens),
   ];
   const result = await runProcess(options.pythonBin ?? "python3", args);
   const rawMetrics = JSON.parse(await readFile(rawEvalPath, "utf8"));
+  const normalizedMetrics = normalizeAdapterEvaluationMetrics(evalKind, rawMetrics);
   const metrics = AdapterEvaluationMetricsSchema.parse({
+    ...normalizedMetrics,
     job_id: job.job_id,
     run_id: job.run_id,
     round_id: job.round_id,
@@ -353,20 +357,21 @@ export async function runAdapterEvaluation(
     adapter_artifact_hash: job.adapter.artifact_hash,
     eval_shard_id: job.eval_shard.id,
     eval_shard_hash: job.eval_shard.hash,
-    ...rawMetrics,
+    eval_kind: evalKind,
   });
   await writeFile(metricsPath, JSON.stringify(metrics, null, 2) + "\n", "utf8");
 
   const configHash = sha256Text(JSON.stringify({
     job_type: job.job_type,
     backend: job.backend,
-    script: "training/mlx_ag_news_eval.py",
+    eval_kind: evalKind,
+    script: evalScript,
     model: job.model,
     adapter_id: job.adapter.adapter_id,
     adapter_hash: job.adapter.artifact_hash,
     eval_hash: job.eval_shard.hash,
-    max_examples: job.max_examples ?? 80,
-    max_tokens: job.max_tokens ?? 8,
+    max_examples: job.max_examples,
+    max_tokens: job.max_tokens,
   }));
   const manifest = TrainingArtifactManifestSchema.parse({
     job_id: job.job_id,
@@ -584,6 +589,106 @@ function adapterEvaluationConsistencyChecks(metrics: AdapterEvaluationMetrics): 
       detail: unknownLabels.length === 0 ? "all predicted labels are in label set" : `unknown labels: ${Array.from(new Set(unknownLabels)).join(", ")}`,
     },
   ];
+}
+
+function adapterEvaluationScript(evalKind: AdapterEvaluationJob["eval_kind"]): string {
+  if (evalKind === "ag_news") {
+    return "training/mlx_ag_news_eval.py";
+  }
+  if (evalKind === "instruction_terms") {
+    return "training/mlx_lora_eval.py";
+  }
+  const exhaustive: never = evalKind;
+  throw new Error(`unsupported adapter evaluation kind: ${exhaustive}`);
+}
+
+function normalizeAdapterEvaluationMetrics(
+  evalKind: AdapterEvaluationJob["eval_kind"],
+  rawMetrics: unknown,
+): Record<string, unknown> {
+  if (evalKind === "ag_news") {
+    if (!isRecord(rawMetrics)) {
+      throw new Error("AG News evaluation metrics must be a JSON object");
+    }
+    return rawMetrics;
+  }
+  if (evalKind === "instruction_terms") {
+    return normalizeInstructionEvaluationMetrics(rawMetrics);
+  }
+  const exhaustive: never = evalKind;
+  throw new Error(`unsupported adapter evaluation kind: ${exhaustive}`);
+}
+
+function normalizeInstructionEvaluationMetrics(rawMetrics: unknown): Record<string, unknown> {
+  if (!isRecord(rawMetrics)) {
+    throw new Error("instruction evaluation metrics must be a JSON object");
+  }
+
+  const rawResults = rawMetrics.results;
+  if (!Array.isArray(rawResults) || rawResults.length === 0) {
+    throw new Error("instruction evaluation metrics must include non-empty results");
+  }
+
+  const results = rawResults.map((result, index) => {
+    if (!isRecord(result)) {
+      throw new Error(`instruction evaluation result ${index + 1} must be a JSON object`);
+    }
+    const id = stringField(result, "id");
+    const passed = booleanField(result, "passed");
+    return {
+      id,
+      expected_label: "pass",
+      predicted_label: passed ? "pass" : "fail",
+      correct: passed,
+      output: stringField(result, "output"),
+    };
+  });
+  const correct = results.filter((result) => result.correct).length;
+  const examples = results.length;
+
+  return {
+    model: stringField(rawMetrics, "model"),
+    adapter_path: nullableStringField(rawMetrics, "adapter_path"),
+    eval_file: stringField(rawMetrics, "eval_file"),
+    examples,
+    correct,
+    accuracy: correct / examples,
+    invalid: 0,
+    invalid_rate: 0,
+    labels: ["pass", "fail"],
+    results,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value != null && !Array.isArray(value);
+}
+
+function stringField(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`expected non-empty string field: ${key}`);
+  }
+  return value;
+}
+
+function nullableStringField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  if (value == null) {
+    return null;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`expected nullable string field: ${key}`);
+  }
+  return value;
+}
+
+function booleanField(record: Record<string, unknown>, key: string): boolean {
+  const value = record[key];
+  if (typeof value !== "boolean") {
+    throw new Error(`expected boolean field: ${key}`);
+  }
+  return value;
 }
 
 function approximatelyEqual(left: number, right: number): boolean {

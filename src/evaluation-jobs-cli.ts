@@ -17,13 +17,14 @@ const jobs = await createAdapterEvaluationJobs({
   artifactsDir,
   evalFile,
   evalUri: args["eval-uri"] ?? process.env.MARSHALL_EVAL_URI,
-  artifactUriMode: artifactUriModeArg(args["artifact-uri-mode"] ?? process.env.MARSHALL_ARTIFACT_URI_MODE ?? "file"),
-  runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID ?? "run_adapter_eval_001",
-  roundId: args["round-id"] ?? process.env.MARSHALL_ROUND_ID ?? "round_001",
-  jobPrefix: args["job-prefix"] ?? process.env.MARSHALL_JOB_ID ?? "job_eval_adapter",
-  model: args.model ?? process.env.MARSHALL_MODEL ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
-  maxExamples: numberArg(args["max-examples"] ?? process.env.MARSHALL_EVAL_EXAMPLES, 80),
-  maxTokens: numberArg(args["max-tokens"] ?? process.env.MARSHALL_EVAL_MAX_TOKENS, 8),
+  artifactUriMode: artifactUriModeArg(requiredArg("artifact-uri-mode", args["artifact-uri-mode"] ?? process.env.MARSHALL_ARTIFACT_URI_MODE)),
+  evalKind: evalKindArg(requiredArg("eval-kind", args["eval-kind"] ?? process.env.MARSHALL_EVAL_KIND)),
+  runId: requiredArg("run-id", args["run-id"] ?? process.env.MARSHALL_RUN_ID),
+  roundId: requiredArg("round-id", args["round-id"] ?? process.env.MARSHALL_ROUND_ID),
+  jobPrefix: requiredArg("job-prefix", args["job-prefix"] ?? process.env.MARSHALL_JOB_ID),
+  model: requiredArg("model", args.model ?? process.env.MARSHALL_MODEL),
+  maxExamples: numberArg(requiredArg("max-examples", args["max-examples"] ?? process.env.MARSHALL_EVAL_EXAMPLES)),
+  maxTokens: numberArg(requiredArg("max-tokens", args["max-tokens"] ?? process.env.MARSHALL_EVAL_MAX_TOKENS)),
   limit: optionalNumberArg(args.limit ?? process.env.MARSHALL_EVAL_ADAPTER_LIMIT),
   adapterJobPrefix: args["adapter-job-prefix"] ?? process.env.MARSHALL_EVAL_ADAPTER_JOB_PREFIX,
 });
@@ -43,6 +44,7 @@ interface CreateAdapterEvaluationJobsOptions {
   evalFile: string;
   evalUri?: string;
   artifactUriMode: "file" | "p2p";
+  evalKind: "ag_news" | "instruction_terms";
   runId: string;
   roundId: string;
   jobPrefix: string;
@@ -79,6 +81,7 @@ async function createAdapterEvaluationJobs(options: CreateAdapterEvaluationJobsO
       round_id: options.roundId,
       job_type: "evaluate_adapter",
       backend: "mlx",
+      eval_kind: options.evalKind,
       model: options.model,
       adapter: {
         adapter_id: manifest.job_id,
@@ -93,10 +96,18 @@ async function createAdapterEvaluationJobs(options: CreateAdapterEvaluationJobsO
         token_estimate: 1,
         hash: evalHash,
       },
+      labels: options.evalKind === "ag_news" ? ["World", "Sports", "Business", "Sci/Tech"] : ["pass", "fail"],
       max_examples: options.maxExamples,
       max_tokens: options.maxTokens,
     });
   });
+}
+
+function requiredArg(name: string, value: string | undefined): string {
+  if (value == null || value.trim() === "") {
+    throw new Error(`--${name} is required`);
+  }
+  return value;
 }
 
 function artifactUriModeArg(value: string): "file" | "p2p" {
@@ -104,6 +115,13 @@ function artifactUriModeArg(value: string): "file" | "p2p" {
     return value;
   }
   throw new Error(`unsupported artifact uri mode: ${value}`);
+}
+
+function evalKindArg(value: string): "ag_news" | "instruction_terms" {
+  if (value === "ag_news" || value === "instruction_terms") {
+    return value;
+  }
+  throw new Error(`unsupported adapter evaluation kind: ${value}`);
 }
 
 async function findArtifactManifests(root: string): Promise<string[]> {
@@ -145,10 +163,7 @@ function parseArgs(values: string[]): Record<string, string> {
   return parsed;
 }
 
-function numberArg(value: string | undefined, fallback: number): number {
-  if (value == null) {
-    return fallback;
-  }
+function numberArg(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new Error(`invalid positive integer: ${value}`);
@@ -160,5 +175,5 @@ function optionalNumberArg(value: string | undefined): number | undefined {
   if (value == null) {
     return undefined;
   }
-  return numberArg(value, 1);
+  return numberArg(value);
 }

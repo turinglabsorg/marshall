@@ -72,7 +72,7 @@ Implemented:
 - dataset manifest builder with HTTP/S shard URIs;
 - dataset cache with file size and SHA-256 verification;
 - chunked p2p artifact transfer with retry and final root hash checks;
-- artifact evaluation and validation jobs;
+- explicit adapter evaluation jobs (`eval_kind: ag_news` or `instruction_terms`) and validation jobs;
 - quorum-based validator verdicts;
 - worker reputation and suspension policy;
 - accepted-only adapter leaderboard and model package path;
@@ -180,6 +180,30 @@ npm run dataset:run:prepare -- \
 For remote public workers, shard URIs must be worker-resolvable HTTP/S URLs and every file must carry a SHA-256 hash and optional byte size. Workers fail the job on hash or size mismatch.
 
 External datasets and generated dataset artifacts are intentionally kept out of the repository unless explicitly approved.
+
+## Adapter Evaluation Jobs
+
+Evaluation semantics live in the job spec. `evaluate_adapter` jobs must include `eval_kind`, `model`, `max_examples`, and `max_tokens`; missing fields are schema errors, not defaults.
+
+Generate evaluation jobs from stored adapter manifests:
+
+```bash
+npm run eval:jobs -- \
+  --artifacts-dir .marshall/runs/<run-id>/artifacts \
+  --artifact-uri-mode p2p \
+  --eval-kind instruction_terms \
+  --eval-file .marshall/datasets/<dataset-id>/eval/instruction_terms.jsonl \
+  --eval-uri https://marshall.training/datasets/<dataset-id>/eval/instruction_terms.jsonl \
+  --output .marshall/runs/<run-id>/jobs/evaluate-adapters.json \
+  --run-id <eval-run-id> \
+  --round-id <round-id> \
+  --job-prefix <eval-job-prefix> \
+  --model mlx-community/Qwen2.5-0.5B-Instruct-4bit \
+  --max-examples 3 \
+  --max-tokens 80
+```
+
+Use `eval_kind ag_news` for exact-label AG News scoring and `eval_kind instruction_terms` for held-out instruction generation checks. The worker records the evaluation kind in the produced metrics artifact so leaderboard and validator stages can reason about what was measured.
 
 ## Public Deployment
 

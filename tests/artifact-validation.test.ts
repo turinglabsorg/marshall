@@ -138,6 +138,7 @@ async function writeAdapterEvaluationMetrics(
     adapter_artifact_hash: "sha256:adapter-test",
     eval_shard_id: "eval_test",
     eval_shard_hash: "sha256:eval-test",
+    eval_kind: "ag_news",
     model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
     adapter_path: null,
     eval_file: "eval.jsonl",

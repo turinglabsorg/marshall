@@ -101,6 +101,7 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
       round_id: "round_001",
       job_type: "evaluate_adapter",
       backend: "mlx",
+      eval_kind: "ag_news",
       model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
       adapter: {
         adapter_id: `job_adapter_bridge_${suffix}`,
@@ -184,6 +185,7 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
       round_id: "round_001",
       job_type: "evaluate_adapter",
       backend: "mlx",
+      eval_kind: "ag_news",
       model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
       adapter: {
         adapter_id: `job_adapter_target_${suffix}`,
@@ -325,6 +327,7 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
         round_id: "round_001",
         job_type: "evaluate_adapter",
         backend: "mlx",
+        eval_kind: "ag_news",
         model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
         adapter: {
           adapter_id: `job_adapter_bridge_${suffix}_${id}`,
@@ -395,6 +398,7 @@ function adapterEvaluationMetrics(job: AdapterEvaluationJob): AdapterEvaluationM
     adapter_artifact_hash: job.adapter.artifact_hash,
     eval_shard_id: job.eval_shard.id,
     eval_shard_hash: job.eval_shard.hash,
+    eval_kind: job.eval_kind,
     model: job.model,
     adapter_path: null,
     eval_file: "eval.jsonl",
