@@ -68,7 +68,7 @@ Marshall is a permissionless distributed training network for small language mod
 - The public control peer is permissionless. Do not add worker join tokens to public onboarding, examples, deploy scripts, dashboard copy, or `coordinator/public/AGENTS.md`.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
-- `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.
+- `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest. MLX-LM must receive the content-addressed dataset cache directory, even when the shard materializes from a single JSONL file.
 - `src/training-runner.ts` wraps `training/mlx_ag_news_eval.py` for `evaluate_adapter` jobs and emits an `adapter_evaluation` artifact manifest.
 - `src/training-runner.ts` runs `validate_artifact` jobs for validator workers. The current validator checks target artifact hash, adapter-evaluation schema, metric self-consistency, and policy thresholds, then emits an `artifact_validation` manifest with `accepted`, `poor`, `rejected`, or `malicious` plus the requested quorum. Internally inconsistent evaluation metrics are treated as malicious.
 - `src/control-peer.ts` forwards `artifact_validation` manifests into coordinator validator votes, so target worker reputation is updated only after a verdict reaches coordinator quorum.
