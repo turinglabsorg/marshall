@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Marshall | permissionless distributed training</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <style>
       :root {
         --bg: #020403;
@@ -640,17 +641,16 @@
           <div class="boot-grid">
             <div class="statement">
               <p class="kicker">control plane online</p>
-              <h2>permissionless distributed training</h2>
-              <p>Workers claim jobs, send heartbeats, publish artifacts, and stream coordinator events into this terminal.</p>
+              <h2>permissionless distributed training network</h2>
+              <p>Marshall coordinates open Mac workers that claim real dataset shards, verify hashes locally, train LoRA adapters, and publish artifacts back to the swarm.</p>
             </div>
             <aside class="join-panel">
               <h3>worker bootstrap</h3>
-              <p>Give an agent the swarm instructions, control peer address, and token.</p>
+              <p>No join token. Fetch the live control address, start a worker, and let your Mac claim the next compatible job.</p>
               <code class="command">npm run worker:pool:compiled -- \
-  --control /ip4/&lt;host&gt;/tcp/&lt;port&gt;/p2p/&lt;peer&gt; \
-  --job-type evaluate_adapter \
+  --control "$MARSHALL_CONTROL_ADDR" \
+  --job-type train_adapter \
   --backend mlx \
-  --swarm-token &lt;token&gt; \
   --concurrency 1 \
   --max-jobs 1</code>
               <div class="actions">

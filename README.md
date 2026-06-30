@@ -44,7 +44,7 @@ Deploy the current public trial coordinator to a small GCP VM with local Redis:
 ./scripts/deploy-gcp-micro.sh
 ```
 
-The deploy path creates or updates a dedicated `marshall-micro-1` instance in the `iconic-elevator-394020` project by default, installs Redis as a localhost-only Docker service, and runs `cmd/marshall-coordinator` as a systemd service on public HTTP port `80`. Write authentication is configured through a generated token stored under `.marshall/secrets/`, which remains local and ignored by git.
+The deploy path creates or updates a dedicated `marshall-micro-1` instance in the `iconic-elevator-394020` project by default. Redis stays bound to localhost on the VM, `cmd/marshall-coordinator` listens internally on `127.0.0.1:8080`, Caddy terminates public HTTPS for `marshall.training`, and the public libp2p control peer listens on TCP `4001`. The control peer writes `/control.json` with the current public multiaddr so permissionless workers can join without a swarm token. Coordinator write authentication is configured through a generated admin token stored under `.marshall/secrets/`, which remains local and ignored by git.
 
 ### Public Worker Reputation
 

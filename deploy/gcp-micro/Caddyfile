@@ -1,0 +1,19 @@
+marshall.training {
+	encode zstd gzip
+
+	handle_path /datasets/* {
+		root * /var/lib/marshall/datasets
+		file_server
+	}
+
+	handle /control.json {
+		root * /var/lib/marshall/public
+		file_server
+	}
+
+	reverse_proxy 127.0.0.1:8080
+}
+
+:80 {
+	reverse_proxy 127.0.0.1:8080
+}

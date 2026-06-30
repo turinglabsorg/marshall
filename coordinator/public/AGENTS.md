@@ -1,96 +1,105 @@
 # Marshall Worker Instructions
 
-You are joining a Marshall training and inference swarm as a worker agent.
+You are joining Marshall as a permissionless Mac worker.
 
-The public training network surface is `marshall.training`. `marshall.chat` is reserved for future model chat and inference demos.
+Marshall is a permissionless distributed training network. The public training surface is `https://marshall.training`. `marshall.chat` is reserved for future model chat and inference demos.
 
-## Objective
+There is no worker join token for the public swarm. Do not set `MARSHALL_SWARM_TOKEN` and do not pass `--swarm-token`.
 
-Connect to the Marshall control peer, claim compatible jobs from the coordinator-backed swarm, execute them locally, and publish artifacts back through the worker protocol. Do not invent results and do not manually edit artifacts.
+## What Your Mac Will Do
+
+Your Mac connects to the public Marshall control peer over libp2p, registers its hardware capability, claims one compatible job, downloads only the assigned dataset shard files, verifies every declared SHA-256 hash and byte size, trains the adapter locally, then publishes an artifact manifest back to the swarm.
+
+The active job defines the base model, dataset shard, LoRA settings, and evaluation contract. Workers must not override those values locally unless the operator explicitly asks for a debugging run.
 
 ## Requirements
 
+- Apple Silicon Mac for MLX training jobs
+- macOS shell with `git`, `curl`, and `python3`
 - Node.js 22 or newer
 - A local checkout of the Marshall repository
-- `npm ci` completed in the repository
-- For Apple Silicon MLX jobs: an MLX-capable Python environment and `MARSHALL_PYTHON` pointing to it
-- A libp2p control multiaddr from the swarm operator
-- A swarm token only when the operator enables join gating
+- An MLX Python environment for training jobs
 
-## Environment
+## Install Node.js 22
 
-Set these values before starting a worker. Omit `MARSHALL_SWARM_TOKEN` for public swarms that do not use join gating.
+If you use `nvm`:
 
 ```sh
-export MARSHALL_CONTROL_ADDR="/ip4/<host>/tcp/<port>/p2p/<peer-id>"
-export MARSHALL_SWARM_TOKEN="<worker-join-token>"
-export MARSHALL_PYTHON="$HOME/.marshall/mlx-venv/bin/python"
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+nvm install 22
+nvm use 22
 ```
 
-## Build
+If you use Homebrew:
 
 ```sh
+brew install node@22
+export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+```
+
+Verify:
+
+```sh
+node --version
+npm --version
+```
+
+## Clone and Build Marshall
+
+```sh
+git clone https://github.com/turinglabsorg/marshall.git
+cd marshall
 npm ci
 npm run build
 ```
 
-## Join Evaluation or Inference Work
+Keep all generated worker state under `.marshall/`. Do not commit worker keys, datasets, adapters, logs, or artifacts.
 
-Use one worker per local accelerator until the operator says otherwise.
-
-```sh
-npm run worker:pool:compiled -- \
-  --control "$MARSHALL_CONTROL_ADDR" \
-  --job-type evaluate_adapter \
-  --backend mlx \
-  --swarm-token "$MARSHALL_SWARM_TOKEN" \
-  --concurrency 1 \
-  --max-jobs 1 \
-  --job-lease-seconds 300 \
-  --heartbeat-interval-ms 15000 \
-  --worker-id-prefix "$(hostname)-marshall-eval" \
-  --key-dir .marshall/worker-keys/eval \
-  --artifacts-dir .marshall/worker-artifacts/eval \
-  --dataset-cache-dir .marshall/worker-cache/eval \
-  --python "$MARSHALL_PYTHON"
-```
-
-## Join Validation Work
-
-Validation workers are CPU-friendly. They verify assigned artifact hashes and metrics, then publish an `artifact_validation` manifest. The coordinator records that manifest as a validator vote and finalizes the target artifact only after the configured quorum is reached.
-
-Validator votes affect validator reputation after quorum finalization. Correctly aligned votes are rewarded; votes that diverge from the final verdict are penalized, and collusion on malicious artifacts can suspend the validator.
+## Install MLX for Apple Silicon Training
 
 ```sh
-npm run worker:pool:compiled -- \
-  --control "$MARSHALL_CONTROL_ADDR" \
-  --job-type validate_artifact \
-  --backend cpu \
-  --swarm-token "$MARSHALL_SWARM_TOKEN" \
-  --concurrency 1 \
-  --max-jobs 1 \
-  --job-lease-seconds 300 \
-  --heartbeat-interval-ms 15000 \
-  --worker-id-prefix "$(hostname)-marshall-validator" \
-  --key-dir .marshall/worker-keys/validator \
-  --artifacts-dir .marshall/worker-artifacts/validator
+python3 -m venv "$HOME/.marshall/mlx-venv"
+source "$HOME/.marshall/mlx-venv/bin/activate"
+python -m pip install --upgrade pip
+python -m pip install mlx mlx-lm numpy
+export MARSHALL_PYTHON="$HOME/.marshall/mlx-venv/bin/python"
 ```
 
-## Join Training Work
+Verify:
 
-Only run training jobs when the operator has published compatible dataset shards.
-Workers materialize only the assigned shard files into their local dataset cache. Every declared file hash, optional byte size, and final shard hash must verify before training starts.
-The base model and LoRA hyperparameters are part of the claimed job spec. Do not override them locally unless the operator explicitly asks for a controlled debugging run.
+```sh
+"$MARSHALL_PYTHON" -c "import mlx.core; import mlx_lm; print('mlx ready')"
+```
+
+## Fetch the Live Control Peer
+
+The public control peer is published by Marshall at runtime. Fetch it before starting a worker:
+
+```sh
+export MARSHALL_CONTROL_ADDR="$(node -e "fetch('https://marshall.training/control.json').then(r => r.json()).then(j => console.log(j.control_addr))")"
+echo "$MARSHALL_CONTROL_ADDR"
+```
+
+The value should look like:
+
+```text
+/dns4/marshall.training/tcp/4001/p2p/<control-peer-id>
+```
+
+## Claim Available Training Work
+
+Run one worker first. It will claim one compatible `train_adapter` job if work is available.
 
 ```sh
 npm run worker:pool:compiled -- \
   --control "$MARSHALL_CONTROL_ADDR" \
   --job-type train_adapter \
   --backend mlx \
-  --swarm-token "$MARSHALL_SWARM_TOKEN" \
   --concurrency 1 \
   --max-jobs 1 \
-  --job-lease-seconds 300 \
+  --job-lease-seconds 900 \
   --heartbeat-interval-ms 15000 \
   --worker-id-prefix "$(hostname)-marshall-train" \
   --key-dir .marshall/worker-keys/train \
@@ -99,21 +108,59 @@ npm run worker:pool:compiled -- \
   --python "$MARSHALL_PYTHON"
 ```
 
+To let the same Mac process more than one job sequentially, increase `--max-jobs`. Keep `--concurrency 1` until you know the machine has enough memory for parallel MLX runs.
+
+## Monitor Progress
+
+Open:
+
+```text
+https://marshall.training
+```
+
+The dashboard shows registered workers, busy workers, queued/running/completed jobs, artifact hashes, and the live coordinator event stream.
+
+You can also inspect raw coordinator state:
+
+```sh
+curl -fsS https://marshall.training/dashboard
+curl -fsS https://marshall.training/events?count=20
+```
+
+## If There Is No Job
+
+If the worker exits with `no job assigned`, it connected correctly but no compatible work was available at that moment. Leave the command ready and try again after the dashboard shows queued jobs.
+
 ## Worker Rules
 
-- Claim jobs through the worker command only.
-- Publish artifacts through the worker protocol only.
-- Keep heartbeat enabled while working; the coordinator can requeue jobs whose lease expires.
-- Published artifacts are validated before they affect global model selection.
-- Low-quality, rejected, malicious, or timed-out work reduces worker reputation.
-- Bad validation votes reduce validator reputation.
-- A suspended worker cannot claim more jobs until the operator restores participation.
-- Keep generated data under `.marshall/`; do not commit local run artifacts.
-- Do not download or process unassigned dataset shards.
-- Do not change job specs, labels, metrics, hashes, or leaderboard files by hand.
-- If a job fails, let the worker report the failure instead of fabricating output.
-- Report the worker ID, backend, memory, and failure logs to the operator when debugging.
+- Do not set a swarm token for the public permissionless swarm.
+- Claim jobs only through `npm run worker:pool:compiled` or `npm run worker:start:compiled`.
+- Do not manually edit job specs, dataset files, artifact manifests, metrics, hashes, or leaderboard files.
+- Do not download unassigned dataset shards.
+- Keep heartbeat enabled while working; expired jobs can be requeued.
+- Let failures be reported by the worker instead of fabricating output.
+- Published artifacts are validated before they affect model selection.
+- Poor, rejected, malicious, or timed-out work reduces worker reputation.
+- Suspended workers cannot claim more jobs.
 
-## What the Coordinator Shows
+## Troubleshooting
 
-The public console exposes registered workers, busy workers, job status, artifact hashes, and recent events. It does not prove model quality by itself; quality is established by evaluation artifacts, leaderboard ranking, and package/query verification.
+If the worker cannot connect:
+
+```sh
+curl -fsS https://marshall.training/control.json
+nc -vz marshall.training 4001
+```
+
+If MLX import fails, reactivate the venv and reinstall:
+
+```sh
+source "$HOME/.marshall/mlx-venv/bin/activate"
+python -m pip install --upgrade mlx mlx-lm numpy
+```
+
+If a dataset hash check fails, delete only your local worker dataset cache and retry:
+
+```sh
+rm -rf .marshall/worker-cache/train
+```

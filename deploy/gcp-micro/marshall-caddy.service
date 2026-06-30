@@ -1,0 +1,15 @@
+[Unit]
+Description=Marshall public HTTPS proxy
+After=docker.service marshall-coordinator.service
+Requires=docker.service marshall-coordinator.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f marshall-caddy
+ExecStart=/usr/bin/docker run --name marshall-caddy --pull=always --network host -v /etc/marshall/Caddyfile:/etc/caddy/Caddyfile:ro -v /var/lib/marshall:/var/lib/marshall:ro -v /var/lib/marshall/caddy/data:/data -v /var/lib/marshall/caddy/config:/config caddy:2-alpine
+ExecStop=/usr/bin/docker stop marshall-caddy
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

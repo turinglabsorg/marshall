@@ -6,8 +6,8 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 
 - Use `marshall.training` for the public training network surface: coordinator console, active jobs, worker onboarding, and participation instructions.
 - Keep `marshall.chat` reserved for future chat/inference demos after model quality and serving are validated.
-- Use `./scripts/deploy-gcp-micro.sh` for the current public trial coordinator deployment. It targets a dedicated GCP VM, keeps Redis local to the VM, exposes only coordinator HTTP, and stores generated secrets under ignored `.marshall/secrets/`.
-- Current public trial host: GCP project `iconic-elevator-394020`, instance `marshall-micro-1`, zone `us-east1-b`, static address `marshall-training-ip` (`34.148.63.131`). Redis must remain bound to `127.0.0.1:6379` on the VM; only coordinator HTTP port `80` is public for this trial.
+- Use `./scripts/deploy-gcp-micro.sh` for the current public trial deployment. It targets a dedicated GCP VM, keeps Redis local to the VM, runs the coordinator on internal `127.0.0.1:8080`, exposes Caddy on public `80/443`, exposes the libp2p control peer on public TCP `4001`, and stores generated admin secrets under ignored `.marshall/secrets/`.
+- Current public trial host: GCP project `iconic-elevator-394020`, instance `marshall-micro-1`, zone `us-east1-b`, static address `marshall-training-ip` (`34.148.63.131`). Redis must remain bound to `127.0.0.1:6379` on the VM. Workers join permissionlessly through `/control.json`; do not require or document a public `MARSHALL_SWARM_TOKEN`.
 
 ## Architecture Direction
 
@@ -48,6 +48,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/control-cli.ts` supports `MARSHALL_JOB_COUNT` / `--job-count`; multi-job adapter runs use deterministic dataset shard jobs.
 - `src/control-cli.ts` supports `--jobs-file` / `MARSHALL_JOBS_FILE` for mixed Marshall job definitions, including `evaluate_adapter` and `validate_artifact` jobs generated from coordinator artifacts.
 - `src/control-cli.ts` supports `--artifact-store-dir`, `--artifact-serve-dirs`, `--artifact-chunk-bytes`, and `--artifact-chunk-retries` for chunked p2p artifact payload transfer.
+- `src/control-cli.ts` supports `--info-file`, `--public-control-host`, `--public-control-port`, and `--public-control-addr`; the public VM uses this to publish `/control.json` with the permissionless worker multiaddr.
 - `src/worker-cli.ts` starts a one-job worker that registers, claims, runs, publishes an artifact, and exits.
 - `src/worker-cli.ts` accepts comma-separated control multiaddrs through `--control` and extra addresses through `--control-addrs` / `MARSHALL_CONTROL_ADDRS`; `src/worker-peer.ts` tries them in order, remembers the first successful address, and falls back when a dial fails.
 - Remote worker runs should receive every usable control multiaddr. If a LAN multiaddr times out while basic TCP probes succeed, check host firewall/routing and keep a second route or relay address available.
@@ -62,7 +63,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/coordinator-client.ts` can record artifact verdicts and read worker reputation through the coordinator API. Artifact verdict responses include `finalized`, `quorum`, `votes`, per-verdict `tally`, and `validator_reputations` when finalization scores validators; artifact records include `verdict_status`, `verdict_votes`, and `verdict_quorum`.
 - `src/coordinator-client.ts` can list coordinator artifacts; `src/validation-jobs-cli.ts` turns unvalidated target artifacts into distributed `validate_artifact` jobs, scopes targets with `--target-job-prefix`, and defaults to quorum 2 with two validator jobs per artifact.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle. It serves locally produced artifacts over `/marshall/artifact/fetch/1.0.0` while the manifest publish stream is open, and can fetch verified input artifacts back from the control peer.
-- `src/worker-peer.ts` supports optional swarm authentication with `MARSHALL_SWARM_TOKEN` / `--swarm-token` so untrusted peers cannot register or claim jobs from permissioned control peers.
+- The public control peer is permissionless. Do not add worker join tokens to public onboarding, examples, deploy scripts, dashboard copy, or `coordinator/public/AGENTS.md`.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.

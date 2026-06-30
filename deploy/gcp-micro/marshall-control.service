@@ -1,0 +1,15 @@
+[Unit]
+Description=Marshall public libp2p control peer
+After=docker.service marshall-coordinator.service
+Requires=docker.service marshall-coordinator.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f marshall-control
+ExecStart=/usr/bin/docker run --name marshall-control --pull=always --network host --env-file /etc/marshall/coordinator.env -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/control-cli.js --key /var/lib/marshall/control/control.key --listen /ip4/0.0.0.0/tcp/4001 --coordinator-url http://127.0.0.1:8080 --jobs-file /var/lib/marshall/jobs/current/train-adapters.json --artifact-store-dir /var/lib/marshall/artifacts/control --artifact-serve-dirs /var/lib/marshall/artifacts/control --job-lease-seconds 900 --public-control-host marshall.training --public-control-port 4001 --info-file /var/lib/marshall/public/control.json
+ExecStop=/usr/bin/docker stop marshall-control
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

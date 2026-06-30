@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { ControlPeer } from "./control-peer.js";
 import { createTrainingJobs, type AdapterDatasetProfile } from "./jobs.js";
 import { MarshallJobSchema, type JobType, type TrainingJob } from "./schemas.js";
@@ -28,19 +30,29 @@ const control = await ControlPeer.create({
   artifactMaxChunkRetries: numberArg(args["artifact-chunk-retries"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_RETRIES, 3),
   jobs,
 });
+const effectiveJobType = jobs[0]?.job_type ?? jobType;
 
-console.log(JSON.stringify({
+const started = {
   type: "marshall_control_started",
   peer_id: control.peerId,
   addrs: control.multiaddrs.map((addr) => addr.toString()),
-  job_type: jobType,
+  control_addr: publicControlAddr(control.peerId),
+  job_type: effectiveJobType,
   job_count: jobs.length,
   jobs_file: args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE ?? null,
   adapter_dataset: args["adapter-dataset"] ?? process.env.MARSHALL_ADAPTER_DATASET ?? "marshall_instructions",
   coordinator_url: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL ?? null,
   artifact_store_dir: args["artifact-store-dir"] ?? process.env.MARSHALL_ARTIFACT_STORE_DIR ?? null,
   artifact_serve_dirs: splitList(args["artifact-serve-dirs"] ?? process.env.MARSHALL_ARTIFACT_SERVE_DIRS ?? ""),
-}, null, 2));
+};
+
+const infoFile = args["info-file"] ?? process.env.MARSHALL_CONTROL_INFO_FILE;
+if (infoFile != null && infoFile !== "") {
+  await mkdir(dirname(infoFile), { recursive: true });
+  await writeFile(infoFile, JSON.stringify(started, null, 2) + "\n", "utf8");
+}
+
+console.log(JSON.stringify(started, null, 2));
 
 await waitForShutdown(async () => {
   await control.stop();
@@ -105,6 +117,20 @@ function adapterDatasetArg(value: string | undefined): AdapterDatasetProfile | u
     return value;
   }
   throw new Error(`unsupported adapter dataset: ${value}`);
+}
+
+function publicControlAddr(peerId: string): string {
+  const explicit = args["public-control-addr"] ?? process.env.MARSHALL_PUBLIC_CONTROL_ADDR;
+  if (explicit != null && explicit !== "") {
+    return explicit.replace("<peer-id>", peerId);
+  }
+  const host = args["public-control-host"] ?? process.env.MARSHALL_PUBLIC_CONTROL_HOST;
+  if (host == null || host === "") {
+    return "";
+  }
+  const transport = args["public-control-transport"] ?? process.env.MARSHALL_PUBLIC_CONTROL_TRANSPORT ?? "dns4";
+  const port = args["public-control-port"] ?? process.env.MARSHALL_PUBLIC_CONTROL_PORT ?? "4001";
+  return `/${transport}/${host}/tcp/${port}/p2p/${peerId}`;
 }
 
 function numberArg(value: string | undefined, fallback: number): number {

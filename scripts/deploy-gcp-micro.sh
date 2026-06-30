@@ -9,6 +9,7 @@ FIREWALL_RULE="${MARSHALL_GCP_FIREWALL_RULE:-marshall-allow-http}"
 NETWORK_TAG="${MARSHALL_GCP_NETWORK_TAG:-marshall-coordinator}"
 ADDRESS_NAME="${MARSHALL_GCP_ADDRESS_NAME:-marshall-training-ip}"
 DEPLOY_DIR="$ROOT_DIR/.marshall/deploy/gcp-micro"
+APP_DEPLOY_DIR="$DEPLOY_DIR/app"
 SECRETS_DIR="$ROOT_DIR/.marshall/secrets"
 BINARY_PATH="$DEPLOY_DIR/marshall-coordinator"
 TOKEN_PATH="$SECRETS_DIR/coordinator-token"
@@ -54,9 +55,14 @@ fi
 if ! gcloud compute firewall-rules describe "$FIREWALL_RULE" --project "$PROJECT" >/dev/null 2>&1; then
   gcloud compute firewall-rules create "$FIREWALL_RULE" \
     --project "$PROJECT" \
-    --allow tcp:80 \
+    --allow tcp:80,tcp:443,tcp:4001 \
     --target-tags "$NETWORK_TAG" \
-    --description "Allow public HTTP for the Marshall coordinator trial"
+    --description "Allow public HTTP, HTTPS, and libp2p control traffic for Marshall"
+else
+  gcloud compute firewall-rules update "$FIREWALL_RULE" \
+    --project "$PROJECT" \
+    --allow tcp:80,tcp:443,tcp:4001 \
+    --target-tags "$NETWORK_TAG"
 fi
 
 REGION="${ZONE%-*}"
@@ -96,7 +102,12 @@ done
 
 (
   cd "$ROOT_DIR"
+  npm run build
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BINARY_PATH" ./cmd/marshall-coordinator
+  rm -rf "$APP_DEPLOY_DIR"
+  mkdir -p "$APP_DEPLOY_DIR"
+  cp package.json package-lock.json "$APP_DEPLOY_DIR/"
+  cp -R dist "$APP_DEPLOY_DIR/dist"
 )
 
 if [ ! -f "$TOKEN_PATH" ]; then
@@ -107,22 +118,32 @@ fi
 umask 077
 {
   printf "MARSHALL_REDIS_ADDR=127.0.0.1:6379\n"
-  printf "MARSHALL_HTTP_ADDR=0.0.0.0:80\n"
+  printf "MARSHALL_HTTP_ADDR=127.0.0.1:8080\n"
   printf "MARSHALL_REDIS_PREFIX=marshall\n"
   printf "MARSHALL_COORDINATOR_TOKEN=%s\n" "$(cat "$TOKEN_PATH")"
 } > "$ENV_PATH"
 
-gcloud compute ssh "$INSTANCE" --zone "$ZONE" --project "$PROJECT" --command "mkdir -p /tmp/marshall-deploy"
+gcloud compute ssh "$INSTANCE" --zone "$ZONE" --project "$PROJECT" --command "rm -rf /tmp/marshall-deploy && mkdir -p /tmp/marshall-deploy"
 gcloud compute scp \
   "$BINARY_PATH" \
   "$ENV_PATH" \
+  "$ROOT_DIR/deploy/gcp-micro/Caddyfile" \
   "$ROOT_DIR/deploy/gcp-micro/bootstrap-vm.sh" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-redis.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-coordinator.service" \
+  "$ROOT_DIR/deploy/gcp-micro/marshall-caddy.service" \
+  "$ROOT_DIR/deploy/gcp-micro/marshall-control.service" \
   "$INSTANCE:/tmp/marshall-deploy/" \
+  --zone "$ZONE" \
+  --project "$PROJECT"
+gcloud compute scp \
+  --recurse \
+  "$APP_DEPLOY_DIR" \
+  "$INSTANCE:/tmp/marshall-deploy/app" \
   --zone "$ZONE" \
   --project "$PROJECT"
 gcloud compute ssh "$INSTANCE" --zone "$ZONE" --project "$PROJECT" --command "sudo bash /tmp/marshall-deploy/bootstrap-vm.sh"
 
-printf "Marshall coordinator URL: http://%s/\n" "$STATIC_IP"
+printf "Marshall coordinator URL: https://marshall.training/\n"
+printf "Marshall fallback URL: http://%s/\n" "$STATIC_IP"
 printf "Coordinator token file: %s\n" "$TOKEN_PATH"
