@@ -76,7 +76,7 @@ Implemented:
 - quorum-based validator verdicts;
 - worker reputation and suspension policy;
 - accepted-only adapter leaderboard and model package path;
-- GCP micro deployment with Caddy HTTPS, local Redis, coordinator, and control peer services.
+- GCP small-VM deployment with Caddy HTTPS, local Redis, coordinator, and control peer services.
 
 Not implemented yet:
 
@@ -187,6 +187,7 @@ The current public trial deploy target is a small GCP VM:
 
 - project: `iconic-elevator-394020`;
 - instance: `marshall-micro-1`;
+- machine type: `e2-small` with a 2GB swapfile;
 - domain: `marshall.training`;
 - HTTPS proxy: Caddy;
 - coordinator: Go service on `127.0.0.1:8080`;

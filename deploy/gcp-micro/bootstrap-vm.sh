@@ -12,6 +12,16 @@ apt-get install -y ca-certificates curl docker.io libcap2-bin
 
 systemctl enable --now docker
 
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+fi
+if ! grep -q '^/swapfile ' /etc/fstab; then
+  printf "/swapfile none swap sw 0 0\n" >>/etc/fstab
+fi
+swapon /swapfile 2>/dev/null || true
+
 if ! id marshall >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/marshall --create-home --shell /usr/sbin/nologin marshall
 fi

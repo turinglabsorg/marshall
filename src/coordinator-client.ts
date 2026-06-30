@@ -174,7 +174,7 @@ export class CoordinatorClient {
   }
 
   async updateJobStatus(status: JobStatus): Promise<void> {
-    await this.post(`/jobs/${encodeURIComponent(status.job_id)}/status`, {
+    await this.postWithRetry(`/jobs/${encodeURIComponent(status.job_id)}/status`, {
       worker_id: status.worker_id,
       status: status.status,
       message: status.message,
@@ -182,7 +182,7 @@ export class CoordinatorClient {
   }
 
   async publishArtifact(manifest: ArtifactManifest): Promise<void> {
-    await this.post("/artifacts", {
+    await this.postWithRetry("/artifacts", {
       job_id: manifest.job_id,
       worker_id: manifest.worker_id,
       peer_id: manifest.peer_id,
@@ -261,6 +261,22 @@ export class CoordinatorClient {
     return schema.parse(json);
   }
 
+  private async postWithRetry<T>(path: string, payload: unknown, schema: z.ZodType<T>): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return await this.post(path, payload, schema);
+      } catch (error) {
+        lastError = error;
+        if (attempt === 3 || !isTransientCoordinatorError(error)) {
+          throw error;
+        }
+        await sleep(attempt * 500);
+      }
+    }
+    throw lastError;
+  }
+
   private headers(values: Record<string, string> = {}): Record<string, string> {
     if (this.token == null || this.token === "") {
       return values;
@@ -270,6 +286,22 @@ export class CoordinatorClient {
       authorization: `Bearer ${this.token}`,
     };
   }
+}
+
+function isTransientCoordinatorError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes("timeout")
+    || message.includes("temporarily unavailable")
+    || message.includes("econnreset")
+    || message.includes("econnrefused")
+    || message.includes("fetch failed")
+    || message.includes("502")
+    || message.includes("503")
+    || message.includes("504");
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function jobDatasetUri(job: MarshallJob): string {

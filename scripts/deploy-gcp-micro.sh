@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="${MARSHALL_GCP_PROJECT:-iconic-elevator-394020}"
 INSTANCE="${MARSHALL_GCP_INSTANCE:-marshall-micro-1}"
-MACHINE_TYPE="${MARSHALL_GCP_MACHINE_TYPE:-e2-micro}"
+MACHINE_TYPE="${MARSHALL_GCP_MACHINE_TYPE:-e2-small}"
 FIREWALL_RULE="${MARSHALL_GCP_FIREWALL_RULE:-marshall-allow-http}"
 NETWORK_TAG="${MARSHALL_GCP_NETWORK_TAG:-marshall-coordinator}"
 ADDRESS_NAME="${MARSHALL_GCP_ADDRESS_NAME:-marshall-training-ip}"

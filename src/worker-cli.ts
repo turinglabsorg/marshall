@@ -33,6 +33,7 @@ const worker = await WorkerPeer.create({
 
 let claimedJob: MarshallJob | undefined;
 let stopHeartbeat = () => {};
+let artifactPublished = false;
 
 try {
   await worker.register();
@@ -55,7 +56,8 @@ try {
   const runnableJob = await materializeJobInputs(claim.job);
   const training = await runClaimedJob(runnableJob);
   await worker.publishArtifactManifest(training.manifest);
-  await worker.reportJobStatus({
+  artifactPublished = true;
+  await reportJobStatusWithRetry({
     job_id: claim.job.job_id,
     status: "completed",
     message: `${claim.job.job_type} runner completed`,
@@ -75,7 +77,7 @@ try {
     metrics: training.metrics,
   }, null, 2));
 } catch (error) {
-  if (claimedJob != null) {
+  if (claimedJob != null && !artifactPublished) {
     try {
       await worker.reportJobStatus({
         job_id: claimedJob.job_id,
@@ -87,10 +89,43 @@ try {
     }
   }
   console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+  process.exitCode = artifactPublished ? 0 : 1;
 } finally {
   stopHeartbeat();
   await worker.stop();
+}
+
+async function reportJobStatusWithRetry(status: Parameters<typeof worker.reportJobStatus>[0]): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await worker.reportJobStatus(status);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 3 || !isTransientWorkerStatusError(error)) {
+        throw error;
+      }
+      await sleep(attempt * 500);
+    }
+  }
+  throw lastError;
+}
+
+function isTransientWorkerStatusError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes("timeout")
+    || message.includes("temporarily unavailable")
+    || message.includes("econnreset")
+    || message.includes("econnrefused")
+    || message.includes("fetch failed")
+    || message.includes("502")
+    || message.includes("503")
+    || message.includes("504");
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function runClaimedJob(job: MarshallJob) {

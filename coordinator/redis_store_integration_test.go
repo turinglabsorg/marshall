@@ -138,6 +138,26 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.CreateJob(ctx, Job{
+		JobID:      "job_test_001",
+		RunID:      "run_test_001",
+		JobType:    "train_mlx_smoke",
+		Backend:    "mlx",
+		DatasetURI: "inline://tiny-italian-v1-updated",
+		JobSpec:    json.RawMessage(`{"job_id":"job_test_001","updated":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	upsertedJob, err := store.GetJob(ctx, "job_test_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upsertedJob.Status != "completed" || upsertedJob.WorkerID != "worker_mlx_001" {
+		t.Fatalf("job upsert reset lifecycle state: %+v", upsertedJob)
+	}
+	if upsertedJob.DatasetURI != "inline://tiny-italian-v1-updated" || !strings.Contains(string(upsertedJob.JobSpec), `"updated":true`) {
+		t.Fatalf("job upsert did not refresh metadata/spec: %+v", upsertedJob)
+	}
 
 	if _, err := store.PublishArtifact(ctx, Artifact{
 		JobID:        "job_test_001",

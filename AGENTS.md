@@ -7,7 +7,7 @@ Marshall is a permissionless distributed training network for small language mod
 - Use `marshall.training` for the public training network surface: coordinator console, active jobs, worker onboarding, and participation instructions.
 - Keep `marshall.chat` reserved for future chat/inference demos after model quality and serving are validated.
 - Use `./scripts/deploy-gcp-micro.sh` for the current public trial deployment. It targets a dedicated GCP VM, keeps Redis local to the VM, runs the coordinator on internal `127.0.0.1:8080`, exposes Caddy on public `80/443`, exposes the libp2p control peer on public TCP `4001`, and stores generated admin secrets under ignored `.marshall/secrets/`.
-- Current public trial host: GCP project `iconic-elevator-394020`, instance `marshall-micro-1`, zone `us-east1-b`, static address `marshall-training-ip` (`34.148.63.131`). Redis must remain bound to `127.0.0.1:6379` on the VM. Workers join permissionlessly through `/control.json`; do not require or document a public `MARSHALL_SWARM_TOKEN`.
+- Current public trial host: GCP project `iconic-elevator-394020`, instance `marshall-micro-1`, zone `us-east1-b`, machine type `e2-small`, static address `marshall-training-ip` (`34.148.63.131`). Redis must remain bound to `127.0.0.1:6379` on the VM. Keep a 2GB local swapfile enabled for coordinator/control bursts. Workers join permissionlessly through `/control.json`; do not require or document a public `MARSHALL_SWARM_TOKEN`.
 
 ## Architecture Direction
 
@@ -106,11 +106,13 @@ Marshall is a permissionless distributed training network for small language mod
 - `tests/model-selection.test.ts` verifies accepted-only adapter selection, score ordering, and deterministic tie breakers for the centralized model-selection policy.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, full job specs, job claims, statuses, artifacts, and append-only events in Redis.
+- `coordinator/redis_store.go` treats repeated job publication as an idempotent upsert: restarts may refresh metadata/spec but must not reset status, worker assignment, or lifecycle progress.
 - `coordinator/redis_store.go` maintains job leases and can requeue expired running jobs so abandoned work is visible and recoverable.
 - `coordinator/redis_store.go` tracks worker reputation and blocks suspended workers from claiming more jobs. Artifact verdicts with `quorum > 1` are stored as per-validator votes first and finalize only when one verdict reaches quorum. Quorum finalization is protected by a per-artifact Redis `SET NX` lock so concurrent validator votes cannot apply duplicate reputation deltas. Validators must be registered active workers that support `validate_artifact` and cannot validate their own artifacts. When a verdict finalizes, validator votes aligned with the final verdict are rewarded; validator votes that diverge are penalized, including hard suspension for accepting an artifact that finalizes as `malicious` or falsely marking an accepted artifact as `malicious`. Verdict policy is currently `accepted +2`, `poor -10`, `rejected -25`, `timeout -15`, and `malicious -100`, capped to the `0..100` score range.
 - `coordinator/http.go` exposes the coordinator HTTP admin API, including `GET /jobs/{job_id}`, `GET /artifacts`, `GET /artifacts/{job_id}`, `POST /artifacts/{job_id}/verdict`, `GET /workers/{worker_id}/reputation`, `POST /jobs/requeue-expired`, `GET /dashboard`, `GET /events/stream`, and the embedded public console at `/`.
 - `coordinator/http.go` enforces optional bearer-token write authentication when `MARSHALL_COORDINATOR_TOKEN` is set; read endpoints remain available for the public console.
 - `coordinator/public/index.html` is the embedded terminal-style swarm console for worker status, job status, artifact verdicts, and live coordinator events.
+- `coordinator/public/index.html` displays compact libp2p peer labels as the primary worker identity. Full worker IDs and peer IDs remain available in row titles and API payloads.
 - `coordinator/public/AGENTS.md` is the public worker onboarding file served at `/AGENTS.md`.
 - `coordinator/*_integration_test.go` verifies the Redis store and HTTP lifecycle against a real Redis server when `MARSHALL_REDIS_ADDR` is set, including idempotent expired-job requeue, reclaim after requeue, validator divergence penalties, malicious-artifact target suspension, and validator suspension for covering malicious artifacts.
 

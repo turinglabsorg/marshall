@@ -926,8 +926,9 @@
           const output = activity.last_artifact_hash
             ? `${activity.last_artifact_type || "artifact"} ${shortHash(activity.last_artifact_hash)}`
             : activity.last_event_type || "registered";
+          const peerLabel = worker.peer_id ? shortPeerId(worker.peer_id) : shortHash(worker.worker_id || "");
           return `<tr>
-            <td><strong>${html(worker.worker_id)}</strong><br><span>${html(shortHash(worker.peer_id || ""))}</span></td>
+            <td><strong title="${html(worker.peer_id || worker.worker_id || "")}">${html(peerLabel)}</strong><br><span title="${html(worker.worker_id || "")}">${html(shortWorkerLabel(worker.worker_id || ""))}</span></td>
             <td>${html(worker.backend || "unknown")}<br><span>${html(worker.device_family || "")}</span></td>
             <td><span class="pill ${statusClass(status)}">${html(status)}</span>${reputationLabel(worker)}<br><span>${html(timeLabel(activity.last_seen_at))}</span></td>
             <td>${html(output)}${activity.current_job_id ? `<br><span>${html(activity.current_job_id)}</span>` : ""}</td>
@@ -954,6 +955,18 @@
             <td>${html(detail)}</td>
           </tr>`;
         }).join("");
+      }
+
+      function shortPeerId(value) {
+        if (!value) return "peer:unknown";
+        return `peer:${value.slice(-8)}`;
+      }
+
+      function shortWorkerLabel(value) {
+        if (!value) return "worker:unknown";
+        const match = value.match(/(?:^|-)0*(\d+)$/);
+        if (match) return `worker:${match[1].padStart(2, "0")}`;
+        return shortHash(value);
       }
 
       function renderArtifacts(artifacts) {

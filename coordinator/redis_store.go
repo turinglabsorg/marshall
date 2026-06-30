@@ -203,11 +203,21 @@ func (store *RedisStore) CreateJob(ctx context.Context, job Job) (Event, error) 
 	if job.JobID == "" || job.RunID == "" || job.JobType == "" || job.Backend == "" {
 		return Event{}, fmt.Errorf("job_id, run_id, job_type, and backend are required")
 	}
+	existing, err := store.hash(ctx, store.key("job", job.JobID))
+	if err != nil {
+		return Event{}, err
+	}
 	if job.CreatedAt == "" {
-		job.CreatedAt = nowUTC()
+		job.CreatedAt = existing["created_at"]
+		if job.CreatedAt == "" {
+			job.CreatedAt = nowUTC()
+		}
 	}
 	if job.Status == "" {
-		job.Status = "queued"
+		job.Status = existing["status"]
+		if job.Status == "" {
+			job.Status = "queued"
+		}
 	}
 	if len(job.JobSpec) > 0 && !json.Valid(job.JobSpec) {
 		return Event{}, fmt.Errorf("job_spec must be valid JSON")
@@ -225,6 +235,10 @@ func (store *RedisStore) CreateJob(ctx context.Context, job Job) (Event, error) 
 	if len(job.JobSpec) > 0 {
 		fields["job_spec"] = string(job.JobSpec)
 	}
+	if existing["job_id"] != "" {
+		delete(fields, "status")
+		delete(fields, "created_at")
+	}
 	if _, err := store.client.command(ctx, append([]string{"HSET", store.key("job", job.JobID)}, mapArgs(fields)...)...); err != nil {
 		return Event{}, err
 	}
@@ -234,7 +248,11 @@ func (store *RedisStore) CreateJob(ctx context.Context, job Job) (Event, error) 
 	if _, err := store.client.command(ctx, "SADD", store.key("run", job.RunID, "jobs"), job.JobID); err != nil {
 		return Event{}, err
 	}
-	return store.appendEvent(ctx, "job_created", map[string]string{
+	eventType := "job_created"
+	if existing["job_id"] != "" {
+		eventType = "job_upserted"
+	}
+	return store.appendEvent(ctx, eventType, map[string]string{
 		"job_id":     job.JobID,
 		"run_id":     job.RunID,
 		"job_type":   job.JobType,
