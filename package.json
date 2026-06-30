@@ -14,6 +14,7 @@
     "dataset:ag-news:micro:build": "python3 training/build_ag_news_dataset.py --output-dir .marshall/datasets/ag-news-micro --train-size ${MARSHALL_MICRO_TRAIN_SIZE:-8192} --valid-size ${MARSHALL_MICRO_VALID_SIZE:-1024} --test-size ${MARSHALL_MICRO_TEST_SIZE:-400} --eval-size ${MARSHALL_MICRO_EVAL_SIZE:-200} --shard-count ${MARSHALL_MICRO_SHARDS:-128}",
     "dataset:ag-news:micro:check": "python3 training/build_ag_news_dataset.py --output-dir .marshall/datasets/ag-news-micro --shard-count ${MARSHALL_MICRO_SHARDS:-128} --check",
     "dataset:manifest": "tsx src/dataset-manifest-cli.ts",
+    "dataset:run:prepare": "tsx src/dataset-run-cli.ts",
     "eval:jobs": "tsx src/evaluation-jobs-cli.ts",
     "validation:jobs": "tsx src/validation-jobs-cli.ts",
     "leaderboard:adapters": "tsx src/leaderboard-cli.ts",

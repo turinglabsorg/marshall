@@ -160,7 +160,8 @@ It proves:
 - adapter leaderboard outputs include an explicit `selection_policy` with score formula, tie breakers, top-K, required verdict, and current `single_adapter` merge mode.
 - dataset shards can declare a `files[]` list with worker-resolvable URIs, SHA-256 hashes, and optional byte sizes, so workers materialize only the assigned shard files before training.
 - dataset cache materialization supports local `file://` inputs and HTTP/S shard files, verifies each file hash, verifies optional file sizes, and verifies the final shard root hash before exposing the shard to training code.
-- `npm run dataset:manifest` builds private local content-addressed dataset manifests from JSONL inputs under `.marshall/`, with optional `--base-uri` for externally hosted shard files.
+- `npm run dataset:manifest` builds private local content-addressed dataset manifests from JSONL inputs under `.marshall/`, with optional `--base-uri` for externally hosted shard files. It accepts existing chat records with `messages[]`, plain text records through `--text-field`, or instruction datasets through `--instruction-field`, `--response-field`, and optional `--context-field`.
+- `npm run dataset:run:prepare` is the product path from raw dataset input to scheduled work: it can create the dataset manifest, write a run bundle, write the `train_adapter` jobs file, and publish the jobs into the coordinator when `--coordinator-url` is provided.
 
 ## CLI Runtime
 
@@ -200,6 +201,30 @@ MARSHALL_ADAPTER_DATASET_DIR=.marshall/datasets/fineweb-window \
 MARSHALL_JOB_TYPE=train_adapter \
 MARSHALL_JOB_COUNT=64 \
 npm run control:start
+```
+
+For instruction-tuning JSONL sources, prepare the dataset manifest and training run bundle in one command:
+
+```bash
+npm run dataset:run:prepare -- \
+  --input-jsonl .marshall/cache/raw/dolly/databricks-dolly-15k.jsonl \
+  --dataset-dir .marshall/datasets/dolly-15k-window \
+  --dataset-id databricks-dolly-15k-window \
+  --run-id run_dolly_15k_001 \
+  --run-dir .marshall/runs/run_dolly_15k_001 \
+  --shard-count 32 \
+  --job-count 32 \
+  --instruction-field instruction \
+  --response-field response \
+  --context-field context
+```
+
+Add `--coordinator-url http://127.0.0.1:8080` to publish the generated jobs into the coordinator immediately. The same run bundle still writes `jobs/train-adapters.json`, so the p2p control peer can start from the generated jobs file:
+
+```bash
+npm run control:start -- \
+  --jobs-file .marshall/runs/run_dolly_15k_001/jobs/train-adapters.json \
+  --artifact-store-dir .marshall/runs/run_dolly_15k_001/train-artifacts
 ```
 
 For large-scale scheduling tests without fake adapters, build a micro-sharded AG News dataset. Each shard still contains real AG News examples and each job trains a real LoRA adapter:

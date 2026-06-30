@@ -74,7 +74,8 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/model-package-cli.ts` packages the selected optimized model as base model + LoRA adapter metadata and emits an `optimized_model_package` manifest. Use `--adapter-artifacts-dir` so packages point at the control peer's verified local adapter copy instead of a worker-local path embedded in evaluation metrics.
 - `src/model-query-cli.ts` queries a packaged optimized model against a selected eval record and can fail unless the answer is correct.
 - `src/e2e-ag-news-cli.ts` runs the AG News product E2E path: training worker pool, p2p artifact upload to the control store, p2p adapter download for evaluation workers, evaluation artifact upload, optional p2p validation target download, accepted-only leaderboard selection, package from verified adapter storage, query, and optional coordinator persistence verification.
-- `src/dataset-manifest-cli.ts` builds private content-addressed dataset manifests from local JSONL inputs under `.marshall/`, with optional external `--base-uri` shard URLs for remote workers.
+- `src/dataset-manifest-cli.ts` builds private content-addressed dataset manifests from local JSONL inputs under `.marshall/`, with optional external `--base-uri` shard URLs for remote workers. It accepts existing `messages[]` chat records, `--text-field` plain text records, and instruction-tuning records through `--instruction-field`, `--response-field`, optional `--context-field`, and optional `--system-prompt`.
+- `src/dataset-run-cli.ts` is the product path for dataset-backed training work. It can build the manifest, generate the run bundle, write `jobs/train-adapters.json`, and publish those jobs to the coordinator when `--coordinator-url` is provided.
 - `DatasetShard.files[]` is the dataset transfer contract for remote workers: each entry carries `path`, worker-resolvable `uri`, `sha256`, and optional `bytes`; the shard hash still commits to the assembled shard directory.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
@@ -116,7 +117,7 @@ nvm use
 npm run typecheck
 npm run dataset:marshall:build
 npm run dataset:marshall:check
-npm run dataset:manifest -- --input-jsonl <local-jsonl> --output-dir .marshall/datasets/<dataset-id> --dataset-id <dataset-id> --shard-count <n>
+npm run dataset:run:prepare -- --input-jsonl <local-jsonl> --dataset-dir .marshall/datasets/<dataset-id> --dataset-id <dataset-id> --run-id <run-id> --run-dir .marshall/runs/<run-id> --shard-count <n> --job-count <n> --instruction-field instruction --response-field response --context-field context
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
