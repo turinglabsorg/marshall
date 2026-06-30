@@ -22,6 +22,24 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	server := httptest.NewServer(NewServer(NewRedisStore(addr, prefix)))
 	defer server.Close()
 
+	response, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("unexpected index response: %s %s", response.Status, response.Header.Get("Content-Type"))
+	}
+
+	response, err = http.Get(server.URL + "/AGENTS.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Type"), "text/markdown") {
+		t.Fatalf("unexpected agents response: %s %s", response.Status, response.Header.Get("Content-Type"))
+	}
+
 	postJSON(t, server.URL+"/runs", Run{
 		RunID:     "run_http_001",
 		Objective: "prove coordinator HTTP lifecycle",
@@ -82,7 +100,7 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := http.DefaultClient.Do(request)
+	response, err = http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +114,15 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	}
 	if len(events) < 6 {
 		t.Fatalf("expected at least 6 lifecycle events, got %d", len(events))
+	}
+
+	var dashboard DashboardSnapshot
+	getJSONInto(t, server.URL+"/dashboard", http.StatusOK, &dashboard)
+	if dashboard.Summary.WorkersRegistered != 1 || dashboard.Summary.JobsCompleted != 1 || dashboard.Summary.ArtifactsPublished != 1 {
+		t.Fatalf("unexpected dashboard summary: %+v", dashboard.Summary)
+	}
+	if len(dashboard.Workers) != 1 || dashboard.Workers[0].LastArtifactHash == "" {
+		t.Fatalf("unexpected dashboard workers: %+v", dashboard.Workers)
 	}
 }
 

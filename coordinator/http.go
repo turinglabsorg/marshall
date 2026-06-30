@@ -26,7 +26,10 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 }
 
 func (server *Server) routes() {
+	server.mux.HandleFunc("GET /", server.index)
+	server.mux.HandleFunc("GET /AGENTS.md", server.participantAgents)
 	server.mux.HandleFunc("GET /health", server.health)
+	server.mux.HandleFunc("GET /dashboard", server.dashboard)
 	server.mux.HandleFunc("POST /runs", server.createRun)
 	server.mux.HandleFunc("POST /workers", server.registerWorker)
 	server.mux.HandleFunc("POST /jobs", server.createJob)
@@ -36,6 +39,7 @@ func (server *Server) routes() {
 	server.mux.HandleFunc("POST /artifacts", server.publishArtifact)
 	server.mux.HandleFunc("GET /artifacts/{job_id}", server.getArtifact)
 	server.mux.HandleFunc("GET /events", server.events)
+	server.mux.HandleFunc("GET /events/stream", server.eventStream)
 }
 
 func (server *Server) health(response http.ResponseWriter, _ *http.Request) {

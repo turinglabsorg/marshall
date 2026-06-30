@@ -42,6 +42,13 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	workers, err := store.Workers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workers) != 1 || workers[0].WorkerID != "worker_mlx_001" || workers[0].MemoryGB != 32 {
+		t.Fatalf("unexpected workers listing: %+v", workers)
+	}
 
 	if _, err := store.CreateJob(ctx, Job{
 		JobID:      "job_test_001",
@@ -69,6 +76,13 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	}
 	if evalJob.JobType != "evaluate_adapter" || string(evalJob.JobSpec) != string(evalSpec) {
 		t.Fatalf("unexpected persisted eval job: %+v", evalJob)
+	}
+	jobs, err := store.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("expected two persisted jobs, got %+v", jobs)
 	}
 
 	claim, err := store.ClaimJob(ctx, JobClaim{
@@ -147,6 +161,13 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	}
 	if evalArtifact.ArtifactType != "adapter_evaluation" || evalArtifact.MetricsURI == "" {
 		t.Fatalf("unexpected persisted eval artifact: %+v", evalArtifact)
+	}
+	artifacts, err := store.Artifacts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 2 {
+		t.Fatalf("expected two persisted artifacts, got %+v", artifacts)
 	}
 
 	events, err := store.Events(ctx, 20)

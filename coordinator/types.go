@@ -74,6 +74,42 @@ type Event struct {
 	Fields map[string]string `json:"fields"`
 }
 
+type DashboardSnapshot struct {
+	GeneratedAt  string           `json:"generated_at"`
+	Summary      DashboardSummary `json:"summary"`
+	Workers      []WorkerActivity `json:"workers"`
+	Jobs         []JobActivity    `json:"jobs"`
+	Artifacts    []Artifact       `json:"artifacts"`
+	RecentEvents []Event          `json:"recent_events"`
+}
+
+type DashboardSummary struct {
+	WorkersRegistered  int `json:"workers_registered"`
+	WorkersBusy        int `json:"workers_busy"`
+	JobsQueued         int `json:"jobs_queued"`
+	JobsRunning        int `json:"jobs_running"`
+	JobsCompleted      int `json:"jobs_completed"`
+	JobsFailed         int `json:"jobs_failed"`
+	ArtifactsPublished int `json:"artifacts_published"`
+}
+
+type WorkerActivity struct {
+	Worker           Worker `json:"worker"`
+	Busy             bool   `json:"busy"`
+	CurrentJobID     string `json:"current_job_id,omitempty"`
+	CurrentJobType   string `json:"current_job_type,omitempty"`
+	LastStatus       string `json:"last_status,omitempty"`
+	LastSeenAt       string `json:"last_seen_at,omitempty"`
+	LastEventType    string `json:"last_event_type,omitempty"`
+	LastArtifactType string `json:"last_artifact_type,omitempty"`
+	LastArtifactHash string `json:"last_artifact_hash,omitempty"`
+}
+
+type JobActivity struct {
+	Job      Job       `json:"job"`
+	Artifact *Artifact `json:"artifact,omitempty"`
+}
+
 func nowUTC() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }

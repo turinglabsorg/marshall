@@ -73,11 +73,32 @@ func (store *RedisStore) RegisterWorker(ctx context.Context, worker Worker) (Eve
 		return Event{}, err
 	}
 	return store.appendEvent(ctx, "worker_registered", map[string]string{
-		"worker_id":  worker.WorkerID,
-		"peer_id":    worker.PeerID,
-		"backend":    worker.Backend,
-		"created_at": worker.CreatedAt,
+		"worker_id":      worker.WorkerID,
+		"peer_id":        worker.PeerID,
+		"backend":        worker.Backend,
+		"device_family":  worker.DeviceFamily,
+		"memory_gb":      strconv.FormatFloat(worker.MemoryGB, 'f', -1, 64),
+		"supported_jobs": strings.Join(worker.SupportedJobs, ","),
+		"created_at":     worker.CreatedAt,
 	})
+}
+
+func (store *RedisStore) Workers(ctx context.Context) ([]Worker, error) {
+	ids, err := store.members(ctx, store.key("workers"))
+	if err != nil {
+		return nil, err
+	}
+	workers := make([]Worker, 0, len(ids))
+	for _, id := range ids {
+		fields, err := store.hash(ctx, store.key("worker", id))
+		if err != nil {
+			return nil, err
+		}
+		if fields["worker_id"] != "" {
+			workers = append(workers, workerFromFields(fields))
+		}
+	}
+	return workers, nil
 }
 
 func (store *RedisStore) CreateJob(ctx context.Context, job Job) (Event, error) {
@@ -136,6 +157,24 @@ func (store *RedisStore) GetJob(ctx context.Context, jobID string) (Job, error) 
 		return Job{}, fmt.Errorf("job not found")
 	}
 	return jobFromFields(fields), nil
+}
+
+func (store *RedisStore) Jobs(ctx context.Context) ([]Job, error) {
+	ids, err := store.members(ctx, store.key("jobs"))
+	if err != nil {
+		return nil, err
+	}
+	jobs := make([]Job, 0, len(ids))
+	for _, id := range ids {
+		fields, err := store.hash(ctx, store.key("job", id))
+		if err != nil {
+			return nil, err
+		}
+		if fields["job_id"] != "" {
+			jobs = append(jobs, jobFromFields(fields))
+		}
+	}
+	return jobs, nil
 }
 
 func (store *RedisStore) ClaimJob(ctx context.Context, claim JobClaim) (JobClaimResult, error) {
@@ -264,11 +303,29 @@ func (store *RedisStore) GetArtifact(ctx context.Context, jobID string) (Artifac
 	return artifactFromFields(fields), nil
 }
 
+func (store *RedisStore) Artifacts(ctx context.Context) ([]Artifact, error) {
+	ids, err := store.members(ctx, store.key("artifacts"))
+	if err != nil {
+		return nil, err
+	}
+	artifacts := make([]Artifact, 0, len(ids))
+	for _, id := range ids {
+		fields, err := store.hash(ctx, store.key("artifact", id))
+		if err != nil {
+			return nil, err
+		}
+		if fields["job_id"] != "" {
+			artifacts = append(artifacts, artifactFromFields(fields))
+		}
+	}
+	return artifacts, nil
+}
+
 func (store *RedisStore) Events(ctx context.Context, count int) ([]Event, error) {
 	if count <= 0 {
 		count = 100
 	}
-	value, err := store.client.command(ctx, "XRANGE", store.key("events"), "-", "+", "COUNT", strconv.Itoa(count))
+	value, err := store.client.command(ctx, "XREVRANGE", store.key("events"), "+", "-", "COUNT", strconv.Itoa(count))
 	if err != nil {
 		return nil, err
 	}
@@ -285,6 +342,9 @@ func (store *RedisStore) Events(ctx context.Context, count int) ([]Event, error)
 			Type:   fields["type"],
 			Fields: fields,
 		})
+	}
+	for left, right := 0, len(events)-1; left < right; left, right = left+1, right-1 {
+		events[left], events[right] = events[right], events[left]
 	}
 	return events, nil
 }
@@ -304,6 +364,20 @@ func (store *RedisStore) hash(ctx context.Context, key string) (map[string]strin
 		return nil, err
 	}
 	return arrayFields(value), nil
+}
+
+func (store *RedisStore) members(ctx context.Context, key string) ([]string, error) {
+	value, err := store.client.command(ctx, "SMEMBERS", key)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]string, 0, len(value.items))
+	for _, item := range value.items {
+		if item.stringValue() != "" {
+			members = append(members, item.stringValue())
+		}
+	}
+	return members, nil
 }
 
 func (store *RedisStore) key(parts ...string) string {
@@ -338,6 +412,23 @@ func jobFromFields(fields map[string]string) Job {
 		PeerID:     fields["peer_id"],
 		JobSpec:    json.RawMessage(fields["job_spec"]),
 		CreatedAt:  fields["created_at"],
+	}
+}
+
+func workerFromFields(fields map[string]string) Worker {
+	memoryGB, _ := strconv.ParseFloat(fields["memory_gb"], 64)
+	supportedJobs := []string{}
+	if fields["supported_jobs"] != "" {
+		supportedJobs = strings.Split(fields["supported_jobs"], ",")
+	}
+	return Worker{
+		WorkerID:      fields["worker_id"],
+		PeerID:        fields["peer_id"],
+		Backend:       fields["backend"],
+		DeviceFamily:  fields["device_family"],
+		MemoryGB:      memoryGB,
+		SupportedJobs: supportedJobs,
+		CreatedAt:     fields["created_at"],
 	}
 }
 
