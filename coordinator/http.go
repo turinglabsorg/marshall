@@ -45,6 +45,7 @@ func (server *Server) routes() {
 	server.mux.HandleFunc("POST /runs", server.requireAuth(server.createRun))
 	server.mux.HandleFunc("POST /workers", server.requireAuth(server.registerWorker))
 	server.mux.HandleFunc("POST /workers/{worker_id}/heartbeat", server.requireAuth(server.workerHeartbeat))
+	server.mux.HandleFunc("GET /workers/{worker_id}/reputation", server.workerReputation)
 	server.mux.HandleFunc("POST /jobs", server.requireAuth(server.createJob))
 	server.mux.HandleFunc("POST /jobs/requeue-expired", server.requireAuth(server.requeueExpiredJobs))
 	server.mux.HandleFunc("GET /jobs/{job_id}", server.getJob)
@@ -52,6 +53,7 @@ func (server *Server) routes() {
 	server.mux.HandleFunc("POST /jobs/{job_id}/status", server.requireAuth(server.updateJobStatus))
 	server.mux.HandleFunc("POST /artifacts", server.requireAuth(server.publishArtifact))
 	server.mux.HandleFunc("GET /artifacts/{job_id}", server.getArtifact)
+	server.mux.HandleFunc("POST /artifacts/{job_id}/verdict", server.requireAuth(server.recordArtifactVerdict))
 	server.mux.HandleFunc("GET /events", server.events)
 	server.mux.HandleFunc("GET /events/stream", server.eventStream)
 }
@@ -113,6 +115,11 @@ func (server *Server) workerHeartbeat(response http.ResponseWriter, request *htt
 	writeResult(response, event, err)
 }
 
+func (server *Server) workerReputation(response http.ResponseWriter, request *http.Request) {
+	reputation, err := server.store.WorkerReputation(request.Context(), request.PathValue("worker_id"))
+	writeResult(response, reputation, err)
+}
+
 func (server *Server) createJob(response http.ResponseWriter, request *http.Request) {
 	var job Job
 	if !decodeJSON(response, request, &job) {
@@ -164,6 +171,16 @@ func (server *Server) publishArtifact(response http.ResponseWriter, request *htt
 func (server *Server) getArtifact(response http.ResponseWriter, request *http.Request) {
 	artifact, err := server.store.GetArtifact(request.Context(), request.PathValue("job_id"))
 	writeResult(response, artifact, err)
+}
+
+func (server *Server) recordArtifactVerdict(response http.ResponseWriter, request *http.Request) {
+	var verdict ArtifactVerdict
+	if !decodeJSON(response, request, &verdict) {
+		return
+	}
+	verdict.JobID = request.PathValue("job_id")
+	result, err := server.store.RecordArtifactVerdict(request.Context(), verdict)
+	writeResult(response, result, err)
 }
 
 func (server *Server) events(response http.ResponseWriter, request *http.Request) {

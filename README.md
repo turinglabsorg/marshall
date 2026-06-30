@@ -21,7 +21,9 @@ Marshall now includes a native Go coordinator prototype backed by Redis:
 - `cmd/marshall-coordinator` exposes a small HTTP admin API;
 - `coordinator/redis_store.go` stores derived state in Redis hashes/sets;
 - Redis Streams provide the append-only event log;
-- job claims are atomic through a Redis Lua script.
+- job claims are atomic through a Redis Lua script;
+- worker claims require a registered worker identity and are rejected once the worker is suspended;
+- artifact verdicts update worker reputation and can progressively degrade or suspend bad workers;
 - the TypeScript libp2p control peer can bridge worker lifecycle events into the coordinator through `coordinatorUrl`.
 
 Run it locally with Redis:
@@ -30,6 +32,29 @@ Run it locally with Redis:
 docker run --rm -p 6379:6379 redis:7-alpine
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go run ./cmd/marshall-coordinator
 ```
+
+### Public Worker Reputation
+
+Marshall is moving toward open worker participation with validator-driven slashing instead of a permanently permissioned worker set. The current coordinator policy is intentionally simple and deterministic:
+
+| Verdict | Score Delta | Meaning |
+|---------|-------------|---------|
+| `accepted` | `+2` | Artifact passed validation |
+| `poor` | `-10` | Artifact is valid but low quality |
+| `rejected` | `-25` | Artifact failed validation |
+| `timeout` | `-15` | Worker held a job until its lease expired |
+| `malicious` | `-100` | Strong sabotage/canary failure signal |
+
+Worker reputation starts at `100`, is capped to `0..100`, becomes `degraded` below `70`, and becomes `suspended` below `20`. Suspended workers cannot claim new jobs.
+
+Coordinator endpoints:
+
+```text
+POST /artifacts/{job_id}/verdict
+GET  /workers/{worker_id}/reputation
+```
+
+Only the coordinator writes Redis. Workers do not receive Redis credentials and interact through libp2p worker protocols.
 
 ## First Concrete Target
 

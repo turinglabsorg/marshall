@@ -789,7 +789,7 @@
           return `<tr>
             <td><strong>${html(worker.worker_id)}</strong><br><span>${html(shortHash(worker.peer_id || ""))}</span></td>
             <td>${html(worker.backend || "unknown")}<br><span>${html(worker.device_family || "")}</span></td>
-            <td><span class="pill ${statusClass(status)}">${html(status)}</span><br><span>${html(timeLabel(activity.last_seen_at))}</span></td>
+            <td><span class="pill ${statusClass(status)}">${html(status)}</span>${reputationLabel(worker)}<br><span>${html(timeLabel(activity.last_seen_at))}</span></td>
             <td>${html(output)}${activity.current_job_id ? `<br><span>${html(activity.current_job_id)}</span>` : ""}</td>
           </tr>`;
         }).join("");
@@ -863,6 +863,14 @@
           return "idle";
         }
         return "";
+      }
+
+      function reputationLabel(worker) {
+        const reputation = worker.reputation || {};
+        if (reputation.score == null || reputation.status == null) {
+          return "";
+        }
+        return `<br><span>rep ${html(reputation.score)} ${html(reputation.status)}</span>`;
       }
 
       function shortHash(value) {

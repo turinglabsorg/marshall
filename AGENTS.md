@@ -9,7 +9,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - Workers are libp2p peers with persistent Ed25519 identities.
 - Worker registration, job claim, job status, heartbeat, and artifact manifests must work over libp2p streams.
 - HTTP endpoints are admin/debug/dashboard conveniences, not the primary worker network.
-- Start permissioned: unknown peers must not receive trusted jobs.
+- Target public participation: unknown workers may onboard, but trusted work requires validator verdicts, reputation, and coordinator-enforced suspension for bad actors.
 
 ## Initial Stack
 
@@ -45,6 +45,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured, sends the full `MarshallJob` as `job_spec`, and can read persisted jobs/artifacts back from the coordinator.
 - `src/coordinator-client.ts` supports coordinator write authentication with `MARSHALL_COORDINATOR_TOKEN` / `--coordinator-token` and worker heartbeat forwarding for live coordinator leases.
+- `src/coordinator-client.ts` can record artifact verdicts and read worker reputation through the coordinator API.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/worker-peer.ts` supports optional swarm authentication with `MARSHALL_SWARM_TOKEN` / `--swarm-token` so untrusted peers cannot register or claim jobs from permissioned control peers.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
@@ -75,7 +76,8 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, full job specs, job claims, statuses, artifacts, and append-only events in Redis.
 - `coordinator/redis_store.go` maintains job leases and can requeue expired running jobs so abandoned work is visible and recoverable.
-- `coordinator/http.go` exposes the coordinator HTTP admin API, including `GET /jobs/{job_id}`, `GET /artifacts/{job_id}`, `POST /jobs/requeue-expired`, `GET /dashboard`, `GET /events/stream`, and the embedded public console at `/`.
+- `coordinator/redis_store.go` tracks worker reputation and blocks suspended workers from claiming more jobs. Verdict policy is currently `accepted +2`, `poor -10`, `rejected -25`, `timeout -15`, and `malicious -100`, capped to the `0..100` score range.
+- `coordinator/http.go` exposes the coordinator HTTP admin API, including `GET /jobs/{job_id}`, `GET /artifacts/{job_id}`, `POST /artifacts/{job_id}/verdict`, `GET /workers/{worker_id}/reputation`, `POST /jobs/requeue-expired`, `GET /dashboard`, `GET /events/stream`, and the embedded public console at `/`.
 - `coordinator/http.go` enforces optional bearer-token write authentication when `MARSHALL_COORDINATOR_TOKEN` is set; read endpoints remain available for the public console.
 - `coordinator/public/index.html` is the embedded terminal-style swarm console for worker status, job status, artifacts, and live coordinator events.
 - `coordinator/public/AGENTS.md` is the public worker onboarding file served at `/AGENTS.md`.

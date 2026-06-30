@@ -12,16 +12,18 @@ type Run struct {
 }
 
 type Worker struct {
-	WorkerID      string   `json:"worker_id"`
-	PeerID        string   `json:"peer_id"`
-	Backend       string   `json:"backend"`
-	DeviceFamily  string   `json:"device_family"`
-	MemoryGB      float64  `json:"memory_gb"`
-	SupportedJobs []string `json:"supported_jobs"`
-	CreatedAt     string   `json:"created_at,omitempty"`
-	Status        string   `json:"status,omitempty"`
-	CurrentJobID  string   `json:"current_job_id,omitempty"`
-	LastSeenAt    string   `json:"last_seen_at,omitempty"`
+	WorkerID      string           `json:"worker_id"`
+	PeerID        string           `json:"peer_id"`
+	PublicKey     string           `json:"public_key,omitempty"`
+	Backend       string           `json:"backend"`
+	DeviceFamily  string           `json:"device_family"`
+	MemoryGB      float64          `json:"memory_gb"`
+	SupportedJobs []string         `json:"supported_jobs"`
+	CreatedAt     string           `json:"created_at,omitempty"`
+	Status        string           `json:"status,omitempty"`
+	CurrentJobID  string           `json:"current_job_id,omitempty"`
+	LastSeenAt    string           `json:"last_seen_at,omitempty"`
+	Reputation    WorkerReputation `json:"reputation"`
 }
 
 type WorkerHeartbeat struct {
@@ -78,6 +80,40 @@ type Artifact struct {
 	ConfigHash   string `json:"config_hash"`
 	MetricsURI   string `json:"metrics_uri,omitempty"`
 	CreatedAt    string `json:"created_at,omitempty"`
+	Verdict      string `json:"verdict,omitempty"`
+	VerdictAt    string `json:"verdict_at,omitempty"`
+}
+
+type WorkerReputation struct {
+	WorkerID           string `json:"worker_id"`
+	Score              int    `json:"score"`
+	Status             string `json:"status"`
+	AcceptedArtifacts  int    `json:"accepted_artifacts"`
+	PoorArtifacts      int    `json:"poor_artifacts"`
+	RejectedArtifacts  int    `json:"rejected_artifacts"`
+	MaliciousArtifacts int    `json:"malicious_artifacts"`
+	TimeoutJobs        int    `json:"timeout_jobs"`
+	ValidationEvents   int    `json:"validation_events"`
+	LastVerdictAt      string `json:"last_verdict_at,omitempty"`
+}
+
+type ArtifactVerdict struct {
+	JobID       string `json:"job_id"`
+	WorkerID    string `json:"worker_id"`
+	ValidatorID string `json:"validator_id,omitempty"`
+	Verdict     string `json:"verdict"`
+	Reason      string `json:"reason,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+type ArtifactVerdictResult struct {
+	JobID           string           `json:"job_id"`
+	WorkerID        string           `json:"worker_id"`
+	Verdict         string           `json:"verdict"`
+	ScoreDelta      int              `json:"score_delta"`
+	Reputation      WorkerReputation `json:"reputation"`
+	EventID         string           `json:"event_id,omitempty"`
+	ParticipationOK bool             `json:"participation_ok"`
 }
 
 type Event struct {

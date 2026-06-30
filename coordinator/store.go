@@ -16,5 +16,7 @@ type Store interface {
 	PublishArtifact(context.Context, Artifact) (Event, error)
 	GetArtifact(context.Context, string) (Artifact, error)
 	Artifacts(context.Context) ([]Artifact, error)
+	RecordArtifactVerdict(context.Context, ArtifactVerdict) (ArtifactVerdictResult, error)
+	WorkerReputation(context.Context, string) (WorkerReputation, error)
 	Events(context.Context, int) ([]Event, error)
 }

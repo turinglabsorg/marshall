@@ -101,6 +101,21 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	if persistedArtifact.ArtifactType != "mlx_smoke_result" || persistedArtifact.ArtifactHash != "sha256:http" {
 		t.Fatalf("unexpected persisted artifact: %+v", persistedArtifact)
 	}
+	var verdict ArtifactVerdictResult
+	postJSONInto(t, server.URL+"/artifacts/job_http_001/verdict", ArtifactVerdict{
+		WorkerID:    "worker_http_001",
+		ValidatorID: "validator_http_001",
+		Verdict:     "accepted",
+		Reason:      "artifact passed smoke validation",
+	}, http.StatusOK, &verdict)
+	if verdict.Reputation.Status != "active" || verdict.Reputation.Score != 100 || !verdict.ParticipationOK {
+		t.Fatalf("unexpected verdict result: %+v", verdict)
+	}
+	var reputation WorkerReputation
+	getJSONInto(t, server.URL+"/workers/worker_http_001/reputation", http.StatusOK, &reputation)
+	if reputation.WorkerID != "worker_http_001" || reputation.AcceptedArtifacts != 1 {
+		t.Fatalf("unexpected worker reputation: %+v", reputation)
+	}
 
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/events?count=20", nil)
 	if err != nil {
@@ -146,6 +161,10 @@ func TestHTTPServerAuthProtectsWrites(t *testing.T) {
 	postJSON(t, server.URL+"/runs", Run{
 		RunID:     "run_auth_001",
 		Objective: "unauthorized write",
+	}, http.StatusUnauthorized)
+	postJSON(t, server.URL+"/artifacts/job_auth_001/verdict", ArtifactVerdict{
+		WorkerID: "worker_auth_001",
+		Verdict:  "accepted",
 	}, http.StatusUnauthorized)
 	postJSONWithToken(t, server.URL+"/runs", "wrong-token", Run{
 		RunID:     "run_auth_001",

@@ -45,10 +45,35 @@ const CoordinatorArtifactSchema = z.object({
   config_hash: z.string(),
   metrics_uri: z.string().optional(),
   created_at: z.string().optional(),
+  verdict: z.string().optional(),
+  verdict_at: z.string().optional(),
 });
 
 const RequeueResultSchema = z.object({
   requeued: z.array(z.string()),
+});
+
+const WorkerReputationSchema = z.object({
+  worker_id: z.string(),
+  score: z.number(),
+  status: z.string(),
+  accepted_artifacts: z.number(),
+  poor_artifacts: z.number(),
+  rejected_artifacts: z.number(),
+  malicious_artifacts: z.number(),
+  timeout_jobs: z.number(),
+  validation_events: z.number(),
+  last_verdict_at: z.string().optional(),
+});
+
+const ArtifactVerdictResultSchema = z.object({
+  job_id: z.string(),
+  worker_id: z.string(),
+  verdict: z.string(),
+  score_delta: z.number(),
+  reputation: WorkerReputationSchema,
+  event_id: z.string().optional(),
+  participation_ok: z.boolean(),
 });
 
 export type CoordinatorEvent = z.infer<typeof EventSchema>;
@@ -56,6 +81,8 @@ export type CoordinatorJobClaimResult = z.infer<typeof JobClaimResultSchema>;
 export type CoordinatorJob = z.infer<typeof CoordinatorJobSchema>;
 export type CoordinatorArtifact = z.infer<typeof CoordinatorArtifactSchema>;
 export type CoordinatorRequeueResult = z.infer<typeof RequeueResultSchema>;
+export type CoordinatorWorkerReputation = z.infer<typeof WorkerReputationSchema>;
+export type CoordinatorArtifactVerdictResult = z.infer<typeof ArtifactVerdictResultSchema>;
 
 export interface CoordinatorClientOptions {
   token?: string;
@@ -97,6 +124,7 @@ export class CoordinatorClient {
     await this.post("/workers", {
       worker_id: registration.worker_id,
       peer_id: registration.peer_id,
+      public_key: registration.public_key,
       backend: registration.backend,
       device_family: registration.device_family,
       memory_gb: registration.memory_gb,
@@ -147,6 +175,20 @@ export class CoordinatorClient {
       metrics_uri: manifest.metrics_uri,
       created_at: manifest.created_at,
     }, EventSchema);
+  }
+
+  async recordArtifactVerdict(jobId: string, verdict: {
+    worker_id: string;
+    verdict: "accepted" | "poor" | "rejected" | "malicious" | "timeout";
+    validator_id?: string;
+    reason?: string;
+    created_at?: string;
+  }): Promise<CoordinatorArtifactVerdictResult> {
+    return this.post(`/artifacts/${encodeURIComponent(jobId)}/verdict`, verdict, ArtifactVerdictResultSchema);
+  }
+
+  async workerReputation(workerId: string): Promise<CoordinatorWorkerReputation> {
+    return this.get(`/workers/${encodeURIComponent(workerId)}/reputation`, WorkerReputationSchema);
   }
 
   async getJob(jobId: string): Promise<CoordinatorJob> {

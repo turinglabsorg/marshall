@@ -9,6 +9,9 @@ import (
 )
 
 const defaultLeaseSeconds = 300
+const defaultReputationScore = 100
+const degradedReputationThreshold = 70
+const suspendedReputationThreshold = 20
 
 type RedisStore struct {
 	client *redisClient
@@ -54,8 +57,18 @@ func (store *RedisStore) RegisterWorker(ctx context.Context, worker Worker) (Eve
 	if worker.WorkerID == "" || worker.PeerID == "" || worker.Backend == "" {
 		return Event{}, fmt.Errorf("worker_id, peer_id, and backend are required")
 	}
+	existing, err := store.hash(ctx, store.key("worker", worker.WorkerID))
+	if err != nil {
+		return Event{}, err
+	}
+	if existing["worker_id"] != "" && existing["peer_id"] != worker.PeerID {
+		return Event{}, fmt.Errorf("worker peer does not match existing worker")
+	}
 	if worker.CreatedAt == "" {
-		worker.CreatedAt = nowUTC()
+		worker.CreatedAt = existing["created_at"]
+		if worker.CreatedAt == "" {
+			worker.CreatedAt = nowUTC()
+		}
 	}
 	if worker.LastSeenAt == "" {
 		worker.LastSeenAt = worker.CreatedAt
@@ -63,18 +76,33 @@ func (store *RedisStore) RegisterWorker(ctx context.Context, worker Worker) (Eve
 	if worker.Status == "" {
 		worker.Status = "registered"
 	}
+	reputation := reputationFromFields(worker.WorkerID, existing)
+	if reputation.Score == 0 && existing["reputation_score"] == "" {
+		reputation.Score = defaultReputationScore
+		reputation.Status = reputationStatus(reputation.Score)
+	}
 
 	if _, err := store.client.command(ctx, append([]string{"HSET", store.key("worker", worker.WorkerID)}, mapArgs(map[string]string{
-		"worker_id":      worker.WorkerID,
-		"peer_id":        worker.PeerID,
-		"backend":        worker.Backend,
-		"device_family":  worker.DeviceFamily,
-		"memory_gb":      strconv.FormatFloat(worker.MemoryGB, 'f', -1, 64),
-		"supported_jobs": strings.Join(worker.SupportedJobs, ","),
-		"created_at":     worker.CreatedAt,
-		"status":         worker.Status,
-		"current_job_id": worker.CurrentJobID,
-		"last_seen_at":   worker.LastSeenAt,
+		"worker_id":           worker.WorkerID,
+		"peer_id":             worker.PeerID,
+		"public_key":          worker.PublicKey,
+		"backend":             worker.Backend,
+		"device_family":       worker.DeviceFamily,
+		"memory_gb":           strconv.FormatFloat(worker.MemoryGB, 'f', -1, 64),
+		"supported_jobs":      strings.Join(worker.SupportedJobs, ","),
+		"created_at":          worker.CreatedAt,
+		"status":              worker.Status,
+		"current_job_id":      worker.CurrentJobID,
+		"last_seen_at":        worker.LastSeenAt,
+		"reputation_score":    strconv.Itoa(reputation.Score),
+		"reputation_status":   reputation.Status,
+		"accepted_artifacts":  strconv.Itoa(reputation.AcceptedArtifacts),
+		"poor_artifacts":      strconv.Itoa(reputation.PoorArtifacts),
+		"rejected_artifacts":  strconv.Itoa(reputation.RejectedArtifacts),
+		"malicious_artifacts": strconv.Itoa(reputation.MaliciousArtifacts),
+		"timeout_jobs":        strconv.Itoa(reputation.TimeoutJobs),
+		"validation_events":   strconv.Itoa(reputation.ValidationEvents),
+		"last_verdict_at":     reputation.LastVerdictAt,
 	})...)...); err != nil {
 		return Event{}, err
 	}
@@ -82,15 +110,17 @@ func (store *RedisStore) RegisterWorker(ctx context.Context, worker Worker) (Eve
 		return Event{}, err
 	}
 	return store.appendEvent(ctx, "worker_registered", map[string]string{
-		"worker_id":      worker.WorkerID,
-		"peer_id":        worker.PeerID,
-		"backend":        worker.Backend,
-		"device_family":  worker.DeviceFamily,
-		"memory_gb":      strconv.FormatFloat(worker.MemoryGB, 'f', -1, 64),
-		"supported_jobs": strings.Join(worker.SupportedJobs, ","),
-		"created_at":     worker.CreatedAt,
-		"status":         worker.Status,
-		"last_seen_at":   worker.LastSeenAt,
+		"worker_id":         worker.WorkerID,
+		"peer_id":           worker.PeerID,
+		"backend":           worker.Backend,
+		"device_family":     worker.DeviceFamily,
+		"memory_gb":         strconv.FormatFloat(worker.MemoryGB, 'f', -1, 64),
+		"supported_jobs":    strings.Join(worker.SupportedJobs, ","),
+		"created_at":        worker.CreatedAt,
+		"status":            worker.Status,
+		"last_seen_at":      worker.LastSeenAt,
+		"reputation_score":  strconv.Itoa(reputation.Score),
+		"reputation_status": reputation.Status,
 	})
 }
 
@@ -251,6 +281,20 @@ func (store *RedisStore) ClaimJob(ctx context.Context, claim JobClaim) (JobClaim
 	if claim.LeaseSeconds <= 0 {
 		claim.LeaseSeconds = defaultLeaseSeconds
 	}
+	workerFields, err := store.hash(ctx, store.key("worker", claim.WorkerID))
+	if err != nil {
+		return JobClaimResult{}, err
+	}
+	if workerFields["worker_id"] == "" {
+		return JobClaimResult{Accepted: false, JobID: claim.JobID, WorkerID: claim.WorkerID, Reason: "worker not registered"}, nil
+	}
+	if workerFields["peer_id"] != claim.PeerID {
+		return JobClaimResult{Accepted: false, JobID: claim.JobID, WorkerID: claim.WorkerID, Reason: "worker peer mismatch"}, nil
+	}
+	reputation := reputationFromFields(claim.WorkerID, workerFields)
+	if reputation.Status == "suspended" {
+		return JobClaimResult{Accepted: false, JobID: claim.JobID, WorkerID: claim.WorkerID, Reason: "worker suspended"}, nil
+	}
 
 	script := `
 local status = redis.call('HGET', KEYS[2], 'status')
@@ -339,6 +383,9 @@ func (store *RedisStore) RequeueExpiredJobs(ctx context.Context) (RequeueResult,
 				"current_job_id", "",
 				"last_seen_at", now,
 			); err != nil {
+				return RequeueResult{}, err
+			}
+			if _, _, err := store.applyWorkerReputation(ctx, fields["worker_id"], "timeout", now); err != nil {
 				return RequeueResult{}, err
 			}
 		}
@@ -454,6 +501,79 @@ func (store *RedisStore) Artifacts(ctx context.Context) ([]Artifact, error) {
 	return artifacts, nil
 }
 
+func (store *RedisStore) RecordArtifactVerdict(ctx context.Context, verdict ArtifactVerdict) (ArtifactVerdictResult, error) {
+	if verdict.JobID == "" || verdict.WorkerID == "" || verdict.Verdict == "" {
+		return ArtifactVerdictResult{}, fmt.Errorf("job_id, worker_id, and verdict are required")
+	}
+	normalizedVerdict, err := normalizeVerdict(verdict.Verdict)
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	artifact, err := store.hash(ctx, store.key("artifact", verdict.JobID))
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	if artifact["job_id"] == "" {
+		return ArtifactVerdictResult{}, fmt.Errorf("artifact not found")
+	}
+	if artifact["worker_id"] != verdict.WorkerID {
+		return ArtifactVerdictResult{}, fmt.Errorf("verdict worker does not match artifact worker")
+	}
+	if verdict.CreatedAt == "" {
+		verdict.CreatedAt = nowUTC()
+	}
+	scoreDelta, reputation, err := store.applyWorkerReputation(ctx, verdict.WorkerID, normalizedVerdict, verdict.CreatedAt)
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	if _, err := store.client.command(ctx, "HSET", store.key("artifact", verdict.JobID),
+		"verdict", normalizedVerdict,
+		"verdict_reason", verdict.Reason,
+		"verdict_validator_id", verdict.ValidatorID,
+		"verdict_score_delta", strconv.Itoa(scoreDelta),
+		"verdict_at", verdict.CreatedAt,
+	); err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	event, err := store.appendEvent(ctx, "artifact_verdict_recorded", map[string]string{
+		"job_id":            verdict.JobID,
+		"worker_id":         verdict.WorkerID,
+		"validator_id":      verdict.ValidatorID,
+		"verdict":           normalizedVerdict,
+		"reason":            verdict.Reason,
+		"score_delta":       strconv.Itoa(scoreDelta),
+		"reputation_score":  strconv.Itoa(reputation.Score),
+		"reputation_status": reputation.Status,
+		"created_at":        verdict.CreatedAt,
+	})
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	return ArtifactVerdictResult{
+		JobID:           verdict.JobID,
+		WorkerID:        verdict.WorkerID,
+		Verdict:         normalizedVerdict,
+		ScoreDelta:      scoreDelta,
+		Reputation:      reputation,
+		EventID:         event.ID,
+		ParticipationOK: reputation.Status != "suspended",
+	}, nil
+}
+
+func (store *RedisStore) WorkerReputation(ctx context.Context, workerID string) (WorkerReputation, error) {
+	if workerID == "" {
+		return WorkerReputation{}, fmt.Errorf("worker_id is required")
+	}
+	fields, err := store.hash(ctx, store.key("worker", workerID))
+	if err != nil {
+		return WorkerReputation{}, err
+	}
+	if fields["worker_id"] == "" {
+		return WorkerReputation{}, fmt.Errorf("worker not found")
+	}
+	return reputationFromFields(workerID, fields), nil
+}
+
 func (store *RedisStore) Events(ctx context.Context, count int) ([]Event, error) {
 	if count <= 0 {
 		count = 100
@@ -533,6 +653,150 @@ func arrayFields(value redisValue) map[string]string {
 	return fields
 }
 
+func (store *RedisStore) applyWorkerReputation(ctx context.Context, workerID string, verdict string, createdAt string) (int, WorkerReputation, error) {
+	workerFields, err := store.hash(ctx, store.key("worker", workerID))
+	if err != nil {
+		return 0, WorkerReputation{}, err
+	}
+	if workerFields["worker_id"] == "" {
+		return 0, WorkerReputation{}, fmt.Errorf("worker not found")
+	}
+	normalizedVerdict, err := normalizeVerdict(verdict)
+	if err != nil {
+		return 0, WorkerReputation{}, err
+	}
+	reputation := reputationFromFields(workerID, workerFields)
+	delta := reputationDelta(normalizedVerdict)
+	reputation.Score = clampInt(reputation.Score+delta, 0, defaultReputationScore)
+	reputation.Status = reputationStatus(reputation.Score)
+	reputation.ValidationEvents += 1
+	reputation.LastVerdictAt = createdAt
+	switch normalizedVerdict {
+	case "accepted":
+		reputation.AcceptedArtifacts += 1
+	case "poor":
+		reputation.PoorArtifacts += 1
+	case "rejected":
+		reputation.RejectedArtifacts += 1
+	case "malicious":
+		reputation.MaliciousArtifacts += 1
+	case "timeout":
+		reputation.TimeoutJobs += 1
+	}
+	if _, err := store.client.command(ctx, "HSET", store.key("worker", workerID),
+		"reputation_score", strconv.Itoa(reputation.Score),
+		"reputation_status", reputation.Status,
+		"accepted_artifacts", strconv.Itoa(reputation.AcceptedArtifacts),
+		"poor_artifacts", strconv.Itoa(reputation.PoorArtifacts),
+		"rejected_artifacts", strconv.Itoa(reputation.RejectedArtifacts),
+		"malicious_artifacts", strconv.Itoa(reputation.MaliciousArtifacts),
+		"timeout_jobs", strconv.Itoa(reputation.TimeoutJobs),
+		"validation_events", strconv.Itoa(reputation.ValidationEvents),
+		"last_verdict_at", reputation.LastVerdictAt,
+	); err != nil {
+		return 0, WorkerReputation{}, err
+	}
+	if _, err := store.appendEvent(ctx, "worker_reputation_updated", map[string]string{
+		"worker_id":         workerID,
+		"verdict":           normalizedVerdict,
+		"score_delta":       strconv.Itoa(delta),
+		"reputation_score":  strconv.Itoa(reputation.Score),
+		"reputation_status": reputation.Status,
+		"created_at":        createdAt,
+	}); err != nil {
+		return 0, WorkerReputation{}, err
+	}
+	return delta, reputation, nil
+}
+
+func reputationFromFields(workerID string, fields map[string]string) WorkerReputation {
+	score := intField(fields, "reputation_score", defaultReputationScore)
+	return WorkerReputation{
+		WorkerID:           workerID,
+		Score:              score,
+		Status:             nonEmpty(fields["reputation_status"], reputationStatus(score)),
+		AcceptedArtifacts:  intField(fields, "accepted_artifacts", 0),
+		PoorArtifacts:      intField(fields, "poor_artifacts", 0),
+		RejectedArtifacts:  intField(fields, "rejected_artifacts", 0),
+		MaliciousArtifacts: intField(fields, "malicious_artifacts", 0),
+		TimeoutJobs:        intField(fields, "timeout_jobs", 0),
+		ValidationEvents:   intField(fields, "validation_events", 0),
+		LastVerdictAt:      fields["last_verdict_at"],
+	}
+}
+
+func normalizeVerdict(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "accepted":
+		return "accepted", nil
+	case "poor":
+		return "poor", nil
+	case "rejected":
+		return "rejected", nil
+	case "malicious":
+		return "malicious", nil
+	case "timeout":
+		return "timeout", nil
+	default:
+		return "", fmt.Errorf("unsupported verdict: %s", value)
+	}
+}
+
+func reputationDelta(verdict string) int {
+	switch verdict {
+	case "accepted":
+		return 2
+	case "poor":
+		return -10
+	case "rejected":
+		return -25
+	case "malicious":
+		return -100
+	case "timeout":
+		return -15
+	default:
+		return 0
+	}
+}
+
+func reputationStatus(score int) string {
+	if score < suspendedReputationThreshold {
+		return "suspended"
+	}
+	if score < degradedReputationThreshold {
+		return "degraded"
+	}
+	return "active"
+}
+
+func intField(fields map[string]string, key string, fallback int) int {
+	if fields[key] == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(fields[key])
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func nonEmpty(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func clampInt(value int, min int, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
 func jobFromFields(fields map[string]string) Job {
 	return Job{
 		JobID:      fields["job_id"],
@@ -557,6 +821,7 @@ func workerFromFields(fields map[string]string) Worker {
 	return Worker{
 		WorkerID:      fields["worker_id"],
 		PeerID:        fields["peer_id"],
+		PublicKey:     fields["public_key"],
 		Backend:       fields["backend"],
 		DeviceFamily:  fields["device_family"],
 		MemoryGB:      memoryGB,
@@ -565,6 +830,7 @@ func workerFromFields(fields map[string]string) Worker {
 		Status:        fields["status"],
 		CurrentJobID:  fields["current_job_id"],
 		LastSeenAt:    fields["last_seen_at"],
+		Reputation:    reputationFromFields(fields["worker_id"], fields),
 	}
 }
 
@@ -579,5 +845,7 @@ func artifactFromFields(fields map[string]string) Artifact {
 		ConfigHash:   fields["config_hash"],
 		MetricsURI:   fields["metrics_uri"],
 		CreatedAt:    fields["created_at"],
+		Verdict:      fields["verdict"],
+		VerdictAt:    fields["verdict_at"],
 	}
 }

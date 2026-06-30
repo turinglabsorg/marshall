@@ -217,6 +217,13 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	if len(requeued.Requeued) != 1 || requeued.Requeued[0] != "job_expiring_001" {
 		t.Fatalf("unexpected requeue result: %+v", requeued)
 	}
+	timeoutReputation, err := store.WorkerReputation(ctx, "worker_mlx_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeoutReputation.TimeoutJobs != 1 || timeoutReputation.Score != 85 || timeoutReputation.Status != "active" {
+		t.Fatalf("expected timeout to reduce reputation without suspending worker, got %+v", timeoutReputation)
+	}
 	requeuedJob, err := store.GetJob(ctx, "job_expiring_001")
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +232,62 @@ func TestRedisStoreLifecycle(t *testing.T) {
 		t.Fatalf("expected expired job to return to queue, got %+v", requeuedJob)
 	}
 
-	events, err := store.Events(ctx, 20)
+	verdict, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_eval_001",
+		WorkerID:    "worker_mlx_001",
+		ValidatorID: "validator_test_001",
+		Verdict:     "malicious",
+		Reason:      "canary labels were inverted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict.ScoreDelta != -100 || verdict.Reputation.Status != "suspended" || verdict.ParticipationOK {
+		t.Fatalf("expected malicious verdict to suspend worker, got %+v", verdict)
+	}
+	if _, err := store.CreateJob(ctx, Job{
+		JobID:      "job_after_suspend_001",
+		RunID:      "run_test_001",
+		JobType:    "train_mlx_smoke",
+		Backend:    "mlx",
+		DatasetURI: "file://examples/datasets/tiny-italian.jsonl",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	suspendedClaim, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_after_suspend_001",
+		WorkerID:     "worker_mlx_001",
+		PeerID:       "12D3KooWTest",
+		LeaseSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if suspendedClaim.Accepted || suspendedClaim.Reason != "worker suspended" {
+		t.Fatalf("expected suspended worker claim rejected, got %+v", suspendedClaim)
+	}
+	verdictArtifact, err := store.GetArtifact(ctx, "job_eval_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdictArtifact.Verdict != "malicious" || verdictArtifact.VerdictAt == "" {
+		t.Fatalf("expected artifact verdict fields, got %+v", verdictArtifact)
+	}
+
+	unregisteredClaim, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_after_suspend_001",
+		WorkerID:     "worker_unknown",
+		PeerID:       "12D3KooWUnknown",
+		LeaseSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unregisteredClaim.Accepted || unregisteredClaim.Reason != "worker not registered" {
+		t.Fatalf("expected unregistered worker claim rejected, got %+v", unregisteredClaim)
+	}
+
+	events, err := store.Events(ctx, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +295,7 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	for _, event := range events {
 		seen[event.Type] = true
 	}
-	for _, eventType := range []string{"run_created", "worker_registered", "worker_heartbeat", "job_created", "job_claimed", "job_status_updated", "artifact_published", "job_requeued"} {
+	for _, eventType := range []string{"run_created", "worker_registered", "worker_heartbeat", "job_created", "job_claimed", "job_status_updated", "artifact_published", "job_requeued", "worker_reputation_updated", "artifact_verdict_recorded"} {
 		if !seen[eventType] {
 			t.Fatalf("missing event type %s in %#v", eventType, events)
 		}

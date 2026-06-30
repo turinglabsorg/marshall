@@ -79,6 +79,9 @@ npm run worker:pool:compiled -- \
 - Claim jobs through the worker command only.
 - Publish artifacts through the worker protocol only.
 - Keep heartbeat enabled while working; the coordinator can requeue jobs whose lease expires.
+- Published artifacts are validated before they affect global model selection.
+- Low-quality, rejected, malicious, or timed-out work reduces worker reputation.
+- A suspended worker cannot claim more jobs until the operator restores participation.
 - Keep generated data under `.marshall/`; do not commit local run artifacts.
 - Do not change job specs, labels, metrics, hashes, or leaderboard files by hand.
 - If a job fails, let the worker report the failure instead of fabricating output.
