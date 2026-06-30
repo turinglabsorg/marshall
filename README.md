@@ -148,6 +148,9 @@ It proves:
 - workers materialize only the assigned shard into a content-addressed cache under `.marshall/cache/datasets/<sha256>` before training.
 - `training/build_ag_news_dataset.py` builds a local private AG News classification dataset under `.marshall/datasets/ag-news`, and `training/mlx_ag_news_eval.py` scores base-model or adapter exact-label accuracy.
 - `validate_artifact` jobs let validator workers verify target artifact hashes and adapter-evaluation metrics before artifacts can affect coordinator reputation or accepted-only model selection.
+- worker CLIs accept multiple control multiaddrs and fall back when a dial fails, which is required for real LAN/VPN/firewall variation across machines.
+- artifact payloads can move over `/marshall/artifact/fetch/1.0.0`; transfers are chunked, hash-checked per chunk and per file, retried on corrupt chunks, and verified against the final artifact root hash.
+- control peers can store verified worker artifacts locally and serve them back to downstream workers through `marshall-artifact://<job_id>` inputs, so remote evaluation and validation do not depend on coordinator-local filesystem paths.
 
 ## CLI Runtime
 
@@ -198,26 +201,60 @@ npm run worker:start -- \
   --num-layers 4
 ```
 
+For remote workers, pass every usable control address. The worker tries them in order, remembers the first successful address, and falls back if a later dial fails. If a LAN address times out while basic TCP probes succeed, check the host firewall and keep a second route, such as a VPN or relay multiaddr, in the list:
+
+```bash
+npm run worker:start -- \
+  --control /ip4/192.168.1.129/tcp/4001/p2p/<control-peer-id>,/ip4/100.102.25.69/tcp/4001/p2p/<control-peer-id> \
+  --job-type train_adapter \
+  --backend mlx \
+  --worker-id macbook-mlx-01
+```
+
+For product E2E runs, keep artifact payloads on the p2p artifact plane. The control peer should materialize verified copies, and generated downstream jobs should reference them with `marshall-artifact://<job_id>`:
+
+```bash
+MARSHALL_JOB_TYPE=train_adapter \
+npm run control:start -- \
+  --artifact-store-dir .marshall/runs/<run-id>/train-artifacts
+
+npm run eval:jobs -- \
+  --artifacts-dir .marshall/runs/<run-id>/train-artifacts \
+  --artifact-uri-mode p2p \
+  --eval-file .marshall/datasets/ag-news/eval.jsonl \
+  --output .marshall/runs/<run-id>/eval-jobs.json
+
+MARSHALL_JOB_TYPE=evaluate_adapter \
+MARSHALL_JOBS_FILE=.marshall/runs/<run-id>/eval-jobs.json \
+npm run control:start -- \
+  --artifact-store-dir .marshall/runs/<run-id>/eval-artifacts \
+  --artifact-serve-dirs .marshall/runs/<run-id>/train-artifacts
+```
+
 Create and run validation work after evaluation artifacts have been published to the coordinator:
 
 ```bash
 npm run validation:jobs -- \
   --coordinator-url http://127.0.0.1:8080 \
   --target-artifact-type adapter_evaluation \
+  --target-uri-mode p2p \
   --quorum 2 \
   --validators-per-artifact 2 \
   --output .marshall/jobs/validate-artifacts.json
 
 MARSHALL_JOBS_FILE=.marshall/jobs/validate-artifacts.json \
 MARSHALL_JOB_TYPE=validate_artifact \
-npm run control:start
+npm run control:start -- \
+  --artifact-store-dir .marshall/validation-artifacts \
+  --artifact-serve-dirs .marshall/eval-artifacts
 
 npm run worker:pool -- \
   --control /ip4/127.0.0.1/tcp/4001/p2p/<control-peer-id> \
   --job-type validate_artifact \
   --backend cpu \
   --concurrency 2 \
-  --max-jobs 2
+  --max-jobs 2 \
+  --input-artifacts-dir .marshall/validation-inputs
 ```
 
 Build a leaderboard from only accepted evaluation artifacts:

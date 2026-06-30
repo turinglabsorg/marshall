@@ -43,6 +43,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/control-cli.ts` supports `--artifact-store-dir`, `--artifact-serve-dirs`, `--artifact-chunk-bytes`, and `--artifact-chunk-retries` for chunked p2p artifact payload transfer.
 - `src/worker-cli.ts` starts a one-job worker that registers, claims, runs, publishes an artifact, and exits.
 - `src/worker-cli.ts` accepts comma-separated control multiaddrs through `--control` and extra addresses through `--control-addrs` / `MARSHALL_CONTROL_ADDRS`; `src/worker-peer.ts` tries them in order, remembers the first successful address, and falls back when a dial fails.
+- Remote worker runs should receive every usable control multiaddr. If a LAN multiaddr times out while basic TCP probes succeed, check host firewall/routing and keep a second route or relay address available.
 - `src/worker-cli.ts` materializes `marshall-artifact://<job_id>` job inputs from the control peer before `evaluate_adapter` or `validate_artifact` execution.
 - `src/worker-pool-cli.ts` starts bounded concurrent worker processes against a control peer. Use this for product E2E proof instead of manual shell loops.
 - `src/artifact-transfer.ts` implements chunked artifact bundles. Every chunk carries a SHA-256 hash, receivers retry corrupted chunks, every file is hashed after download, and the final artifact root hash must match the manifest before the control peer publishes it.
