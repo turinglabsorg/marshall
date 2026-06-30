@@ -114,7 +114,7 @@ export class CoordinatorClient {
         run_id: job.run_id,
         job_type: job.job_type,
         backend: job.backend,
-        dataset_uri: job.job_type === "evaluate_adapter" ? job.eval_shard.uri : job.dataset_shard.uri,
+        dataset_uri: jobDatasetUri(job),
         job_spec: job,
       }, EventSchema);
     }
@@ -199,6 +199,10 @@ export class CoordinatorClient {
     return this.get(`/artifacts/${encodeURIComponent(jobId)}`, CoordinatorArtifactSchema);
   }
 
+  async artifacts(): Promise<CoordinatorArtifact[]> {
+    return this.get("/artifacts", z.array(CoordinatorArtifactSchema));
+  }
+
   async events(count = 100): Promise<CoordinatorEvent[]> {
     return this.get(`/events?count=${count}`, z.array(EventSchema));
   }
@@ -247,4 +251,14 @@ export class CoordinatorClient {
       authorization: `Bearer ${this.token}`,
     };
   }
+}
+
+function jobDatasetUri(job: MarshallJob): string {
+  if (job.job_type === "evaluate_adapter") {
+    return job.eval_shard.uri;
+  }
+  if (job.job_type === "validate_artifact") {
+    return job.target.metrics_uri ?? job.target.artifact_uri;
+  }
+  return job.dataset_shard.uri;
 }

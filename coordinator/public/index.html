@@ -822,11 +822,14 @@
           nodes.artifactsTable.innerHTML = `<tr><td colspan="3" class="empty">No artifacts published yet.</td></tr>`;
           return;
         }
-        nodes.artifactsTable.innerHTML = latest.map((artifact) => `<tr>
-          <td><strong>${html(artifact.job_id)}</strong><br><span>${html(timeLabel(artifact.created_at))}</span></td>
-          <td>${html(artifact.artifact_type || "")}</td>
-          <td>${html(artifact.artifact_hash || "")}</td>
-        </tr>`).join("");
+        nodes.artifactsTable.innerHTML = latest.map((artifact) => {
+          const verdict = artifact.verdict || "pending";
+          return `<tr>
+            <td><strong>${html(artifact.job_id)}</strong><br><span>${html(timeLabel(artifact.created_at))}</span></td>
+            <td>${html(artifact.artifact_type || "")}<br><span class="pill ${statusClass(verdict)}">${html(verdict)}</span></td>
+            <td>${html(artifact.artifact_hash || "")}</td>
+          </tr>`;
+        }).join("");
       }
 
       function renderEvents() {
@@ -847,16 +850,16 @@
       }
 
       function statusClass(status) {
-        if (status === "completed") {
+        if (status === "completed" || status === "accepted") {
           return "completed";
         }
-        if (status === "failed") {
+        if (status === "failed" || status === "rejected" || status === "malicious") {
           return "failed";
         }
-        if (status === "running" || status === "claimed" || status === "working") {
+        if (status === "running" || status === "claimed" || status === "working" || status === "poor") {
           return "running";
         }
-        if (status === "queued") {
+        if (status === "queued" || status === "pending") {
           return "queued";
         }
         if (status === "idle" || status === "registered") {

@@ -69,6 +69,7 @@ function jobTypeArg(value: string): JobType {
     || value === "train_mlx_smoke"
     || value === "train_adapter"
     || value === "evaluate_adapter"
+    || value === "validate_artifact"
   ) {
     return value;
   }

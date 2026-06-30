@@ -52,6 +52,7 @@ func (server *Server) routes() {
 	server.mux.HandleFunc("POST /jobs/{job_id}/claim", server.requireAuth(server.claimJob))
 	server.mux.HandleFunc("POST /jobs/{job_id}/status", server.requireAuth(server.updateJobStatus))
 	server.mux.HandleFunc("POST /artifacts", server.requireAuth(server.publishArtifact))
+	server.mux.HandleFunc("GET /artifacts", server.artifacts)
 	server.mux.HandleFunc("GET /artifacts/{job_id}", server.getArtifact)
 	server.mux.HandleFunc("POST /artifacts/{job_id}/verdict", server.requireAuth(server.recordArtifactVerdict))
 	server.mux.HandleFunc("GET /events", server.events)
@@ -166,6 +167,11 @@ func (server *Server) publishArtifact(response http.ResponseWriter, request *htt
 	}
 	event, err := server.store.PublishArtifact(request.Context(), artifact)
 	writeResult(response, event, err)
+}
+
+func (server *Server) artifacts(response http.ResponseWriter, request *http.Request) {
+	artifacts, err := server.store.Artifacts(request.Context())
+	writeResult(response, artifacts, err)
 }
 
 func (server *Server) getArtifact(response http.ResponseWriter, request *http.Request) {

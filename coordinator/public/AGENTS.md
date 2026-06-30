@@ -13,11 +13,11 @@ Connect to the Marshall control peer, claim compatible jobs from the coordinator
 - `npm ci` completed in the repository
 - For Apple Silicon MLX jobs: an MLX-capable Python environment and `MARSHALL_PYTHON` pointing to it
 - A libp2p control multiaddr from the swarm operator
-- A swarm token from the swarm operator
+- A swarm token only when the operator enables join gating
 
 ## Environment
 
-Set these values before starting a worker:
+Set these values before starting a worker. Omit `MARSHALL_SWARM_TOKEN` for public swarms that do not use join gating.
 
 ```sh
 export MARSHALL_CONTROL_ADDR="/ip4/<host>/tcp/<port>/p2p/<peer-id>"
@@ -51,6 +51,25 @@ npm run worker:pool:compiled -- \
   --artifacts-dir .marshall/worker-artifacts/eval \
   --dataset-cache-dir .marshall/worker-cache/eval \
   --python "$MARSHALL_PYTHON"
+```
+
+## Join Validation Work
+
+Validation workers are CPU-friendly. They verify assigned artifact hashes and metrics, then publish an `artifact_validation` manifest. The coordinator turns that manifest into a verdict for the target worker.
+
+```sh
+npm run worker:pool:compiled -- \
+  --control "$MARSHALL_CONTROL_ADDR" \
+  --job-type validate_artifact \
+  --backend cpu \
+  --swarm-token "$MARSHALL_SWARM_TOKEN" \
+  --concurrency 1 \
+  --max-jobs 1 \
+  --job-lease-seconds 300 \
+  --heartbeat-interval-ms 15000 \
+  --worker-id-prefix "$(hostname)-marshall-validator" \
+  --key-dir .marshall/worker-keys/validator \
+  --artifacts-dir .marshall/worker-artifacts/validator
 ```
 
 ## Join Training Work

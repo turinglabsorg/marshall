@@ -5,6 +5,7 @@ export const JobTypeSchema = z.enum([
   "train_mlx_smoke",
   "train_adapter",
   "evaluate_adapter",
+  "validate_artifact",
   "evaluate_model",
   "tokenize_dataset",
   "clean_dataset",
@@ -94,9 +95,39 @@ export const AdapterEvaluationJobSchema = z.object({
   max_tokens: z.number().int().positive().optional(),
 });
 
+export const ArtifactValidationVerdictSchema = z.enum(["accepted", "poor", "rejected", "malicious"]);
+
+export const ArtifactValidationTargetSchema = z.object({
+  job_id: z.string().min(1),
+  worker_id: z.string().min(1),
+  peer_id: z.string().min(1).optional(),
+  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation", "optimized_model_package"]),
+  artifact_uri: z.string().min(1),
+  artifact_hash: z.string().min(1),
+  config_hash: z.string().min(1).optional(),
+  metrics_uri: z.string().min(1).optional(),
+});
+
+export const ArtifactValidationPolicySchema = z.object({
+  min_accuracy: z.number().min(0).max(1).optional(),
+  max_invalid_rate: z.number().min(0).max(1).optional(),
+  min_examples: z.number().int().positive().optional(),
+});
+
+export const ArtifactValidationJobSchema = z.object({
+  job_id: z.string().min(1),
+  run_id: z.string().min(1),
+  round_id: z.string().min(1),
+  job_type: z.literal("validate_artifact"),
+  backend: BackendSchema,
+  target: ArtifactValidationTargetSchema,
+  policy: ArtifactValidationPolicySchema.optional(),
+});
+
 export const MarshallJobSchema = z.union([
   TrainingJobSchema,
   AdapterEvaluationJobSchema,
+  ArtifactValidationJobSchema,
 ]);
 
 export const AdapterEvaluationMetricsSchema = z.object({
@@ -145,12 +176,18 @@ export const ArtifactManifestSchema = z.object({
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   job_id: z.string().min(1),
-  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation", "optimized_model_package"]),
+  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation", "artifact_validation", "optimized_model_package"]),
   artifact_uri: z.string().min(1),
   artifact_hash: z.string().min(1),
   config_hash: z.string().min(1),
   created_at: z.string().min(1),
   metrics_uri: z.string().min(1).optional(),
+  validation: z.object({
+    target_job_id: z.string().min(1),
+    target_worker_id: z.string().min(1),
+    verdict: ArtifactValidationVerdictSchema,
+    reason: z.string().optional(),
+  }).optional(),
 });
 
 export const TrainingArtifactManifestSchema = ArtifactManifestSchema.omit({
@@ -217,6 +254,29 @@ export const MlxLoraMetricsSchema = z.object({
   stderr_log: z.string().min(1),
 });
 
+export const ArtifactValidationMetricsSchema = z.object({
+  job_id: z.string().min(1),
+  run_id: z.string().min(1),
+  round_id: z.string().min(1),
+  target_job_id: z.string().min(1),
+  target_worker_id: z.string().min(1),
+  target_artifact_type: z.string().min(1),
+  target_artifact_hash: z.string().min(1),
+  verdict: ArtifactValidationVerdictSchema,
+  reason: z.string().min(1),
+  checks: z.array(z.object({
+    name: z.string().min(1),
+    passed: z.boolean(),
+    detail: z.string().optional(),
+  })),
+  observed: z.object({
+    accuracy: z.number().optional(),
+    invalid_rate: z.number().optional(),
+    examples: z.number().int().optional(),
+  }).optional(),
+  policy: ArtifactValidationPolicySchema,
+});
+
 export const AckSchema = z.object({
   accepted: z.boolean(),
   reason: z.string().optional(),
@@ -232,6 +292,10 @@ export type DatasetShard = z.infer<typeof DatasetShardSchema>;
 export type TrainingJob = z.infer<typeof TrainingJobSchema>;
 export type AdapterReference = z.infer<typeof AdapterReferenceSchema>;
 export type AdapterEvaluationJob = z.infer<typeof AdapterEvaluationJobSchema>;
+export type ArtifactValidationVerdict = z.infer<typeof ArtifactValidationVerdictSchema>;
+export type ArtifactValidationTarget = z.infer<typeof ArtifactValidationTargetSchema>;
+export type ArtifactValidationPolicy = z.infer<typeof ArtifactValidationPolicySchema>;
+export type ArtifactValidationJob = z.infer<typeof ArtifactValidationJobSchema>;
 export type MarshallJob = z.infer<typeof MarshallJobSchema>;
 export type JobClaimResponse = z.infer<typeof JobClaimResponseSchema>;
 export type JobStatus = z.infer<typeof JobStatusSchema>;
@@ -241,4 +305,5 @@ export type ToyTrainingMetrics = z.infer<typeof ToyTrainingMetricsSchema>;
 export type MlxSmokeMetrics = z.infer<typeof MlxSmokeMetricsSchema>;
 export type MlxLoraMetrics = z.infer<typeof MlxLoraMetricsSchema>;
 export type AdapterEvaluationMetrics = z.infer<typeof AdapterEvaluationMetricsSchema>;
+export type ArtifactValidationMetrics = z.infer<typeof ArtifactValidationMetricsSchema>;
 export type Ack = z.infer<typeof AckSchema>;

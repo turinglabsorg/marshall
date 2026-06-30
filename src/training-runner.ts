@@ -6,12 +6,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { prepareDatasetShard } from "./dataset-cache.js";
 import {
   AdapterEvaluationMetricsSchema,
+  ArtifactValidationMetricsSchema,
   MlxLoraMetricsSchema,
   MlxSmokeMetricsSchema,
   ToyTrainingMetricsSchema,
   TrainingArtifactManifestSchema,
   type AdapterEvaluationJob,
   type AdapterEvaluationMetrics,
+  type ArtifactValidationJob,
+  type ArtifactValidationMetrics,
+  type ArtifactValidationPolicy,
+  type ArtifactValidationVerdict,
   type MlxLoraMetrics,
   type MlxSmokeMetrics,
   type ToyTrainingMetrics,
@@ -87,6 +92,19 @@ export interface AdapterEvaluationRunnerOptions {
 export interface AdapterEvaluationRun {
   manifest: TrainingArtifactManifest;
   metrics: AdapterEvaluationMetrics;
+  outputDir: string;
+  stdout: string;
+  stderr: string;
+}
+
+export interface ArtifactValidationRunnerOptions {
+  outputRoot: string;
+  projectRoot?: string;
+}
+
+export interface ArtifactValidationRun {
+  manifest: TrainingArtifactManifest;
+  metrics: ArtifactValidationMetrics;
   outputDir: string;
   stdout: string;
   stderr: string;
@@ -367,6 +385,151 @@ export async function runAdapterEvaluation(
     outputDir,
     stdout: result.stdout,
     stderr: result.stderr,
+  };
+}
+
+export async function runArtifactValidation(
+  job: ArtifactValidationJob,
+  options: ArtifactValidationRunnerOptions,
+): Promise<ArtifactValidationRun> {
+  const projectRoot = resolve(options.projectRoot ?? process.cwd());
+  const outputDir = resolve(options.outputRoot, job.job_id);
+  const validationPath = join(outputDir, "validation.json");
+  const targetUri = job.target.metrics_uri ?? job.target.artifact_uri;
+  const targetPath = resolveArtifactUri(targetUri, projectRoot);
+  const policy = validationPolicy(job.policy);
+  const checks: ArtifactValidationMetrics["checks"] = [];
+  let observed: ArtifactValidationMetrics["observed"] | undefined;
+  let verdict: ArtifactValidationVerdict = "accepted";
+  let reason = "artifact passed validation policy";
+
+  await mkdir(outputDir, { recursive: true });
+
+  const actualHash = await sha256Path(targetPath);
+  const hashPassed = actualHash === job.target.artifact_hash;
+  checks.push({
+    name: "artifact_hash",
+    passed: hashPassed,
+    detail: hashPassed ? actualHash : `expected ${job.target.artifact_hash}, got ${actualHash}`,
+  });
+
+  if (!hashPassed) {
+    verdict = "malicious";
+    reason = "artifact hash does not match the coordinator target";
+  } else if (job.target.artifact_type !== "adapter_evaluation") {
+    verdict = "rejected";
+    reason = `unsupported validation target type: ${job.target.artifact_type}`;
+    checks.push({
+      name: "target_type",
+      passed: false,
+      detail: reason,
+    });
+  } else {
+    try {
+      const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(targetPath, "utf8")));
+      observed = {
+        accuracy: metrics.accuracy,
+        invalid_rate: metrics.invalid_rate,
+        examples: metrics.examples,
+      };
+      const examplesPassed = metrics.examples >= policy.min_examples;
+      const invalidRatePassed = metrics.invalid_rate <= policy.max_invalid_rate;
+      const accuracyPassed = metrics.accuracy >= policy.min_accuracy;
+      checks.push(
+        {
+          name: "schema",
+          passed: true,
+          detail: "adapter evaluation metrics parsed",
+        },
+        {
+          name: "min_examples",
+          passed: examplesPassed,
+          detail: `${metrics.examples} >= ${policy.min_examples}`,
+        },
+        {
+          name: "max_invalid_rate",
+          passed: invalidRatePassed,
+          detail: `${metrics.invalid_rate} <= ${policy.max_invalid_rate}`,
+        },
+        {
+          name: "min_accuracy",
+          passed: accuracyPassed,
+          detail: `${metrics.accuracy} >= ${policy.min_accuracy}`,
+        },
+      );
+      if (!examplesPassed || !invalidRatePassed) {
+        verdict = "rejected";
+        reason = "artifact evaluation metrics failed reliability policy";
+      } else if (!accuracyPassed) {
+        verdict = "poor";
+        reason = "artifact evaluation accuracy is below policy threshold";
+      }
+    } catch (error) {
+      verdict = "rejected";
+      reason = error instanceof Error ? `metrics schema validation failed: ${error.message}` : "metrics schema validation failed";
+      checks.push({
+        name: "schema",
+        passed: false,
+        detail: reason,
+      });
+    }
+  }
+
+  const metrics = ArtifactValidationMetricsSchema.parse({
+    job_id: job.job_id,
+    run_id: job.run_id,
+    round_id: job.round_id,
+    target_job_id: job.target.job_id,
+    target_worker_id: job.target.worker_id,
+    target_artifact_type: job.target.artifact_type,
+    target_artifact_hash: job.target.artifact_hash,
+    verdict,
+    reason,
+    checks,
+    observed,
+    policy,
+  });
+  await writeFile(validationPath, JSON.stringify(metrics, null, 2) + "\n", "utf8");
+
+  const configHash = sha256Text(JSON.stringify({
+    job_type: job.job_type,
+    backend: job.backend,
+    target_job_id: job.target.job_id,
+    target_worker_id: job.target.worker_id,
+    target_artifact_hash: job.target.artifact_hash,
+    policy,
+  }));
+  const manifest = TrainingArtifactManifestSchema.parse({
+    job_id: job.job_id,
+    artifact_type: "artifact_validation",
+    artifact_uri: pathToFileURL(validationPath).toString(),
+    artifact_hash: await sha256File(validationPath),
+    config_hash: configHash,
+    created_at: new Date().toISOString(),
+    metrics_uri: pathToFileURL(validationPath).toString(),
+    validation: {
+      target_job_id: job.target.job_id,
+      target_worker_id: job.target.worker_id,
+      verdict,
+      reason,
+    },
+  });
+  await writeFile(join(outputDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
+
+  return {
+    manifest,
+    metrics,
+    outputDir,
+    stdout: JSON.stringify(metrics),
+    stderr: "",
+  };
+}
+
+function validationPolicy(policy?: ArtifactValidationPolicy): Required<ArtifactValidationPolicy> {
+  return {
+    min_accuracy: policy?.min_accuracy ?? 0.3,
+    max_invalid_rate: policy?.max_invalid_rate ?? 0.2,
+    min_examples: policy?.min_examples ?? 1,
   };
 }
 

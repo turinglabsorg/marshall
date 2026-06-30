@@ -1,16 +1,31 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { CoordinatorClient } from "./coordinator-client.js";
 import { AdapterEvaluationMetricsSchema } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
 const evalArtifactsDir = args["eval-artifacts-dir"] ?? process.env.MARSHALL_EVAL_ARTIFACTS_DIR ?? ".marshall/eval-artifacts";
 const outputDir = args["output-dir"] ?? process.env.MARSHALL_LEADERBOARD_DIR ?? ".marshall/leaderboard";
 const topK = numberArg(args["top-k"] ?? process.env.MARSHALL_TOP_K, 10);
+const coordinatorUrl = args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL;
+const requireVerdict = args["require-verdict"] ?? process.env.MARSHALL_LEADERBOARD_REQUIRE_VERDICT;
+
+if (requireVerdict != null && (coordinatorUrl == null || coordinatorUrl === "")) {
+  throw new Error("--require-verdict requires --coordinator-url or MARSHALL_COORDINATOR_URL");
+}
+
+const artifactVerdicts = coordinatorUrl == null || coordinatorUrl === ""
+  ? new Map<string, string>()
+  : await artifactVerdictsByJob(coordinatorUrl, args["coordinator-token"] ?? process.env.MARSHALL_COORDINATOR_TOKEN);
 
 const metricsPaths = await findMetrics(evalArtifactsDir);
 const rows = [];
 for (const path of metricsPaths) {
   const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(path, "utf8")));
+  const verdict = artifactVerdicts.get(metrics.job_id);
+  if (requireVerdict != null && verdict !== requireVerdict) {
+    continue;
+  }
   const score = metrics.accuracy - metrics.invalid_rate;
   rows.push({
     rank: 0,
@@ -25,6 +40,7 @@ for (const path of metricsPaths) {
     invalid: metrics.invalid,
     invalid_rate: metrics.invalid_rate,
     score,
+    verdict,
     metrics_path: path,
   });
 }
@@ -62,8 +78,19 @@ console.log(JSON.stringify({
   output_dir: outputDir,
   evaluated_adapters: rows.length,
   top_k: topK,
+  require_verdict: requireVerdict ?? null,
   best,
 }, null, 2));
+
+async function artifactVerdictsByJob(coordinatorUrlValue: string, coordinatorToken: string | undefined): Promise<Map<string, string>> {
+  const client = new CoordinatorClient(coordinatorUrlValue, { token: coordinatorToken });
+  const artifacts = await client.artifacts();
+  return new Map(
+    artifacts
+      .filter((artifact) => artifact.verdict != null && artifact.verdict !== "")
+      .map((artifact) => [artifact.job_id, artifact.verdict!]),
+  );
+}
 
 async function findMetrics(root: string): Promise<string[]> {
   const paths: string[] = [];

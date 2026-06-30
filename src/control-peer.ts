@@ -275,6 +275,15 @@ export class ControlPeer {
 
     try {
       await this.coordinator?.publishArtifact(manifest);
+      if (manifest.artifact_type === "artifact_validation" && manifest.validation != null) {
+        await this.coordinator?.recordArtifactVerdict(manifest.validation.target_job_id, {
+          worker_id: manifest.validation.target_worker_id,
+          verdict: manifest.validation.verdict,
+          validator_id: manifest.worker_id,
+          reason: manifest.validation.reason,
+          created_at: manifest.created_at,
+        });
+      }
     } catch (error) {
       await writeJson(stream, AckSchema.parse({
         accepted: false,

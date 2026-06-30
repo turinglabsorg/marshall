@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { multiaddr } from "@multiformats/multiaddr";
 import { defaultBackendForJob } from "./jobs.js";
 import type { Backend, JobType, MarshallJob } from "./schemas.js";
-import { runAdapterEvaluation, runMlxLoraTraining, runMlxSmokeTraining, runToyTraining } from "./training-runner.js";
+import { runAdapterEvaluation, runArtifactValidation, runMlxLoraTraining, runMlxSmokeTraining, runToyTraining } from "./training-runner.js";
 import { WorkerPeer } from "./worker-peer.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -92,6 +92,11 @@ try {
 async function runClaimedJob(job: MarshallJob) {
   const outputRoot = args["artifacts-dir"] ?? process.env.MARSHALL_ARTIFACTS_DIR ?? ".marshall/artifacts";
   const datasetCacheRoot = args["dataset-cache-dir"] ?? process.env.MARSHALL_DATASET_CACHE_DIR;
+  if (job.job_type === "validate_artifact") {
+    return runArtifactValidation(job, {
+      outputRoot,
+    });
+  }
   if (job.job_type === "evaluate_adapter") {
     return runAdapterEvaluation(job, {
       outputRoot,
@@ -146,6 +151,9 @@ function maxTokensForJob(value: JobType): number {
   if (value === "evaluate_adapter") {
     return 8_000;
   }
+  if (value === "validate_artifact") {
+    return 2_000;
+  }
   return 2_000;
 }
 
@@ -172,8 +180,8 @@ function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_mlx_smoke" | "train_adapter" | "evaluate_adapter"> {
-  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter" || value === "evaluate_adapter") {
+function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_mlx_smoke" | "train_adapter" | "evaluate_adapter" | "validate_artifact"> {
+  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter" || value === "evaluate_adapter" || value === "validate_artifact") {
     return value;
   }
   throw new Error(`unsupported worker CLI job type: ${value}`);

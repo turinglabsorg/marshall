@@ -24,6 +24,7 @@ describe("training job builders", () => {
       },
     });
     expect(defaultBackendForJob("train_adapter")).toBe("mlx");
+    expect(defaultBackendForJob("validate_artifact")).toBe("cpu");
   });
 
   it("creates sharded MLX adapter jobs for multi-worker runs", () => {

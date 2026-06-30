@@ -1,11 +1,13 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CoordinatorClient } from "../src/coordinator-client.js";
 import { ControlPeer } from "../src/control-peer.js";
-import { runToyTraining } from "../src/training-runner.js";
-import type { AdapterEvaluationJob, TrainingJob } from "../src/schemas.js";
+import { runArtifactValidation, runToyTraining } from "../src/training-runner.js";
+import type { AdapterEvaluationJob, AdapterEvaluationMetrics, ArtifactValidationJob, TrainingJob } from "../src/schemas.js";
 import { WorkerPeer } from "../src/worker-peer.js";
 
 const coordinatorUrl = process.env.MARSHALL_COORDINATOR_URL;
@@ -177,6 +179,116 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
     expect(artifact.metrics_uri).toBe(`file://eval-artifacts/${job.job_id}/metrics.json`);
   }, 20_000);
 
+  it("records target worker verdicts from distributed artifact validation manifests", async () => {
+    const suffix = Date.now().toString(36);
+    const evalWorkerId = `mac-worker-eval-target-${suffix}`;
+    const validatorWorkerId = `mac-worker-validator-${suffix}`;
+    const evalMetricsPath = join(tempDir, `target-eval-${suffix}.json`);
+    const evalJob: AdapterEvaluationJob = {
+      job_id: `job_eval_target_${suffix}`,
+      run_id: `run_validation_bridge_${suffix}`,
+      round_id: "round_001",
+      job_type: "evaluate_adapter",
+      backend: "mlx",
+      model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      adapter: {
+        adapter_id: `job_adapter_target_${suffix}`,
+        artifact_uri: `file://artifacts/job_adapter_target_${suffix}/adapters`,
+        artifact_hash: "sha256:adapter-target",
+        config_hash: "sha256:adapter-config-target",
+        source_job_id: `job_adapter_target_${suffix}`,
+      },
+      eval_shard: {
+        id: "eval_jsonl",
+        uri: "file://datasets/ag-news/eval.jsonl",
+        token_estimate: 1,
+        hash: "sha256:eval-target",
+      },
+      max_examples: 40,
+      max_tokens: 8,
+    };
+    await writeFile(evalMetricsPath, JSON.stringify(adapterEvaluationMetrics(evalJob), null, 2) + "\n", "utf8");
+    const evalMetricsUri = pathToFileURL(evalMetricsPath).toString();
+    const evalMetricsHash = await sha256File(evalMetricsPath);
+    const validationJob: ArtifactValidationJob = {
+      job_id: `job_validate_eval_${suffix}`,
+      run_id: `run_validation_bridge_${suffix}`,
+      round_id: "round_001",
+      job_type: "validate_artifact",
+      backend: "cpu",
+      target: {
+        job_id: evalJob.job_id,
+        worker_id: evalWorkerId,
+        artifact_type: "adapter_evaluation",
+        artifact_uri: evalMetricsUri,
+        artifact_hash: evalMetricsHash,
+        config_hash: "sha256:eval-target-config",
+        metrics_uri: evalMetricsUri,
+      },
+      policy: {
+        min_accuracy: 0.5,
+        max_invalid_rate: 0.1,
+        min_examples: 10,
+      },
+    };
+    const peers: WorkerPeer[] = [];
+
+    try {
+      control = await ControlPeer.create({
+        privateKeyPath: join(tempDir, "control.key"),
+        coordinatorUrl,
+        jobs: [evalJob, validationJob],
+      });
+      const evalWorker = await WorkerPeer.create({
+        privateKeyPath: join(tempDir, "eval-worker.key"),
+        workerId: evalWorkerId,
+        controlAddr: control.multiaddrs[0],
+        backend: "mlx",
+        supportedJobs: ["evaluate_adapter"],
+      });
+      const validatorWorker = await WorkerPeer.create({
+        privateKeyPath: join(tempDir, "validator-worker.key"),
+        workerId: validatorWorkerId,
+        controlAddr: control.multiaddrs[0],
+        backend: "cpu",
+        supportedJobs: ["validate_artifact"],
+      });
+      peers.push(evalWorker, validatorWorker);
+
+      await evalWorker.register();
+      const evalClaim = await evalWorker.claimJob("evaluate_adapter", 8_000);
+      expect(evalClaim.accepted).toBe(true);
+      await evalWorker.publishArtifactManifest({
+        job_id: evalJob.job_id,
+        artifact_type: "adapter_evaluation",
+        artifact_uri: validationJob.target.artifact_uri,
+        artifact_hash: validationJob.target.artifact_hash,
+        config_hash: validationJob.target.config_hash!,
+        created_at: new Date().toISOString(),
+        metrics_uri: validationJob.target.metrics_uri,
+      });
+
+      await validatorWorker.register();
+      const validationClaim = await validatorWorker.claimJob("validate_artifact", 2_000);
+      expect(validationClaim.accepted).toBe(true);
+      const validation = await runArtifactValidation(validationJob, {
+        outputRoot: join(tempDir, "validation-artifacts"),
+      });
+      expect(validation.metrics.verdict).toBe("accepted");
+      await validatorWorker.publishArtifactManifest(validation.manifest);
+
+      const coordinator = new CoordinatorClient(coordinatorUrl!);
+      const targetArtifact = await coordinator.getArtifact(evalJob.job_id);
+      expect(targetArtifact.verdict).toBe("accepted");
+
+      const targetReputation = await coordinator.workerReputation(evalWorkerId);
+      expect(targetReputation.accepted_artifacts).toBe(1);
+      expect(targetReputation.status).toBe("active");
+    } finally {
+      await Promise.all(peers.map((item) => item.stop()));
+    }
+  }, 20_000);
+
   it("assigns unique evaluate_adapter jobs under concurrent coordinator-backed claims", async () => {
     const suffix = Date.now().toString(36);
     const jobs: AdapterEvaluationJob[] = Array.from({ length: 4 }, (_, index) => {
@@ -246,4 +358,40 @@ async function coordinatorEvents(): Promise<Array<{ type: string; fields: Record
     throw new Error(`coordinator events request failed: ${response.status} ${await response.text()}`);
   }
   return response.json() as Promise<Array<{ type: string; fields: Record<string, string> }>>;
+}
+
+function adapterEvaluationMetrics(job: AdapterEvaluationJob): AdapterEvaluationMetrics {
+  return {
+    job_id: job.job_id,
+    run_id: job.run_id,
+    round_id: job.round_id,
+    adapter_id: job.adapter.adapter_id,
+    adapter_artifact_hash: job.adapter.artifact_hash,
+    eval_shard_id: job.eval_shard.id,
+    eval_shard_hash: job.eval_shard.hash,
+    model: job.model,
+    adapter_path: null,
+    eval_file: "eval.jsonl",
+    examples: 20,
+    correct: 15,
+    accuracy: 0.75,
+    invalid: 0,
+    invalid_rate: 0,
+    labels: ["World", "Sports"],
+    results: [
+      {
+        id: "example-001",
+        expected_label: "World",
+        predicted_label: "World",
+        correct: true,
+        output: "World",
+      },
+    ],
+  };
+}
+
+async function sha256File(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  hash.update(await readFile(path));
+  return `sha256:${hash.digest("hex")}`;
 }

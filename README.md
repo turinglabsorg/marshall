@@ -50,11 +50,22 @@ Worker reputation starts at `100`, is capped to `0..100`, becomes `degraded` bel
 Coordinator endpoints:
 
 ```text
+GET  /artifacts
 POST /artifacts/{job_id}/verdict
 GET  /workers/{worker_id}/reputation
 ```
 
 Only the coordinator writes Redis. Workers do not receive Redis credentials and interact through libp2p worker protocols.
+
+### Distributed Artifact Validation
+
+Validation is modeled as ordinary p2p work, not as an operator-side manual step:
+
+- evaluation artifacts are published to the coordinator by the worker that produced them;
+- `npm run validation:jobs` reads unvalidated coordinator artifacts and creates `validate_artifact` jobs;
+- validator workers claim those jobs through libp2p and emit `artifact_validation` manifests;
+- the control peer converts `artifact_validation` manifests into coordinator verdicts for the target artifact;
+- leaderboard/model selection can require `verdict=accepted` before an adapter enters the selected set.
 
 ## First Concrete Target
 
@@ -148,6 +159,7 @@ It proves:
 - `MARSHALL_JOB_COUNT` lets the control CLI create multiple jobs in one run; `train_adapter` uses dataset shards for multi-worker claims.
 - workers materialize only the assigned shard into a content-addressed cache under `.marshall/cache/datasets/<sha256>` before training.
 - `training/build_ag_news_dataset.py` builds a local private AG News classification dataset under `.marshall/datasets/ag-news`, and `training/mlx_ag_news_eval.py` scores base-model or adapter exact-label accuracy.
+- `validate_artifact` jobs let validator workers verify target artifact hashes and adapter-evaluation metrics before artifacts can affect coordinator reputation or accepted-only model selection.
 
 ## CLI Runtime
 
@@ -196,6 +208,36 @@ npm run worker:start -- \
   --iters 20 \
   --batch-size 1 \
   --num-layers 4
+```
+
+Create and run validation work after evaluation artifacts have been published to the coordinator:
+
+```bash
+npm run validation:jobs -- \
+  --coordinator-url http://127.0.0.1:8080 \
+  --target-artifact-type adapter_evaluation \
+  --output .marshall/jobs/validate-artifacts.json
+
+MARSHALL_JOBS_FILE=.marshall/jobs/validate-artifacts.json \
+MARSHALL_JOB_TYPE=validate_artifact \
+npm run control:start
+
+npm run worker:pool -- \
+  --control /ip4/127.0.0.1/tcp/4001/p2p/<control-peer-id> \
+  --job-type validate_artifact \
+  --backend cpu \
+  --concurrency 4 \
+  --max-jobs 4
+```
+
+Build a leaderboard from only accepted evaluation artifacts:
+
+```bash
+npm run leaderboard:adapters -- \
+  --eval-artifacts-dir .marshall/eval-artifacts \
+  --coordinator-url http://127.0.0.1:8080 \
+  --require-verdict accepted \
+  --output-dir .marshall/leaderboard
 ```
 
 ## Development

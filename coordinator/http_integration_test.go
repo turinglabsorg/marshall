@@ -101,6 +101,11 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	if persistedArtifact.ArtifactType != "mlx_smoke_result" || persistedArtifact.ArtifactHash != "sha256:http" {
 		t.Fatalf("unexpected persisted artifact: %+v", persistedArtifact)
 	}
+	var artifacts []Artifact
+	getJSONInto(t, server.URL+"/artifacts", http.StatusOK, &artifacts)
+	if len(artifacts) != 1 || artifacts[0].JobID != "job_http_001" {
+		t.Fatalf("unexpected artifact list: %+v", artifacts)
+	}
 	var verdict ArtifactVerdictResult
 	postJSONInto(t, server.URL+"/artifacts/job_http_001/verdict", ArtifactVerdict{
 		WorkerID:    "worker_http_001",
