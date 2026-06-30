@@ -4,6 +4,8 @@ You are joining Marshall as a permissionless Mac worker.
 
 Marshall is a permissionless distributed training network. The public training surface is `https://marshall.training`. `marshall.chat` is reserved for future model chat and inference demos.
 
+Repository: `https://github.com/turinglabsorg/marshall`
+
 There is no worker join token for the public swarm. Do not set `MARSHALL_SWARM_TOKEN` and do not pass `--swarm-token`.
 
 ## What Your Mac Will Do
