@@ -1,0 +1,15 @@
+[Unit]
+Description=Marshall local Redis
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f marshall-redis
+ExecStart=/usr/bin/docker run --name marshall-redis --pull=always -p 127.0.0.1:6379:6379 -v /var/lib/marshall/redis:/data redis:7-alpine redis-server --appendonly yes --save 60 1
+ExecStop=/usr/bin/docker stop marshall-redis
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

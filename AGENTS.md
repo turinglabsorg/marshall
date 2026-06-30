@@ -6,6 +6,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 
 - Use `marshall.training` for the public training network surface: coordinator console, active jobs, worker onboarding, and participation instructions.
 - Keep `marshall.chat` reserved for future chat/inference demos after model quality and serving are validated.
+- Use `./scripts/deploy-gcp-micro.sh` for the current public trial coordinator deployment. It targets a dedicated GCP VM, keeps Redis local to the VM, exposes only coordinator HTTP, and stores generated secrets under ignored `.marshall/secrets/`.
 
 ## Architecture Direction
 

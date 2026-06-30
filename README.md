@@ -38,6 +38,14 @@ docker run --rm -p 6379:6379 redis:7-alpine
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go run ./cmd/marshall-coordinator
 ```
 
+Deploy the current public trial coordinator to a small GCP VM with local Redis:
+
+```bash
+./scripts/deploy-gcp-micro.sh
+```
+
+The deploy path creates or updates a dedicated `marshall-micro-1` instance in the `iconic-elevator-394020` project by default, installs Redis as a localhost-only Docker service, and runs `cmd/marshall-coordinator` as a systemd service on public HTTP port `80`. Write authentication is configured through a generated token stored under `.marshall/secrets/`, which remains local and ignored by git.
+
 ### Public Worker Reputation
 
 Marshall is moving toward open worker participation with validator-driven slashing instead of a permanently permissioned worker set. The current coordinator policy is intentionally simple and deterministic:
