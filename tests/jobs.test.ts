@@ -69,6 +69,20 @@ describe("training job builders", () => {
             uri: "file://.marshall/datasets/ag-news/shards/shard-001",
             sha256: "sha256:one",
             token_estimate: 500,
+            files: [
+              {
+                path: "train.jsonl",
+                uri: "https://datasets.example.invalid/ag-news/shards/shard-001/train.jsonl",
+                sha256: "sha256:train-one",
+                bytes: 123,
+              },
+              {
+                path: "valid.jsonl",
+                uri: "https://datasets.example.invalid/ag-news/shards/shard-001/valid.jsonl",
+                sha256: "sha256:valid-one",
+                bytes: 45,
+              },
+            ],
           },
           {
             shard_id: "ag_news_shard_002",
@@ -92,6 +106,73 @@ describe("training job builders", () => {
         "ag-news-classification-v1",
       ]);
       expect(jobs.map((job) => job.dataset_shard.hash)).toEqual(["sha256:one", "sha256:two"]);
+      expect(jobs[0].dataset_shard.files).toEqual([
+        {
+          path: "train.jsonl",
+          uri: "https://datasets.example.invalid/ag-news/shards/shard-001/train.jsonl",
+          sha256: "sha256:train-one",
+          bytes: 123,
+        },
+        {
+          path: "valid.jsonl",
+          uri: "https://datasets.example.invalid/ag-news/shards/shard-001/valid.jsonl",
+          sha256: "sha256:valid-one",
+          bytes: 45,
+        },
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates adapter jobs from a generic dataset manifest", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "marshall-generic-manifest-test-"));
+    try {
+      await writeFile(join(tempDir, "manifest.json"), JSON.stringify({
+        dataset_id: "fineweb-edu-window",
+        version: "2026-06-30",
+        schema: "mlx-chat-jsonl",
+        license: "external-local-test",
+        root_uri: "https://datasets.example.invalid/fineweb/shards/shard-000001",
+        root_hash: "sha256:root",
+        token_estimate: 1000,
+        shards: [
+          {
+            shard_id: "fineweb_shard_000001",
+            uri: "https://datasets.example.invalid/fineweb/shards/shard-000001",
+            sha256: "sha256:one",
+            token_estimate: 500,
+            files: [
+              {
+                path: "train.jsonl",
+                uri: "https://datasets.example.invalid/fineweb/shards/shard-000001/train.jsonl",
+                sha256: "sha256:train",
+              },
+            ],
+          },
+        ],
+      }));
+
+      const jobs = createTrainingJobs("train_adapter", 1, {
+        jobId: "job_fineweb",
+        runId: "run_fineweb",
+        adapterDataset: "manifest",
+        adapterDatasetDir: tempDir,
+      });
+
+      expect(jobs[0].dataset_shard).toMatchObject({
+        dataset_id: "fineweb-edu-window",
+        id: "fineweb_shard_000001",
+        uri: "https://datasets.example.invalid/fineweb/shards/shard-000001",
+        hash: "sha256:one",
+        files: [
+          {
+            path: "train.jsonl",
+            uri: "https://datasets.example.invalid/fineweb/shards/shard-000001/train.jsonl",
+            sha256: "sha256:train",
+          },
+        ],
+      });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

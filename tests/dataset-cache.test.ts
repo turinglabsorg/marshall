@@ -51,6 +51,56 @@ describe("dataset cache", () => {
     }
   });
 
+  it("materializes a file-listed shard without requiring the dataset root", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "marshall-file-list-shard-test-"));
+    try {
+      const sourcePath = join(tempDir, "source");
+      await mkdir(sourcePath, { recursive: true });
+      const trainPath = join(sourcePath, "remote-train.jsonl");
+      const validPath = join(sourcePath, "remote-valid.jsonl");
+      await writeFile(trainPath, SPLIT_FILES["train.jsonl"], "utf8");
+      await writeFile(validPath, SPLIT_FILES["valid.jsonl"], "utf8");
+      const shardHash = hashSplitFiles(["train.jsonl", "valid.jsonl"]);
+      const datasetShard = {
+        id: "remote_shard_001",
+        uri: "https://datasets.example.invalid/shards/shard-001",
+        token_estimate: 100,
+        hash: shardHash,
+        files: [
+          {
+            path: "train.jsonl",
+            uri: pathToFileURL(trainPath).toString(),
+            sha256: await hashDatasetPath(trainPath),
+            bytes: Buffer.byteLength(SPLIT_FILES["train.jsonl"], "utf8"),
+          },
+          {
+            path: "valid.jsonl",
+            uri: pathToFileURL(validPath).toString(),
+            sha256: await hashDatasetPath(validPath),
+            bytes: Buffer.byteLength(SPLIT_FILES["valid.jsonl"], "utf8"),
+          },
+        ],
+      };
+
+      const first = await prepareDatasetShard(datasetShard, {
+        projectRoot: process.cwd(),
+        cacheRoot: join(tempDir, "cache"),
+      });
+      expect(first.cacheHit).toBe(false);
+      expect(first.path).toBe(first.cachePath);
+      expect(await hashDatasetPath(first.path)).toBe(shardHash);
+
+      const second = await prepareDatasetShard(datasetShard, {
+        projectRoot: process.cwd(),
+        cacheRoot: join(tempDir, "cache"),
+      });
+      expect(second.cacheHit).toBe(true);
+      expect(second.path).toBe(first.path);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("hashes a cached single eval JSONL like the source file", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "marshall-eval-cache-test-"));
     try {

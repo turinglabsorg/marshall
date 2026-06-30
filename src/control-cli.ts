@@ -101,7 +101,7 @@ function adapterDatasetArg(value: string | undefined): AdapterDatasetProfile | u
   if (value == null || value === "") {
     return undefined;
   }
-  if (value === "marshall_instructions" || value === "ag_news") {
+  if (value === "marshall_instructions" || value === "ag_news" || value === "manifest") {
     return value;
   }
   throw new Error(`unsupported adapter dataset: ${value}`);

@@ -2,6 +2,11 @@
 
 Marshall is a p2p-first consumer AI compute network for asynchronous AI workloads.
 
+## Deployment Domains
+
+- Use `marshall.training` for the public training network surface: coordinator console, active jobs, worker onboarding, and participation instructions.
+- Keep `marshall.chat` reserved for future chat/inference demos after model quality and serving are validated.
+
 ## Architecture Direction
 
 - Use libp2p from the first implementation milestone.
@@ -69,6 +74,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/model-package-cli.ts` packages the selected optimized model as base model + LoRA adapter metadata and emits an `optimized_model_package` manifest. Use `--adapter-artifacts-dir` so packages point at the control peer's verified local adapter copy instead of a worker-local path embedded in evaluation metrics.
 - `src/model-query-cli.ts` queries a packaged optimized model against a selected eval record and can fail unless the answer is correct.
 - `src/e2e-ag-news-cli.ts` runs the AG News product E2E path: training worker pool, p2p artifact upload to the control store, p2p adapter download for evaluation workers, evaluation artifact upload, optional p2p validation target download, accepted-only leaderboard selection, package from verified adapter storage, query, and optional coordinator persistence verification.
+- `src/dataset-manifest-cli.ts` builds private content-addressed dataset manifests from local JSONL inputs under `.marshall/`, with optional external `--base-uri` shard URLs for remote workers.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
 - `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
@@ -78,10 +84,11 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `npm run dataset:ag-news:micro:build` uses the same real AG News builder to create many non-fake micro-shards under `.marshall/datasets/ag-news-micro`; `MARSHALL_MICRO_SHARDS` controls the shard/job count.
 - `training/mlx_ag_news_eval.py` evaluates base models or LoRA adapters on AG News exact-label accuracy.
 - `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training or evaluation. Single JSONL eval shards remain addressable as files after caching.
+- `src/dataset-cache.ts` supports shard-level `files[]` manifests. Workers download or copy only assigned shard files, verify each file SHA-256 and optional byte size, then verify the final shard root hash before training.
 - `inline://tiny-italian-v1` is the built-in smoke dataset URI. `src/dataset-cache.ts` materializes it into the local dataset cache before `training/tiny_char_lm.py` runs.
 - `.marshall/datasets/marshall-instructions/manifest.json`, `{train,valid,test,eval}.jsonl`, and `shards/shard-*/{train,valid}.jsonl` are generated private local dataset artifacts for Marshall coordinator-event summaries and multi-worker adapter claims. They are not repository examples.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, `AdapterEvaluationJob`, `ArtifactValidationJob`, `MarshallJob`, job status, artifact manifest, artifact fetch manifest/chunk requests and responses, toy training metrics, MLX smoke metrics, MLX LoRA metrics, adapter evaluation metrics, artifact validation metrics, and ACK payloads. `ArtifactValidationPolicy.quorum` controls how many matching validator votes are required. `TrainingJob.dataset_shard`, `AdapterEvaluationJob.eval_shard`, `AdapterEvaluationJob.adapter`, and `ArtifactValidationJob.target` must include hashes verified by workers before producing artifacts or verdicts.
-- `src/jobs.ts` supports `adapterDataset: "ag_news"` through a local manifest. The control CLI exposes this as `--adapter-dataset ag_news` or `MARSHALL_ADAPTER_DATASET=ag_news`, with `--adapter-dataset-dir` / `MARSHALL_ADAPTER_DATASET_DIR` pointing at the local dataset directory.
+- `src/jobs.ts` supports `adapterDataset: "ag_news"` and `adapterDataset: "manifest"` through local manifests. The control CLI exposes this as `--adapter-dataset ag_news|manifest` or `MARSHALL_ADAPTER_DATASET=ag_news|manifest`, with `--adapter-dataset-dir` / `MARSHALL_ADAPTER_DATASET_DIR` pointing at the local manifest directory.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers four workers claiming independent jobs concurrently.
 - `tests/p2p.integration.test.ts` also verifies real p2p artifact payload upload into the control artifact store and p2p download back to a worker input cache with final hash checks.
@@ -156,6 +163,7 @@ External datasets must stay out of the repo until license and distribution polic
 - Artifact manifests and artifact payload bytes must travel through Marshall protocols for product validation. Do not use manual `rsync` or local file copy as product behavior.
 - Artifact payload transfer must stay chunked for large files. Every chunk must be hash-checked, failed chunks must be retried, every completed file must be hash-checked, and the final artifact root hash must match the manifest before publication or downstream use.
 - Remote worker jobs must use dataset and artifact URIs resolvable from the worker machine. If coordinator-local and worker-local paths differ, emit worker-resolvable URIs in job specs while preserving coordinator-side hash verification.
+- Dataset manifests for product tests must describe real assigned shard bytes, not placeholder work. Workers should download only their assigned shard files and must fail on hash or size mismatch.
 - Manual shell commands are allowed only to start/stop services, inspect state, or run tests. If a repeated/manual operational step is needed to prove the system, implement it as Marshall code or documented CLI behavior first.
 - Do not add blockchain, token, payment, or incentive code before validation and reputation work.
 - Do not build synchronous distributed training.

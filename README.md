@@ -14,6 +14,11 @@ The first product is not a model. The first product is the network substrate:
 
 Marshall should behave like a compute marketplace for bounded AI jobs, not like a synchronous GPU cluster.
 
+## Deployment Domains
+
+- `marshall.training` is the public training network surface: coordinator console, worker onboarding, active job visibility, and participation instructions.
+- `marshall.chat` is reserved for future model chat and inference demos after the training pipeline is validated.
+
 ## Coordinator
 
 Marshall now includes a native Go coordinator prototype backed by Redis:
@@ -153,6 +158,9 @@ It proves:
 - artifact payloads can move over `/marshall/artifact/fetch/1.0.0`; transfers are chunked, hash-checked per chunk and per file, retried on corrupt chunks, and verified against the final artifact root hash.
 - control peers can store verified worker artifacts locally and serve them back to downstream workers through `marshall-artifact://<job_id>` inputs, so remote evaluation and validation do not depend on coordinator-local filesystem paths.
 - adapter leaderboard outputs include an explicit `selection_policy` with score formula, tie breakers, top-K, required verdict, and current `single_adapter` merge mode.
+- dataset shards can declare a `files[]` list with worker-resolvable URIs, SHA-256 hashes, and optional byte sizes, so workers materialize only the assigned shard files before training.
+- dataset cache materialization supports local `file://` inputs and HTTP/S shard files, verifies each file hash, verifies optional file sizes, and verifies the final shard root hash before exposing the shard to training code.
+- `npm run dataset:manifest` builds private local content-addressed dataset manifests from JSONL inputs under `.marshall/`, with optional `--base-uri` for externally hosted shard files.
 
 ## CLI Runtime
 
@@ -174,6 +182,23 @@ MARSHALL_ADAPTER_DATASET=ag_news \
 MARSHALL_ADAPTER_DATASET_DIR=.marshall/datasets/ag-news \
 MARSHALL_JOB_TYPE=train_adapter \
 MARSHALL_JOB_COUNT=4 \
+npm run control:start
+```
+
+Build a generic private JSONL manifest for larger dataset windows. The generated data stays under `.marshall/`; upload the shard files externally first when remote workers need HTTP/S URIs, then pass the matching `--base-uri`:
+
+```bash
+npm run dataset:manifest -- \
+  --input-jsonl .marshall/cache/raw/fineweb-window.jsonl \
+  --output-dir .marshall/datasets/fineweb-window \
+  --dataset-id fineweb-edu-window \
+  --shard-count 64 \
+  --base-uri https://storage.example/marshall/datasets/fineweb-window
+
+MARSHALL_ADAPTER_DATASET=manifest \
+MARSHALL_ADAPTER_DATASET_DIR=.marshall/datasets/fineweb-window \
+MARSHALL_JOB_TYPE=train_adapter \
+MARSHALL_JOB_COUNT=64 \
 npm run control:start
 ```
 

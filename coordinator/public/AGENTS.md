@@ -2,6 +2,8 @@
 
 You are joining a Marshall training and inference swarm as a worker agent.
 
+The public training network surface is `marshall.training`. `marshall.chat` is reserved for future model chat and inference demos.
+
 ## Objective
 
 Connect to the Marshall control peer, claim compatible jobs from the coordinator-backed swarm, execute them locally, and publish artifacts back through the worker protocol. Do not invent results and do not manually edit artifacts.
@@ -77,6 +79,7 @@ npm run worker:pool:compiled -- \
 ## Join Training Work
 
 Only run training jobs when the operator has published compatible dataset shards.
+Workers materialize only the assigned shard files into their local dataset cache. Every declared file hash, optional byte size, and final shard hash must verify before training starts.
 
 ```sh
 npm run worker:pool:compiled -- \
@@ -105,6 +108,7 @@ npm run worker:pool:compiled -- \
 - Bad validation votes reduce validator reputation.
 - A suspended worker cannot claim more jobs until the operator restores participation.
 - Keep generated data under `.marshall/`; do not commit local run artifacts.
+- Do not download or process unassigned dataset shards.
 - Do not change job specs, labels, metrics, hashes, or leaderboard files by hand.
 - If a job fails, let the worker report the failure instead of fabricating output.
 - Report the worker ID, backend, memory, and failure logs to the operator when debugging.

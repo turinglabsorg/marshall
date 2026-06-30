@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, posix as pathPosix, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
 import type { TrainingJob } from "./schemas.js";
 
 const DATASET_FILES = ["train.jsonl", "valid.jsonl", "test.jsonl", "eval.jsonl"] as const;
@@ -37,6 +41,12 @@ export async function prepareDatasetShard(
   if (shard.uri.startsWith("inline://")) {
     return prepareInlineDatasetShard(shard, options);
   }
+  if (shard.files != null && shard.files.length > 0) {
+    return prepareDatasetShardFiles(shard, options);
+  }
+  if (isHttpUri(shard.uri)) {
+    return prepareRemoteDatasetShardFile(shard, options);
+  }
 
   const sourcePath = resolveDatasetUri(shard.uri, options.projectRoot);
   const sourceHash = await hashDatasetPath(sourcePath);
@@ -67,20 +77,107 @@ export async function prepareDatasetShard(
     throw new Error(`cached dataset shard hash mismatch for ${shard.id}: expected ${shard.hash}, got ${cachedHash}`);
   }
 
+  await commitCachePath(tempPath, cachePath, shard.hash);
+
+  return {
+    path: await trainingPathForCache(cachePath),
+    cachePath,
+    hash: shard.hash,
+    cacheHit: false,
+  };
+}
+
+async function prepareDatasetShardFiles(
+  shard: TrainingJob["dataset_shard"],
+  options: PrepareDatasetShardOptions,
+): Promise<PreparedDatasetShard> {
+  const cacheRoot = resolve(options.cacheRoot ?? join(options.projectRoot, ".marshall/cache/datasets"));
+  const cachePath = join(cacheRoot, shard.hash.replace("sha256:", ""));
+  const cached = await isUsableCache(cachePath, shard.hash);
+  if (cached) {
+    return {
+      path: await trainingPathForCache(cachePath),
+      cachePath,
+      hash: shard.hash,
+      cacheHit: true,
+    };
+  }
+
+  await mkdir(cacheRoot, { recursive: true });
+  const tempPath = `${cachePath}.tmp-${process.pid}-${randomUUID()}`;
+  await rm(tempPath, { recursive: true, force: true });
+  await mkdir(tempPath, { recursive: true });
+
   try {
-    await rename(tempPath, cachePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST" && (error as NodeJS.ErrnoException).code !== "ENOTEMPTY") {
-      await rm(tempPath, { recursive: true, force: true });
-      throw error;
+    for (const file of shard.files ?? []) {
+      const relativePath = safeDatasetRelativePath(file.path);
+      const destination = resolve(tempPath, ...relativePath.split("/"));
+      await mkdir(dirname(destination), { recursive: true });
+      await materializeDatasetFile(file.uri, destination, options.projectRoot);
+
+      const actualHash = await hashDatasetPath(destination);
+      if (actualHash !== file.sha256) {
+        throw new Error(`dataset shard file hash mismatch for ${shard.id}/${relativePath}: expected ${file.sha256}, got ${actualHash}`);
+      }
+      if (file.bytes != null) {
+        const info = await stat(destination);
+        if (info.size !== file.bytes) {
+          throw new Error(`dataset shard file size mismatch for ${shard.id}/${relativePath}: expected ${file.bytes}, got ${info.size}`);
+        }
+      }
     }
 
-    await rm(tempPath, { recursive: true, force: true });
-    if (!(await isUsableCache(cachePath, shard.hash))) {
-      await rm(cachePath, { recursive: true, force: true });
-      await copyDatasetPath(sourcePath, tempPath);
-      await rename(tempPath, cachePath);
+    const cachedHash = await hashDatasetPath(tempPath);
+    if (cachedHash !== shard.hash) {
+      throw new Error(`cached dataset shard hash mismatch for ${shard.id}: expected ${shard.hash}, got ${cachedHash}`);
     }
+    await commitCachePath(tempPath, cachePath, shard.hash);
+  } catch (error) {
+    await rm(tempPath, { recursive: true, force: true });
+    throw error;
+  }
+
+  return {
+    path: await trainingPathForCache(cachePath),
+    cachePath,
+    hash: shard.hash,
+    cacheHit: false,
+  };
+}
+
+async function prepareRemoteDatasetShardFile(
+  shard: TrainingJob["dataset_shard"],
+  options: PrepareDatasetShardOptions,
+): Promise<PreparedDatasetShard> {
+  const cacheRoot = resolve(options.cacheRoot ?? join(options.projectRoot, ".marshall/cache/datasets"));
+  const cachePath = join(cacheRoot, shard.hash.replace("sha256:", ""));
+  const cached = await isUsableCache(cachePath, shard.hash);
+  if (cached) {
+    return {
+      path: await trainingPathForCache(cachePath),
+      cachePath,
+      hash: shard.hash,
+      cacheHit: true,
+    };
+  }
+
+  await mkdir(cacheRoot, { recursive: true });
+  const tempPath = `${cachePath}.tmp-${process.pid}-${randomUUID()}`;
+  await rm(tempPath, { recursive: true, force: true });
+  await mkdir(tempPath, { recursive: true });
+
+  try {
+    const remoteName = basename(new URL(shard.uri).pathname);
+    const destination = join(tempPath, remoteName.endsWith(".jsonl") ? remoteName : "dataset.jsonl");
+    await materializeDatasetFile(shard.uri, destination, options.projectRoot);
+    const cachedHash = await hashDatasetPath(tempPath);
+    if (cachedHash !== shard.hash) {
+      throw new Error(`cached dataset shard hash mismatch for ${shard.id}: expected ${shard.hash}, got ${cachedHash}`);
+    }
+    await commitCachePath(tempPath, cachePath, shard.hash);
+  } catch (error) {
+    await rm(tempPath, { recursive: true, force: true });
+    throw error;
   }
 
   return {
@@ -129,21 +226,7 @@ async function prepareInlineDatasetShard(
     throw new Error(`cached dataset shard hash mismatch for ${shard.id}: expected ${shard.hash}, got ${cachedHash}`);
   }
 
-  try {
-    await rename(tempPath, cachePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST" && (error as NodeJS.ErrnoException).code !== "ENOTEMPTY") {
-      await rm(tempPath, { recursive: true, force: true });
-      throw error;
-    }
-    await rm(tempPath, { recursive: true, force: true });
-    if (!(await isUsableCache(cachePath, shard.hash))) {
-      await rm(cachePath, { recursive: true, force: true });
-      await mkdir(tempPath, { recursive: true });
-      await writeFile(join(tempPath, dataset.filename), dataset.content, "utf8");
-      await rename(tempPath, cachePath);
-    }
-  }
+  await commitCachePath(tempPath, cachePath, shard.hash);
 
   return {
     path: await trainingPathForCache(cachePath),
@@ -195,7 +278,26 @@ function resolveDatasetUri(uri: string, projectRoot: string): string {
   }
 
   const path = uri.slice("file://".length);
-  return path.startsWith("/") ? path : resolve(projectRoot, path);
+  if (path.startsWith("/")) {
+    return fileURLToPath(uri);
+  }
+  return resolve(projectRoot, path);
+}
+
+async function materializeDatasetFile(uri: string, destination: string, projectRoot: string): Promise<void> {
+  if (uri.startsWith("file://")) {
+    await cp(resolveDatasetUri(uri, projectRoot), destination);
+    return;
+  }
+  if (!isHttpUri(uri)) {
+    throw new Error(`unsupported dataset file URI: ${uri}`);
+  }
+
+  const response = await fetch(uri);
+  if (!response.ok || response.body == null) {
+    throw new Error(`dataset download failed for ${uri}: HTTP ${response.status}`);
+  }
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(destination));
 }
 
 async function copyDatasetPath(sourcePath: string, targetPath: string): Promise<void> {
@@ -233,6 +335,23 @@ async function isUsableCache(cachePath: string, expectedHash: string): Promise<b
   }
 }
 
+async function commitCachePath(tempPath: string, cachePath: string, expectedHash: string): Promise<void> {
+  try {
+    await rename(tempPath, cachePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" && (error as NodeJS.ErrnoException).code !== "ENOTEMPTY") {
+      await rm(tempPath, { recursive: true, force: true });
+      throw error;
+    }
+
+    await rm(tempPath, { recursive: true, force: true });
+    if (!(await isUsableCache(cachePath, expectedHash))) {
+      await rm(cachePath, { recursive: true, force: true });
+      throw new Error(`dataset cache collision at ${cachePath}`);
+    }
+  }
+}
+
 async function trainingPathForCache(cachePath: string): Promise<string> {
   const entries = await readdir(cachePath, { withFileTypes: true });
   const fileEntries = entries.filter((entry) => entry.isFile());
@@ -247,4 +366,19 @@ function sha256Text(content: string): string {
   const digest = createHash("sha256");
   digest.update(content, "utf8");
   return `sha256:${digest.digest("hex")}`;
+}
+
+function isHttpUri(value: string): boolean {
+  return value.startsWith("http://") || value.startsWith("https://");
+}
+
+function safeDatasetRelativePath(value: string): string {
+  if (value.includes("\0") || value.startsWith("/") || value === "." || value === "..") {
+    throw new Error(`invalid dataset file path: ${value}`);
+  }
+  const normalized = pathPosix.normalize(value);
+  if (normalized !== value || normalized.startsWith("../") || normalized.includes("/../")) {
+    throw new Error(`invalid dataset file path: ${value}`);
+  }
+  return value;
 }

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TrainingJobSchema, type Backend, type JobType, type TrainingJob } from "./schemas.js";
 
-export type AdapterDatasetProfile = "marshall_instructions" | "ag_news";
+export type AdapterDatasetProfile = "marshall_instructions" | "ag_news" | "manifest";
 
 export interface TrainingJobOptions {
   jobId?: string;
@@ -17,6 +17,12 @@ interface AdapterDatasetShardDefinition {
   uri: string;
   tokenEstimate: number;
   hash: string;
+  files?: Array<{
+    path: string;
+    uri: string;
+    sha256: string;
+    bytes?: number;
+  }>;
 }
 
 interface AdapterDatasetDefinition {
@@ -44,6 +50,14 @@ interface AdapterDatasetManifestShard {
   uri?: unknown;
   sha256?: unknown;
   token_estimate?: unknown;
+  files?: unknown;
+}
+
+interface AdapterDatasetManifestShardFile {
+  path?: unknown;
+  uri?: unknown;
+  sha256?: unknown;
+  bytes?: unknown;
 }
 
 const MARSHALL_INSTRUCTIONS_DATASET_ID = "marshall-ops-synthetic-v1";
@@ -141,6 +155,7 @@ export function createAdapterTrainingJob(options: TrainingJobOptions = {}): Trai
       uri: dataset.root.uri,
       token_estimate: dataset.root.tokenEstimate,
       hash: dataset.root.hash,
+      files: dataset.root.files,
     },
   });
 }
@@ -168,6 +183,7 @@ export function createAdapterTrainingShardJobs(count: number, options: TrainingJ
         uri: shard.uri,
         token_estimate: shard.tokenEstimate,
         hash: shard.hash,
+        files: shard.files,
       },
     });
   });
@@ -217,7 +233,7 @@ export function createTrainingJob(jobType: TrainingJob["job_type"], options: Tra
 }
 
 function adapterDatasetDefinition(options: TrainingJobOptions): AdapterDatasetDefinition {
-  if (options.adapterDataset === "ag_news") {
+  if (options.adapterDataset === "ag_news" || options.adapterDataset === "manifest") {
     return readAdapterDatasetManifest(options.adapterDatasetDir ?? ".marshall/datasets/ag-news");
   }
   return MARSHALL_INSTRUCTIONS_DATASET;
@@ -233,6 +249,15 @@ function readAdapterDatasetManifest(datasetDir: string): AdapterDatasetDefinitio
       uri: stringValue(shard.uri, `${manifestPath}: shards[${index}].uri`),
       tokenEstimate: numberValue(shard.token_estimate, `${manifestPath}: shards[${index}].token_estimate`),
       hash: stringValue(shard.sha256, `${manifestPath}: shards[${index}].sha256`),
+      files: shard.files == null ? undefined : arrayValue(shard.files, `${manifestPath}: shards[${index}].files`).map((fileItem, fileIndex) => {
+        const file = fileItem as AdapterDatasetManifestShardFile;
+        return {
+          path: stringValue(file.path, `${manifestPath}: shards[${index}].files[${fileIndex}].path`),
+          uri: stringValue(file.uri, `${manifestPath}: shards[${index}].files[${fileIndex}].uri`),
+          sha256: stringValue(file.sha256, `${manifestPath}: shards[${index}].files[${fileIndex}].sha256`),
+          bytes: file.bytes == null ? undefined : nonnegativeIntegerValue(file.bytes, `${manifestPath}: shards[${index}].files[${fileIndex}].bytes`),
+        };
+      }),
     };
   });
 
@@ -242,10 +267,19 @@ function readAdapterDatasetManifest(datasetDir: string): AdapterDatasetDefinitio
     schema: stringValue(manifest.schema, `${manifestPath}: schema`),
     license: typeof manifest.license === "string" ? manifest.license : "unknown",
     root: {
-      id: `${stringValue(manifest.dataset_id, `${manifestPath}: dataset_id`)}_local`,
-      uri: typeof manifest.root_uri === "string" ? manifest.root_uri : `file://${datasetDir}`,
-      tokenEstimate: numberValue(manifest.token_estimate, `${manifestPath}: token_estimate`),
-      hash: stringValue(manifest.root_hash, `${manifestPath}: root_hash`),
+      id: shards[0]?.files == null
+        ? `${stringValue(manifest.dataset_id, `${manifestPath}: dataset_id`)}_local`
+        : shards[0].id,
+      uri: shards[0]?.files == null
+        ? typeof manifest.root_uri === "string" ? manifest.root_uri : `file://${datasetDir}`
+        : shards[0].uri,
+      tokenEstimate: shards[0]?.files == null
+        ? numberValue(manifest.token_estimate, `${manifestPath}: token_estimate`)
+        : shards[0].tokenEstimate,
+      hash: shards[0]?.files == null
+        ? stringValue(manifest.root_hash, `${manifestPath}: root_hash`)
+        : shards[0].hash,
+      files: shards[0]?.files,
     },
     shards,
   };
@@ -260,6 +294,13 @@ function stringValue(value: unknown, field: string): string {
 
 function numberValue(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`invalid manifest field ${field}`);
+  }
+  return value;
+}
+
+function nonnegativeIntegerValue(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new Error(`invalid manifest field ${field}`);
   }
   return value;

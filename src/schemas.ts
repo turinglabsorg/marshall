@@ -62,6 +62,12 @@ export const DatasetShardSchema = z.object({
   uri: z.string().min(1),
   token_estimate: z.number().positive(),
   hash: z.string().min(1),
+  files: z.array(z.object({
+    path: z.string().min(1),
+    uri: z.string().min(1),
+    sha256: z.string().min(1),
+    bytes: z.number().int().nonnegative().optional(),
+  })).optional(),
 });
 
 export const TrainingJobSchema = z.object({
