@@ -382,7 +382,6 @@ func (store *RedisStore) RequeueExpiredJobs(ctx context.Context) (RequeueResult,
 			if _, err := store.client.command(ctx, "HSET", store.key("worker", fields["worker_id"]),
 				"status", "idle",
 				"current_job_id", "",
-				"last_seen_at", now,
 			); err != nil {
 				return RequeueResult{}, err
 			}

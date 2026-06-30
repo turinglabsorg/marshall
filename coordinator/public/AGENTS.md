@@ -120,7 +120,7 @@ Open:
 https://marshall.training
 ```
 
-The dashboard shows registered workers, busy workers, queued/running/completed jobs, artifact hashes, and the live coordinator event stream.
+The dashboard shows recently active registered workers, busy workers, queued/running/completed jobs, artifact hashes, and the live coordinator event stream. Workers that stop sending heartbeats are hidden from the dashboard after roughly 15 minutes, but their identity and reputation records are not deleted.
 
 You can also inspect raw coordinator state:
 

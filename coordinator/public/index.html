@@ -677,7 +677,7 @@
         </section>
 
         <section class="summary-grid" aria-label="Swarm summary">
-          <div class="metric"><span>workers.registered</span><strong id="workersRegistered">0</strong></div>
+          <div class="metric"><span>workers.recent</span><strong id="workersRegistered">0</strong></div>
           <div class="metric"><span>workers.busy</span><strong id="workersBusy">0</strong></div>
           <div class="metric"><span>jobs.running</span><strong id="jobsRunning">0</strong></div>
           <div class="metric"><span>jobs.completed</span><strong id="jobsCompleted">0</strong></div>
@@ -917,7 +917,7 @@
 
       function renderWorkers(workers) {
         if (workers.length === 0) {
-          nodes.workersTable.innerHTML = `<tr><td colspan="4" class="empty">No workers registered yet.</td></tr>`;
+          nodes.workersTable.innerHTML = `<tr><td colspan="4" class="empty">No recent workers.</td></tr>`;
           return;
         }
         nodes.workersTable.innerHTML = workers.map((activity) => {

@@ -4,7 +4,10 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"time"
 )
+
+const dashboardWorkerStaleAfter = 15 * time.Minute
 
 func (server *Server) dashboard(response http.ResponseWriter, request *http.Request) {
 	snapshot, err := server.dashboardSnapshot(request.Context())
@@ -12,6 +15,8 @@ func (server *Server) dashboard(response http.ResponseWriter, request *http.Requ
 }
 
 func (server *Server) dashboardSnapshot(ctx context.Context) (DashboardSnapshot, error) {
+	snapshotAt := time.Now().UTC()
+
 	workers, err := server.store.Workers(ctx)
 	if err != nil {
 		return DashboardSnapshot{}, err
@@ -57,6 +62,9 @@ func (server *Server) dashboardSnapshot(ctx context.Context) (DashboardSnapshot,
 		if lastSeenAt == "" {
 			lastSeenAt = worker.CreatedAt
 		}
+		if !dashboardActivityIsRecent(lastSeenAt, snapshotAt) {
+			continue
+		}
 		workerActivities[worker.WorkerID] = &WorkerActivity{
 			Worker:       worker,
 			Busy:         worker.Status == "working",
@@ -67,7 +75,6 @@ func (server *Server) dashboardSnapshot(ctx context.Context) (DashboardSnapshot,
 	}
 
 	summary := DashboardSummary{
-		WorkersRegistered:  len(workers),
 		ArtifactsPublished: len(artifacts),
 	}
 	jobActivities := make([]JobActivity, 0, len(jobs))
@@ -108,6 +115,9 @@ func (server *Server) dashboardSnapshot(ctx context.Context) (DashboardSnapshot,
 		if workerID == "" {
 			continue
 		}
+		if !dashboardActivityIsRecent(event.Fields["created_at"], snapshotAt) {
+			continue
+		}
 		activity, ok := workerActivities[workerID]
 		if !ok {
 			activity = &WorkerActivity{
@@ -137,6 +147,7 @@ func (server *Server) dashboardSnapshot(ctx context.Context) (DashboardSnapshot,
 		}
 		activities = append(activities, *activity)
 	}
+	summary.WorkersRegistered = len(activities)
 	sort.Slice(activities, func(left, right int) bool {
 		if activities[left].Busy != activities[right].Busy {
 			return activities[left].Busy
@@ -145,11 +156,22 @@ func (server *Server) dashboardSnapshot(ctx context.Context) (DashboardSnapshot,
 	})
 
 	return DashboardSnapshot{
-		GeneratedAt:  nowUTC(),
+		GeneratedAt:  snapshotAt.Format(time.RFC3339Nano),
 		Summary:      summary,
 		Workers:      activities,
 		Jobs:         jobActivities,
 		Artifacts:    artifacts,
 		RecentEvents: events,
 	}, nil
+}
+
+func dashboardActivityIsRecent(timestamp string, snapshotAt time.Time) bool {
+	if timestamp == "" {
+		return true
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		return true
+	}
+	return !parsed.Before(snapshotAt.Add(-dashboardWorkerStaleAfter))
 }
