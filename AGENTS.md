@@ -75,6 +75,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/model-query-cli.ts` queries a packaged optimized model against a selected eval record and can fail unless the answer is correct.
 - `src/e2e-ag-news-cli.ts` runs the AG News product E2E path: training worker pool, p2p artifact upload to the control store, p2p adapter download for evaluation workers, evaluation artifact upload, optional p2p validation target download, accepted-only leaderboard selection, package from verified adapter storage, query, and optional coordinator persistence verification.
 - `src/dataset-manifest-cli.ts` builds private content-addressed dataset manifests from local JSONL inputs under `.marshall/`, with optional external `--base-uri` shard URLs for remote workers.
+- `DatasetShard.files[]` is the dataset transfer contract for remote workers: each entry carries `path`, worker-resolvable `uri`, `sha256`, and optional `bytes`; the shard hash still commits to the assembled shard directory.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
 - `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
@@ -115,6 +116,7 @@ nvm use
 npm run typecheck
 npm run dataset:marshall:build
 npm run dataset:marshall:check
+npm run dataset:manifest -- --input-jsonl <local-jsonl> --output-dir .marshall/datasets/<dataset-id> --dataset-id <dataset-id> --shard-count <n>
 npm test
 npm run demo:compiled
 MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
