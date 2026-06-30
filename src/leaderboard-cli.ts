@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { CoordinatorClient } from "./coordinator-client.js";
+import { rankAdapterEvaluations, type AdapterEvaluationCandidate } from "./model-selection.js";
 import { AdapterEvaluationMetricsSchema } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -19,67 +20,48 @@ const artifactVerdicts = coordinatorUrl == null || coordinatorUrl === ""
   : await artifactVerdictsByJob(coordinatorUrl, args["coordinator-token"] ?? process.env.MARSHALL_COORDINATOR_TOKEN);
 
 const metricsPaths = await findMetrics(evalArtifactsDir);
-const rows = [];
+const candidates: AdapterEvaluationCandidate[] = [];
 for (const path of metricsPaths) {
   const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(path, "utf8")));
   const verdict = artifactVerdicts.get(metrics.job_id);
-  if (requireVerdict != null && verdict !== requireVerdict) {
-    continue;
-  }
-  const score = metrics.accuracy - metrics.invalid_rate;
-  rows.push({
-    rank: 0,
-    adapter_id: metrics.adapter_id,
-    adapter_path: metrics.adapter_path,
-    adapter_artifact_hash: metrics.adapter_artifact_hash,
-    job_id: metrics.job_id,
-    eval_shard_id: metrics.eval_shard_id,
-    examples: metrics.examples,
-    correct: metrics.correct,
-    accuracy: metrics.accuracy,
-    invalid: metrics.invalid,
-    invalid_rate: metrics.invalid_rate,
-    score,
+  candidates.push({
+    metrics,
+    metricsPath: path,
     verdict,
-    metrics_path: path,
   });
 }
 
-rows.sort((left, right) =>
-  right.score - left.score
-  || right.accuracy - left.accuracy
-  || left.adapter_id.localeCompare(right.adapter_id),
-);
-rows.forEach((row, index) => {
-  row.rank = index + 1;
+const selection = rankAdapterEvaluations(candidates, {
+  topK,
+  requireVerdict,
 });
-
-const selected = rows.slice(0, topK);
-const best = selected[0] ?? null;
 await mkdir(outputDir, { recursive: true });
 await writeFile(join(outputDir, "leaderboard.json"), JSON.stringify({
   type: "marshall_adapter_leaderboard",
-  entries: rows,
+  selection_policy: selection.policy,
+  entries: selection.entries,
 }, null, 2) + "\n", "utf8");
 await writeFile(join(outputDir, "top_k.json"), JSON.stringify({
   type: "marshall_adapter_top_k",
-  top_k: topK,
-  entries: selected,
+  selection_policy: selection.policy,
+  top_k: selection.policy.top_k,
+  entries: selection.topK,
 }, null, 2) + "\n", "utf8");
 await writeFile(join(outputDir, "optimized_model.json"), JSON.stringify({
   type: "marshall_optimized_model_selection",
-  strategy: "best_adapter_by_eval_score",
-  selected: best,
+  strategy: selection.policy.id,
+  selection_policy: selection.policy,
+  selected: selection.selected,
 }, null, 2) + "\n", "utf8");
 
 console.log(JSON.stringify({
   type: "marshall_leaderboard_created",
   eval_artifacts_dir: evalArtifactsDir,
   output_dir: outputDir,
-  evaluated_adapters: rows.length,
+  evaluated_adapters: selection.entries.length,
   top_k: topK,
   require_verdict: requireVerdict ?? null,
-  best,
+  best: selection.selected,
 }, null, 2));
 
 async function artifactVerdictsByJob(coordinatorUrlValue: string, coordinatorToken: string | undefined): Promise<Map<string, string>> {

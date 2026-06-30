@@ -60,11 +60,12 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_ag_news_eval.py` for `evaluate_adapter` jobs and emits an `adapter_evaluation` artifact manifest.
-- `src/training-runner.ts` runs `validate_artifact` jobs for validator workers. The current validator checks target artifact hash and adapter-evaluation metrics, then emits an `artifact_validation` manifest with `accepted`, `poor`, `rejected`, or `malicious` plus the requested quorum.
+- `src/training-runner.ts` runs `validate_artifact` jobs for validator workers. The current validator checks target artifact hash, adapter-evaluation schema, metric self-consistency, and policy thresholds, then emits an `artifact_validation` manifest with `accepted`, `poor`, `rejected`, or `malicious` plus the requested quorum. Internally inconsistent evaluation metrics are treated as malicious.
 - `src/control-peer.ts` forwards `artifact_validation` manifests into coordinator validator votes, so target worker reputation is updated only after a verdict reaches coordinator quorum.
 - `src/evaluation-jobs-cli.ts` scans `lora_adapter` manifests and creates `evaluate_adapter` jobs for a held-out eval shard. Use `--eval-uri` / `MARSHALL_EVAL_URI` when the coordinator hashes a local eval file but remote workers need a different worker-resolvable URI. Use `--artifact-uri-mode p2p` to emit `marshall-artifact://<job_id>` adapter references for remote workers.
 - `src/validation-jobs-cli.ts` supports `--target-uri-mode p2p`, so validators fetch target artifacts from the control peer instead of reading coordinator-local `file://` paths.
-- `src/leaderboard-cli.ts` scans `adapter_evaluation` metrics and writes `leaderboard.json`, `top_k.json`, and `optimized_model.json`. With `--coordinator-url --require-verdict accepted`, it filters model selection to coordinator-accepted artifacts only.
+- `src/model-selection.ts` centralizes adapter ranking. The current policy is `best_adapter_by_eval_score`, score `accuracy - invalid_rate`, deterministic tie breakers, accepted-only filtering when requested, and `merge_mode: single_adapter`.
+- `src/leaderboard-cli.ts` scans `adapter_evaluation` metrics and writes `leaderboard.json`, `top_k.json`, and `optimized_model.json` with an explicit `selection_policy`. With `--coordinator-url --require-verdict accepted`, it filters model selection to coordinator-accepted artifacts only.
 - `src/model-package-cli.ts` packages the selected optimized model as base model + LoRA adapter metadata and emits an `optimized_model_package` manifest. Use `--adapter-artifacts-dir` so packages point at the control peer's verified local adapter copy instead of a worker-local path embedded in evaluation metrics.
 - `src/model-query-cli.ts` queries a packaged optimized model against a selected eval record and can fail unless the answer is correct.
 - `src/e2e-ag-news-cli.ts` runs the AG News product E2E path: training worker pool, p2p artifact upload to the control store, p2p adapter download for evaluation workers, evaluation artifact upload, optional p2p validation target download, accepted-only leaderboard selection, package from verified adapter storage, query, and optional coordinator persistence verification.
@@ -86,7 +87,8 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `tests/p2p.integration.test.ts` also verifies real p2p artifact payload upload into the control artifact store and p2p download back to a worker input cache with final hash checks.
 - `tests/artifact-transfer.test.ts` verifies corrupted chunk retry and final artifact hash validation.
 - `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set, including distributed artifact validation manifest to coordinator verdict bridging.
-- `tests/artifact-validation.test.ts` verifies accepted and malicious validator outcomes against real artifact hashes and adapter-evaluation metrics.
+- `tests/artifact-validation.test.ts` verifies accepted, bad-hash malicious, and internally inconsistent-metrics malicious validator outcomes against real artifact hashes and adapter-evaluation metrics.
+- `tests/model-selection.test.ts` verifies accepted-only adapter selection, score ordering, and deterministic tie breakers for the centralized model-selection policy.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, full job specs, job claims, statuses, artifacts, and append-only events in Redis.
 - `coordinator/redis_store.go` maintains job leases and can requeue expired running jobs so abandoned work is visible and recoverable.
@@ -95,7 +97,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `coordinator/http.go` enforces optional bearer-token write authentication when `MARSHALL_COORDINATOR_TOKEN` is set; read endpoints remain available for the public console.
 - `coordinator/public/index.html` is the embedded terminal-style swarm console for worker status, job status, artifact verdicts, and live coordinator events.
 - `coordinator/public/AGENTS.md` is the public worker onboarding file served at `/AGENTS.md`.
-- `coordinator/*_integration_test.go` verifies the Redis store and HTTP lifecycle against a real Redis server when `MARSHALL_REDIS_ADDR` is set.
+- `coordinator/*_integration_test.go` verifies the Redis store and HTTP lifecycle against a real Redis server when `MARSHALL_REDIS_ADDR` is set, including idempotent expired-job requeue, reclaim after requeue, validator divergence penalties, malicious-artifact target suspension, and validator suspension for covering malicious artifacts.
 
 ## Verification
 

@@ -160,6 +160,88 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	}
 }
 
+func TestHTTPServerRequeueExpiredJobs(t *testing.T) {
+	addr := os.Getenv("MARSHALL_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("MARSHALL_REDIS_ADDR is required for Redis integration tests")
+	}
+
+	prefix := "marshall:http-requeue-test:" + strings.ReplaceAll(time.Now().UTC().Format(time.RFC3339Nano), ":", "-")
+	server := httptest.NewServer(NewServer(NewRedisStore(addr, prefix)))
+	defer server.Close()
+
+	postJSON(t, server.URL+"/runs", Run{
+		RunID:     "run_http_requeue_001",
+		Objective: "prove HTTP requeue lifecycle",
+	}, http.StatusOK)
+	postJSON(t, server.URL+"/workers", Worker{
+		WorkerID:      "worker_http_requeue_timeout_001",
+		PeerID:        "12D3KooWHTTPRequeueTimeout",
+		Backend:       "mlx",
+		DeviceFamily:  "apple_silicon",
+		MemoryGB:      32,
+		SupportedJobs: []string{"train_mlx_smoke"},
+	}, http.StatusOK)
+	postJSON(t, server.URL+"/workers", Worker{
+		WorkerID:      "worker_http_requeue_reclaim_001",
+		PeerID:        "12D3KooWHTTPRequeueReclaim",
+		Backend:       "mlx",
+		DeviceFamily:  "apple_silicon",
+		MemoryGB:      32,
+		SupportedJobs: []string{"train_mlx_smoke"},
+	}, http.StatusOK)
+	postJSON(t, server.URL+"/jobs", Job{
+		JobID:      "job_http_requeue_001",
+		RunID:      "run_http_requeue_001",
+		JobType:    "train_mlx_smoke",
+		Backend:    "mlx",
+		DatasetURI: "inline://tiny-italian-v1",
+	}, http.StatusOK)
+
+	var firstClaim JobClaimResult
+	postJSONInto(t, server.URL+"/jobs/job_http_requeue_001/claim", JobClaim{
+		WorkerID:     "worker_http_requeue_timeout_001",
+		PeerID:       "12D3KooWHTTPRequeueTimeout",
+		LeaseSeconds: 1,
+	}, http.StatusOK, &firstClaim)
+	if !firstClaim.Accepted {
+		t.Fatalf("expected first claim accepted: %+v", firstClaim)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	var firstRequeue RequeueResult
+	postJSONInto(t, server.URL+"/jobs/requeue-expired", map[string]string{}, http.StatusOK, &firstRequeue)
+	if len(firstRequeue.Requeued) != 1 || firstRequeue.Requeued[0] != "job_http_requeue_001" {
+		t.Fatalf("expected expired job to be requeued, got %+v", firstRequeue)
+	}
+	var secondRequeue RequeueResult
+	postJSONInto(t, server.URL+"/jobs/requeue-expired", map[string]string{}, http.StatusOK, &secondRequeue)
+	if len(secondRequeue.Requeued) != 0 {
+		t.Fatalf("expected second requeue to be idempotent, got %+v", secondRequeue)
+	}
+
+	var reputation WorkerReputation
+	getJSONInto(t, server.URL+"/workers/worker_http_requeue_timeout_001/reputation", http.StatusOK, &reputation)
+	if reputation.TimeoutJobs != 1 || reputation.Score != 85 {
+		t.Fatalf("expected one timeout penalty, got %+v", reputation)
+	}
+
+	var reclaim JobClaimResult
+	postJSONInto(t, server.URL+"/jobs/job_http_requeue_001/claim", JobClaim{
+		WorkerID:     "worker_http_requeue_reclaim_001",
+		PeerID:       "12D3KooWHTTPRequeueReclaim",
+		LeaseSeconds: 60,
+	}, http.StatusOK, &reclaim)
+	if !reclaim.Accepted {
+		t.Fatalf("expected requeued job to be claimable, got %+v", reclaim)
+	}
+	var job Job
+	getJSONInto(t, server.URL+"/jobs/job_http_requeue_001", http.StatusOK, &job)
+	if job.Status != "claimed" || job.WorkerID != "worker_http_requeue_reclaim_001" {
+		t.Fatalf("expected requeued job claimed by second worker, got %+v", job)
+	}
+}
+
 func TestHTTPServerAuthProtectsWrites(t *testing.T) {
 	addr := os.Getenv("MARSHALL_REDIS_ADDR")
 	if addr == "" {

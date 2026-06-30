@@ -313,6 +313,108 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	}
 }
 
+func TestRedisStoreRequeueExpiredJobsIsIdempotentAndClaimable(t *testing.T) {
+	addr := os.Getenv("MARSHALL_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("MARSHALL_REDIS_ADDR is required for Redis integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	prefix := "marshall:requeue-idempotent-test:" + strings.ReplaceAll(time.Now().UTC().Format(time.RFC3339Nano), ":", "-")
+	store := NewRedisStore(addr, prefix)
+
+	if _, err := store.CreateRun(ctx, Run{
+		RunID:     "run_requeue_001",
+		Objective: "prove expired jobs requeue exactly once",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, worker := range []struct {
+		workerID string
+		peerID   string
+	}{
+		{"worker_requeue_timeout_001", "12D3KooWRequeueTimeout"},
+		{"worker_requeue_reclaim_001", "12D3KooWRequeueReclaim"},
+	} {
+		if _, err := store.RegisterWorker(ctx, Worker{
+			WorkerID:      worker.workerID,
+			PeerID:        worker.peerID,
+			Backend:       "mlx",
+			DeviceFamily:  "apple_silicon",
+			MemoryGB:      32,
+			SupportedJobs: []string{"train_mlx_smoke"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.CreateJob(ctx, Job{
+		JobID:      "job_requeue_001",
+		RunID:      "run_requeue_001",
+		JobType:    "train_mlx_smoke",
+		Backend:    "mlx",
+		DatasetURI: "inline://tiny-italian-v1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_requeue_001",
+		WorkerID:     "worker_requeue_timeout_001",
+		PeerID:       "12D3KooWRequeueTimeout",
+		LeaseSeconds: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claim.Accepted {
+		t.Fatalf("expected original claim accepted: %+v", claim)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	firstRequeue, err := store.RequeueExpiredJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstRequeue.Requeued) != 1 || firstRequeue.Requeued[0] != "job_requeue_001" {
+		t.Fatalf("expected job requeued once, got %+v", firstRequeue)
+	}
+	secondRequeue, err := store.RequeueExpiredJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondRequeue.Requeued) != 0 {
+		t.Fatalf("expected second requeue scan to be idempotent, got %+v", secondRequeue)
+	}
+	timeoutReputation, err := store.WorkerReputation(ctx, "worker_requeue_timeout_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeoutReputation.TimeoutJobs != 1 || timeoutReputation.Score != 85 {
+		t.Fatalf("expected one timeout reputation penalty, got %+v", timeoutReputation)
+	}
+
+	reclaim, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_requeue_001",
+		WorkerID:     "worker_requeue_reclaim_001",
+		PeerID:       "12D3KooWRequeueReclaim",
+		LeaseSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reclaim.Accepted {
+		t.Fatalf("expected requeued job to be claimable by another worker: %+v", reclaim)
+	}
+	job, err := store.GetJob(ctx, "job_requeue_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "claimed" || job.WorkerID != "worker_requeue_reclaim_001" {
+		t.Fatalf("expected job reclaimed by second worker, got %+v", job)
+	}
+}
+
 func TestRedisStoreArtifactVerdictQuorum(t *testing.T) {
 	addr := os.Getenv("MARSHALL_REDIS_ADDR")
 	if addr == "" {
@@ -452,6 +554,13 @@ func TestRedisStoreArtifactVerdictQuorum(t *testing.T) {
 	if !third.Finalized || third.FinalVerdict != "rejected" || third.ScoreDelta != -25 || third.Reputation.Score != 75 || third.Reputation.RejectedArtifacts != 1 {
 		t.Fatalf("expected rejected quorum to finalize once, got %+v", third)
 	}
+	validatorUpdates := validatorUpdatesByID(third.ValidatorReputations)
+	if validatorUpdates["validator_quorum_001"].Aligned || validatorUpdates["validator_quorum_001"].ScoreDelta != -25 {
+		t.Fatalf("expected diverging validator to be penalized, got %+v", validatorUpdates["validator_quorum_001"])
+	}
+	if !validatorUpdates["validator_quorum_002"].Aligned || validatorUpdates["validator_quorum_002"].Reputation.AcceptedArtifacts != 1 {
+		t.Fatalf("expected aligned validator to be rewarded, got %+v", validatorUpdates["validator_quorum_002"])
+	}
 	artifact, err = store.GetArtifact(ctx, "job_quorum_eval_001")
 	if err != nil {
 		t.Fatal(err)
@@ -473,6 +582,126 @@ func TestRedisStoreArtifactVerdictQuorum(t *testing.T) {
 	}
 	if !duplicate.Finalized || duplicate.Reputation.RejectedArtifacts != 1 {
 		t.Fatalf("expected duplicate finalized response without extra reputation change, got %+v", duplicate)
+	}
+}
+
+func TestRedisStoreMaliciousArtifactSuspendsCoveringValidator(t *testing.T) {
+	addr := os.Getenv("MARSHALL_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("MARSHALL_REDIS_ADDR is required for Redis integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	prefix := "marshall:malicious-validator-test:" + strings.ReplaceAll(time.Now().UTC().Format(time.RFC3339Nano), ":", "-")
+	store := NewRedisStore(addr, prefix)
+
+	if _, err := store.CreateRun(ctx, Run{
+		RunID:     "run_malicious_validator_001",
+		Objective: "prove validators are slashed for covering malicious artifacts",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RegisterWorker(ctx, Worker{
+		WorkerID:      "worker_malicious_target_001",
+		PeerID:        "12D3KooWMaliciousTarget",
+		Backend:       "mlx",
+		DeviceFamily:  "apple_silicon",
+		MemoryGB:      32,
+		SupportedJobs: []string{"evaluate_adapter"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, validator := range []struct {
+		workerID string
+		peerID   string
+	}{
+		{"validator_malicious_cover_001", "12D3KooWMaliciousCover"},
+		{"validator_malicious_detect_001", "12D3KooWMaliciousDetectOne"},
+		{"validator_malicious_detect_002", "12D3KooWMaliciousDetectTwo"},
+	} {
+		if _, err := store.RegisterWorker(ctx, Worker{
+			WorkerID:      validator.workerID,
+			PeerID:        validator.peerID,
+			Backend:       "cpu",
+			DeviceFamily:  "generic_cpu",
+			MemoryGB:      8,
+			SupportedJobs: []string{"validate_artifact"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.CreateJob(ctx, Job{
+		JobID:      "job_malicious_eval_001",
+		RunID:      "run_malicious_validator_001",
+		JobType:    "evaluate_adapter",
+		Backend:    "mlx",
+		DatasetURI: "file://datasets/eval.jsonl",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_malicious_eval_001",
+		WorkerID:     "worker_malicious_target_001",
+		PeerID:       "12D3KooWMaliciousTarget",
+		LeaseSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishArtifact(ctx, Artifact{
+		JobID:        "job_malicious_eval_001",
+		WorkerID:     "worker_malicious_target_001",
+		PeerID:       "12D3KooWMaliciousTarget",
+		ArtifactType: "adapter_evaluation",
+		ArtifactURI:  "file://eval-artifacts/job_malicious_eval_001/metrics.json",
+		ArtifactHash: "sha256:malicious-eval",
+		ConfigHash:   "sha256:malicious-config",
+		MetricsURI:   "file://eval-artifacts/job_malicious_eval_001/metrics.json",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_malicious_eval_001",
+		WorkerID:    "worker_malicious_target_001",
+		ValidatorID: "validator_malicious_cover_001",
+		Verdict:     "accepted",
+		Reason:      "covering malicious artifact",
+		Quorum:      2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_malicious_eval_001",
+		WorkerID:    "worker_malicious_target_001",
+		ValidatorID: "validator_malicious_detect_001",
+		Verdict:     "malicious",
+		Reason:      "hash mismatch",
+		Quorum:      2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	final, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_malicious_eval_001",
+		WorkerID:    "worker_malicious_target_001",
+		ValidatorID: "validator_malicious_detect_002",
+		Verdict:     "malicious",
+		Reason:      "hash mismatch",
+		Quorum:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !final.Finalized || final.FinalVerdict != "malicious" || final.Reputation.Status != "suspended" {
+		t.Fatalf("expected malicious quorum to suspend target worker, got %+v", final)
+	}
+	validatorUpdates := validatorUpdatesByID(final.ValidatorReputations)
+	if validatorUpdates["validator_malicious_cover_001"].ScoreDelta != -100 || validatorUpdates["validator_malicious_cover_001"].Reputation.Status != "suspended" {
+		t.Fatalf("expected covering validator to be suspended, got %+v", validatorUpdates["validator_malicious_cover_001"])
+	}
+	if !validatorUpdates["validator_malicious_detect_001"].Aligned || validatorUpdates["validator_malicious_detect_001"].Reputation.AcceptedArtifacts != 1 {
+		t.Fatalf("expected aligned validator to be rewarded, got %+v", validatorUpdates["validator_malicious_detect_001"])
 	}
 }
 
@@ -633,4 +862,12 @@ func TestRedisStoreArtifactVerdictConcurrentQuorumFinalizesOnce(t *testing.T) {
 	if recorded != 1 {
 		t.Fatalf("expected one artifact_verdict_recorded event, got %d", recorded)
 	}
+}
+
+func validatorUpdatesByID(updates []ValidatorReputationUpdate) map[string]ValidatorReputationUpdate {
+	byID := map[string]ValidatorReputationUpdate{}
+	for _, update := range updates {
+		byID[update.ValidatorID] = update
+	}
+	return byID
 }

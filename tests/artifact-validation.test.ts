@@ -80,13 +80,56 @@ describe("artifact validation runner", () => {
       verdict: "malicious",
     });
   });
+
+  it("marks a target as malicious when reported metrics are internally inconsistent", async () => {
+    const metricsPath = await writeAdapterEvaluationMetrics(tempDir, {
+      examples: 10,
+      correct: 10,
+      accuracy: 1,
+      invalid: 0,
+      invalid_rate: 0,
+      results: [
+        {
+          id: "example-001",
+          expected_label: "World",
+          predicted_label: "Sports",
+          correct: false,
+          output: "Sports",
+        },
+      ],
+    });
+    const job = validationJob(metricsPath, await sha256File(metricsPath), {
+      min_accuracy: 0.5,
+      max_invalid_rate: 0.1,
+      min_examples: 5,
+    });
+
+    const result = await runArtifactValidation(job, {
+      outputRoot: join(tempDir, "artifacts"),
+    });
+
+    expect(result.metrics.verdict).toBe("malicious");
+    expect(result.metrics.reason).toBe("adapter evaluation metrics are internally inconsistent");
+    expect(result.metrics.checks).toContainEqual(expect.objectContaining({
+      name: "metrics_examples_match_results",
+      passed: false,
+    }));
+    expect(result.metrics.checks).toContainEqual(expect.objectContaining({
+      name: "metrics_correct_count",
+      passed: false,
+    }));
+  });
 });
 
 async function writeAdapterEvaluationMetrics(
   root: string,
-  overrides: Pick<AdapterEvaluationMetrics, "examples" | "correct" | "accuracy" | "invalid" | "invalid_rate">,
+  overrides: Partial<AdapterEvaluationMetrics>,
 ): Promise<string> {
   const path = join(root, "adapter-evaluation-metrics.json");
+  const labels = overrides.labels ?? ["World", "Sports"];
+  const examples = overrides.examples ?? 1;
+  const correct = overrides.correct ?? 1;
+  const invalid = overrides.invalid ?? 0;
   const metrics: AdapterEvaluationMetrics = {
     job_id: "job_eval_test",
     run_id: "run_validation_test",
@@ -98,20 +141,39 @@ async function writeAdapterEvaluationMetrics(
     model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
     adapter_path: null,
     eval_file: "eval.jsonl",
-    labels: ["World", "Sports"],
-    results: [
-      {
-        id: "example-001",
-        expected_label: "World",
-        predicted_label: "World",
-        correct: true,
-        output: "World",
-      },
-    ],
+    examples,
+    correct,
+    accuracy: correct / examples,
+    invalid,
+    invalid_rate: invalid / examples,
+    labels,
+    results: evaluationResults(examples, correct, invalid, labels),
     ...overrides,
   };
   await writeFile(path, JSON.stringify(metrics, null, 2) + "\n", "utf8");
   return path;
+}
+
+function evaluationResults(
+  examples: number,
+  correct: number,
+  invalid: number,
+  labels: string[],
+): AdapterEvaluationMetrics["results"] {
+  return Array.from({ length: examples }, (_, index) => {
+    const expected = labels[index % labels.length] ?? "World";
+    const wrong = labels.find((label) => label !== expected) ?? expected;
+    const isCorrect = index < correct;
+    const isInvalid = !isCorrect && index < correct + invalid;
+    const predicted = isInvalid ? null : isCorrect ? expected : wrong;
+    return {
+      id: `example-${String(index + 1).padStart(3, "0")}`,
+      expected_label: expected,
+      predicted_label: predicted,
+      correct: predicted === expected,
+      output: predicted ?? "",
+    };
+  });
 }
 
 function validationJob(

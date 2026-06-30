@@ -441,6 +441,7 @@ export async function runArtifactValidation(
           passed: true,
           detail: "adapter evaluation metrics parsed",
         },
+        ...adapterEvaluationConsistencyChecks(metrics),
         {
           name: "min_examples",
           passed: examplesPassed,
@@ -457,7 +458,13 @@ export async function runArtifactValidation(
           detail: `${metrics.accuracy} >= ${policy.min_accuracy}`,
         },
       );
-      if (!examplesPassed || !invalidRatePassed) {
+      const consistencyPassed = checks
+        .filter((check) => check.name.startsWith("metrics_"))
+        .every((check) => check.passed);
+      if (!consistencyPassed) {
+        verdict = "malicious";
+        reason = "adapter evaluation metrics are internally inconsistent";
+      } else if (!examplesPassed || !invalidRatePassed) {
         verdict = "rejected";
         reason = "artifact evaluation metrics failed reliability policy";
       } else if (!accuracyPassed) {
@@ -533,6 +540,54 @@ function validationPolicy(policy?: ArtifactValidationPolicy): Required<ArtifactV
     min_examples: policy?.min_examples ?? 1,
     quorum: policy?.quorum ?? 1,
   };
+}
+
+function adapterEvaluationConsistencyChecks(metrics: AdapterEvaluationMetrics): ArtifactValidationMetrics["checks"] {
+  const expectedCorrect = metrics.results.filter((result) => result.correct).length;
+  const expectedInvalid = metrics.results.filter((result) => result.predicted_label == null).length;
+  const expectedAccuracy = expectedCorrect / metrics.examples;
+  const expectedInvalidRate = expectedInvalid / metrics.examples;
+  const labels = new Set(metrics.labels);
+  const unknownLabels = metrics.results
+    .map((result) => result.predicted_label)
+    .filter((label): label is string => label != null && !labels.has(label));
+
+  return [
+    {
+      name: "metrics_examples_match_results",
+      passed: metrics.examples === metrics.results.length,
+      detail: `${metrics.examples} examples, ${metrics.results.length} result rows`,
+    },
+    {
+      name: "metrics_correct_count",
+      passed: metrics.correct === expectedCorrect && metrics.correct <= metrics.examples,
+      detail: `${metrics.correct} reported, ${expectedCorrect} computed`,
+    },
+    {
+      name: "metrics_invalid_count",
+      passed: metrics.invalid === expectedInvalid && metrics.invalid <= metrics.examples,
+      detail: `${metrics.invalid} reported, ${expectedInvalid} computed`,
+    },
+    {
+      name: "metrics_accuracy",
+      passed: approximatelyEqual(metrics.accuracy, expectedAccuracy),
+      detail: `${metrics.accuracy} reported, ${expectedAccuracy} computed`,
+    },
+    {
+      name: "metrics_invalid_rate",
+      passed: approximatelyEqual(metrics.invalid_rate, expectedInvalidRate),
+      detail: `${metrics.invalid_rate} reported, ${expectedInvalidRate} computed`,
+    },
+    {
+      name: "metrics_label_space",
+      passed: unknownLabels.length === 0,
+      detail: unknownLabels.length === 0 ? "all predicted labels are in label set" : `unknown labels: ${Array.from(new Set(unknownLabels)).join(", ")}`,
+    },
+  ];
+}
+
+function approximatelyEqual(left: number, right: number): boolean {
+  return Math.abs(left - right) <= 1e-9;
 }
 
 function resolveArtifactUri(uri: string, projectRoot: string): string {

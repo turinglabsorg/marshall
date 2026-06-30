@@ -148,9 +148,11 @@ It proves:
 - workers materialize only the assigned shard into a content-addressed cache under `.marshall/cache/datasets/<sha256>` before training.
 - `training/build_ag_news_dataset.py` builds a local private AG News classification dataset under `.marshall/datasets/ag-news`, and `training/mlx_ag_news_eval.py` scores base-model or adapter exact-label accuracy.
 - `validate_artifact` jobs let validator workers verify target artifact hashes and adapter-evaluation metrics before artifacts can affect coordinator reputation or accepted-only model selection.
+- validator workers reject internally inconsistent adapter-evaluation metrics as malicious, including impossible example counts, correct/invalid counts, rates, or labels outside the declared label set.
 - worker CLIs accept multiple control multiaddrs and fall back when a dial fails, which is required for real LAN/VPN/firewall variation across machines.
 - artifact payloads can move over `/marshall/artifact/fetch/1.0.0`; transfers are chunked, hash-checked per chunk and per file, retried on corrupt chunks, and verified against the final artifact root hash.
 - control peers can store verified worker artifacts locally and serve them back to downstream workers through `marshall-artifact://<job_id>` inputs, so remote evaluation and validation do not depend on coordinator-local filesystem paths.
+- adapter leaderboard outputs include an explicit `selection_policy` with score formula, tie breakers, top-K, required verdict, and current `single_adapter` merge mode.
 
 ## CLI Runtime
 
