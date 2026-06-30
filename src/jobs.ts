@@ -146,6 +146,35 @@ export function createAdapterTrainingJob(options: TrainingJobOptions = {}): Trai
 }
 
 export function createAdapterTrainingShardJobs(count: number, options: TrainingJobOptions = {}): TrainingJob[] {
+  return createDatasetShardJobs("train_adapter", count, options);
+}
+
+export function createTextClassifierTrainingJob(options: TrainingJobOptions = {}): TrainingJob {
+  const dataset = adapterDatasetDefinition(options);
+  return TrainingJobSchema.parse({
+    job_id: options.jobId ?? "job_text_classifier_001",
+    run_id: options.runId ?? "run_text_classifier_001",
+    round_id: options.roundId ?? "round_001",
+    job_type: "train_text_classifier",
+    backend: "cpu",
+    dataset_shard: {
+      dataset_id: dataset.datasetId,
+      dataset_version: dataset.datasetVersion,
+      schema: dataset.schema,
+      license: dataset.license,
+      id: dataset.root.id,
+      uri: dataset.root.uri,
+      token_estimate: dataset.root.tokenEstimate,
+      hash: dataset.root.hash,
+    },
+  });
+}
+
+export function createTextClassifierTrainingShardJobs(count: number, options: TrainingJobOptions = {}): TrainingJob[] {
+  return createDatasetShardJobs("train_text_classifier", count, options);
+}
+
+function createDatasetShardJobs(jobType: "train_adapter" | "train_text_classifier", count: number, options: TrainingJobOptions = {}): TrainingJob[] {
   const dataset = adapterDatasetDefinition(options);
   if (!Number.isInteger(count) || count < 1 || count > dataset.shards.length) {
     throw new Error(`adapter shard job count must be between 1 and ${dataset.shards.length}`);
@@ -153,12 +182,13 @@ export function createAdapterTrainingShardJobs(count: number, options: TrainingJ
 
   return dataset.shards.slice(0, count).map((shard, index) => {
     const suffix = String(index + 1).padStart(3, "0");
+    const defaultBase = jobType === "train_adapter" ? "job_adapter_shard" : "job_text_classifier_shard";
     return TrainingJobSchema.parse({
-      job_id: options.jobId == null ? `job_adapter_shard_${suffix}` : `${options.jobId}_shard_${suffix}`,
-      run_id: options.runId ?? "run_adapter_sharded_001",
+      job_id: options.jobId == null ? `${defaultBase}_${suffix}` : `${options.jobId}_shard_${suffix}`,
+      run_id: options.runId ?? (jobType === "train_adapter" ? "run_adapter_sharded_001" : "run_text_classifier_sharded_001"),
       round_id: options.roundId ?? "round_001",
-      job_type: "train_adapter",
-      backend: "mlx",
+      job_type: jobType,
+      backend: jobType === "train_adapter" ? "mlx" : "cpu",
       dataset_shard: {
         dataset_id: dataset.datasetId,
         dataset_version: dataset.datasetVersion,
@@ -188,13 +218,18 @@ export function createTrainingJobs(
   if (jobType === "train_adapter" && count > 1) {
     return createAdapterTrainingShardJobs(count, options);
   }
+  if (jobType === "train_text_classifier" && count > 1) {
+    return createTextClassifierTrainingShardJobs(count, options);
+  }
   if (count === 1) {
     return [createTrainingJob(jobType, options)];
   }
 
   return Array.from({ length: count }, (_, index) => {
     const suffix = String(index + 1).padStart(3, "0");
-    const defaultBase = jobType === "train_mlx_smoke" ? "job_mlx_smoke" : "job_toy";
+    const defaultBase = jobType === "train_mlx_smoke"
+      ? "job_mlx_smoke"
+      : jobType === "train_text_classifier" ? "job_text_classifier" : "job_toy";
     return createTrainingJob(jobType, {
       jobId: options.jobId == null ? `${defaultBase}_${suffix}` : `${options.jobId}_${suffix}`,
       runId: options.runId,
@@ -209,6 +244,9 @@ export function createTrainingJob(jobType: TrainingJob["job_type"], options: Tra
   }
   if (jobType === "train_adapter") {
     return createAdapterTrainingJob(options);
+  }
+  if (jobType === "train_text_classifier") {
+    return createTextClassifierTrainingJob(options);
   }
   if (jobType === "train_toy_model") {
     return createToyTrainingJob(options);

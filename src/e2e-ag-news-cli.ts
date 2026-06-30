@@ -4,12 +4,12 @@ import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CoordinatorClient } from "./coordinator-client.js";
-import { MarshallJobSchema, TrainingArtifactManifestSchema, type AdapterEvaluationJob } from "./schemas.js";
+import { MarshallJobSchema, TrainingArtifactManifestSchema, type AdapterEvaluationJob, type ArtifactValidationJob, type TextClassifierEvaluationJob } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
 const startedAt = timestamp();
 const runId = args["run-id"] ?? process.env.MARSHALL_RUN_ID ?? `run_ag_news_e2e_${startedAt}`;
-const jobPrefix = args["job-prefix"] ?? process.env.MARSHALL_JOB_ID ?? `job_ag_news_e2e_${startedAt}`;
+const jobPrefix = args["job-prefix"] ?? args["job-id"] ?? process.env.MARSHALL_JOB_ID ?? `job_ag_news_e2e_${startedAt}`;
 const runRoot = args["run-root"] ?? process.env.MARSHALL_RUN_ROOT ?? join(".marshall", "runs", runId);
 const datasetDir = args["dataset-dir"] ?? process.env.MARSHALL_ADAPTER_DATASET_DIR ?? ".marshall/datasets/ag-news";
 const evalFile = args["eval-file"] ?? process.env.MARSHALL_EVAL_FILE ?? join(datasetDir, "eval.jsonl");
@@ -21,10 +21,30 @@ const heartbeatIntervalMs = args["heartbeat-interval-ms"] ?? process.env.MARSHAL
 const pythonBin = args.python ?? process.env.MARSHALL_PYTHON;
 const jobCount = numberArg(args["job-count"] ?? process.env.MARSHALL_JOB_COUNT, 4);
 const concurrency = numberArg(args.concurrency ?? process.env.MARSHALL_WORKER_POOL_CONCURRENCY, jobCount);
+const modelBackend = modelBackendArg(args["model-backend"] ?? process.env.MARSHALL_MODEL_BACKEND ?? "mlx");
+const textClassifierMode = modelBackend === "text_classifier";
+const trainJobType = textClassifierMode ? "train_text_classifier" : "train_adapter";
+const evalJobType = textClassifierMode ? "evaluate_text_classifier" : "evaluate_adapter";
+const trainBackend = textClassifierMode ? "cpu" : "mlx";
+const evalBackend = textClassifierMode ? "cpu" : "mlx";
+const trainArtifactType = textClassifierMode ? "text_classifier_model" : "lora_adapter";
+const evalArtifactType = textClassifierMode ? "text_classifier_evaluation" : "adapter_evaluation";
+const requireValidation = booleanArg(args["require-validation"] ?? process.env.MARSHALL_REQUIRE_VALIDATION, coordinatorUrl != null && coordinatorUrl !== "");
+const validationQuorum = numberArg(args["validation-quorum"] ?? process.env.MARSHALL_VALIDATION_QUORUM, 2);
+const validatorsPerArtifact = numberArg(args["validators-per-artifact"] ?? process.env.MARSHALL_VALIDATORS_PER_ARTIFACT, validationQuorum);
+
+if (requireValidation && (coordinatorUrl == null || coordinatorUrl === "")) {
+  throw new Error("--require-validation requires --coordinator-url or MARSHALL_COORDINATOR_URL");
+}
+if (validatorsPerArtifact < validationQuorum) {
+  throw new Error("--validators-per-artifact must be greater than or equal to --validation-quorum");
+}
 
 const artifactsDir = args["artifacts-dir"] ?? join(runRoot, "artifacts");
 const evalJobsFile = args["eval-jobs-file"] ?? join(runRoot, "jobs", "evaluate-adapters.json");
 const evalArtifactsDir = args["eval-artifacts-dir"] ?? join(runRoot, "eval-artifacts");
+const validationJobsFile = args["validation-jobs-file"] ?? join(runRoot, "jobs", "validate-artifacts.json");
+const validationArtifactsDir = args["validation-artifacts-dir"] ?? join(runRoot, "validation-artifacts");
 const leaderboardDir = args["leaderboard-dir"] ?? join(runRoot, "leaderboard");
 const modelPackageDir = args["model-package-dir"] ?? join(runRoot, "model-package");
 const queryDir = args["query-dir"] ?? join(runRoot, "query");
@@ -35,6 +55,8 @@ const controlScript = siblingScript("control-cli");
 const workerScript = siblingScript("worker-cli");
 const workerPoolScript = siblingScript("worker-pool-cli");
 const evalJobsScript = siblingScript("evaluation-jobs-cli");
+const textClassifierEvalJobsScript = siblingScript("text-classifier-evaluation-jobs-cli");
+const validationJobsScript = siblingScript("validation-jobs-cli");
 const leaderboardScript = siblingScript("leaderboard-cli");
 const modelPackageScript = siblingScript("model-package-cli");
 const modelQueryScript = siblingScript("model-query-cli");
@@ -43,7 +65,7 @@ await mkdir(runRoot, { recursive: true });
 
 const trainControl = await startControl([
   "--listen", "/ip4/127.0.0.1/tcp/0",
-  "--job-type", "train_adapter",
+  "--job-type", trainJobType,
   "--job-count", String(jobCount),
   "--job-id", jobPrefix,
   "--run-id", runId,
@@ -59,8 +81,8 @@ const trainControl = await startControl([
 try {
   assertWorkerPoolResult("training", parseWorkerPoolResult(await runScript(workerPoolScript, [
     "--control", trainControl.addr,
-    "--job-type", "train_adapter",
-    "--backend", "mlx",
+    "--job-type", trainJobType,
+    "--backend", trainBackend,
     "--concurrency", String(concurrency),
     "--max-jobs", String(jobCount),
     "--worker-id-prefix", `${runId}-train`,
@@ -71,29 +93,33 @@ try {
     ...optionalArg("--swarm-token", swarmToken),
     ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
     ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
-    "--iters", args.iters ?? process.env.MARSHALL_ITERS ?? "20",
-    "--batch-size", args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE ?? "1",
-    "--num-layers", args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS ?? "2",
-    "--max-seq-length", args["max-seq-length"] ?? process.env.MARSHALL_MAX_SEQ_LENGTH ?? "384",
-    "--steps-per-report", args["steps-per-report"] ?? process.env.MARSHALL_STEPS_PER_REPORT ?? "5",
-    "--steps-per-eval", args["steps-per-eval"] ?? process.env.MARSHALL_STEPS_PER_EVAL ?? "10",
-    "--val-batches", args["val-batches"] ?? process.env.MARSHALL_VAL_BATCHES ?? "2",
-    "--seed", args.seed ?? process.env.MARSHALL_SEED ?? "42",
+    ...(textClassifierMode ? [
+      "--alpha", args.alpha ?? process.env.MARSHALL_TEXT_CLASSIFIER_ALPHA ?? "1.0",
+    ] : [
+      "--iters", args.iters ?? process.env.MARSHALL_ITERS ?? "20",
+      "--batch-size", args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE ?? "1",
+      "--num-layers", args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS ?? "2",
+      "--max-seq-length", args["max-seq-length"] ?? process.env.MARSHALL_MAX_SEQ_LENGTH ?? "384",
+      "--steps-per-report", args["steps-per-report"] ?? process.env.MARSHALL_STEPS_PER_REPORT ?? "5",
+      "--steps-per-eval", args["steps-per-eval"] ?? process.env.MARSHALL_STEPS_PER_EVAL ?? "10",
+      "--val-batches", args["val-batches"] ?? process.env.MARSHALL_VAL_BATCHES ?? "2",
+      "--seed", args.seed ?? process.env.MARSHALL_SEED ?? "42",
+    ]),
     ...optionalArg("--python", pythonBin),
   ])), jobCount);
 } finally {
   await stopControl(trainControl.child);
 }
 
-await runScript(evalJobsScript, [
+await runScript(textClassifierMode ? textClassifierEvalJobsScript : evalJobsScript, [
   "--artifacts-dir", artifactsDir,
-  "--adapter-job-prefix", jobPrefix,
+  ...(textClassifierMode ? ["--classifier-job-prefix", jobPrefix] : ["--adapter-job-prefix", jobPrefix]),
   "--eval-file", evalFile,
   "--output", evalJobsFile,
   "--run-id", `${runId}_eval`,
   "--job-prefix", `${jobPrefix}_eval`,
   "--max-examples", args["eval-examples"] ?? process.env.MARSHALL_EVAL_EXAMPLES ?? "40",
-  "--max-tokens", args["eval-max-tokens"] ?? process.env.MARSHALL_EVAL_MAX_TOKENS ?? "8",
+  ...(textClassifierMode ? [] : ["--max-tokens", args["eval-max-tokens"] ?? process.env.MARSHALL_EVAL_MAX_TOKENS ?? "8"]),
 ]);
 const evalJobs = parseEvalJobs(JSON.parse(await readFile(evalJobsFile, "utf8")));
 if (evalJobs.length !== jobCount) {
@@ -102,7 +128,7 @@ if (evalJobs.length !== jobCount) {
 
 const evalControl = await startControl([
   "--listen", "/ip4/127.0.0.1/tcp/0",
-  "--job-type", "evaluate_adapter",
+  "--job-type", evalJobType,
   "--jobs-file", evalJobsFile,
   "--key", join(runRoot, "control-eval.key"),
   ...optionalArg("--coordinator-url", coordinatorUrl),
@@ -113,8 +139,8 @@ const evalControl = await startControl([
 try {
   assertWorkerPoolResult("evaluation", parseWorkerPoolResult(await runScript(workerPoolScript, [
     "--control", evalControl.addr,
-    "--job-type", "evaluate_adapter",
-    "--backend", "mlx",
+    "--job-type", evalJobType,
+    "--backend", evalBackend,
     "--concurrency", String(concurrency),
     "--max-jobs", String(jobCount),
     "--worker-id-prefix", `${runId}-eval`,
@@ -131,10 +157,65 @@ try {
   await stopControl(evalControl.child);
 }
 
+let validationJobs: ArtifactValidationJob[] = [];
+if (requireValidation) {
+  await runScript(validationJobsScript, [
+    "--coordinator-url", coordinatorUrl!,
+    "--target-artifact-type", evalArtifactType,
+    "--target-job-prefix", `${jobPrefix}_eval`,
+    "--output", validationJobsFile,
+    "--run-id", `${runId}_validation`,
+    "--job-prefix", `${jobPrefix}_validate`,
+    "--limit", String(jobCount),
+    "--quorum", String(validationQuorum),
+    "--validators-per-artifact", String(validatorsPerArtifact),
+    ...optionalArg("--coordinator-token", coordinatorToken),
+  ]);
+  validationJobs = parseValidationJobs(JSON.parse(await readFile(validationJobsFile, "utf8")));
+  const expectedValidationJobs = jobCount * validatorsPerArtifact;
+  if (validationJobs.length !== expectedValidationJobs) {
+    throw new Error(`validation job generation produced ${validationJobs.length}, expected ${expectedValidationJobs}`);
+  }
+
+  const validationControl = await startControl([
+    "--listen", "/ip4/127.0.0.1/tcp/0",
+    "--job-type", "validate_artifact",
+    "--jobs-file", validationJobsFile,
+    "--key", join(runRoot, "control-validation.key"),
+    ...optionalArg("--coordinator-url", coordinatorUrl),
+    ...optionalArg("--coordinator-token", coordinatorToken),
+    ...optionalArg("--swarm-token", swarmToken),
+    ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
+  ]);
+  try {
+    assertWorkerPoolResult("validation", parseWorkerPoolResult(await runScript(workerPoolScript, [
+      "--control", validationControl.addr,
+      "--job-type", "validate_artifact",
+      "--backend", "cpu",
+      "--concurrency", String(Math.min(concurrency, expectedValidationJobs)),
+      "--max-jobs", String(expectedValidationJobs),
+      "--worker-id-prefix", `${runId}-validator`,
+      "--key-dir", join(runRoot, "worker-keys", "validation"),
+      "--worker-script", workerScript,
+      "--artifacts-dir", validationArtifactsDir,
+      ...optionalArg("--swarm-token", swarmToken),
+      ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
+      ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
+    ])), expectedValidationJobs);
+  } finally {
+    await stopControl(validationControl.child);
+  }
+}
+
 await runScript(leaderboardScript, [
   "--eval-artifacts-dir", evalArtifactsDir,
   "--output-dir", leaderboardDir,
   "--top-k", String(jobCount),
+  ...(requireValidation ? [
+    "--coordinator-url", coordinatorUrl!,
+    "--require-verdict", "accepted",
+    ...optionalArg("--coordinator-token", coordinatorToken),
+  ] : []),
 ]);
 
 await runScript(modelPackageScript, [
@@ -154,15 +235,33 @@ const coordinator = coordinatorUrl == null ? null : await verifyCoordinator({
   coordinatorUrl,
   artifactsDir,
   evalJobsFile,
+  validationJobsFile: requireValidation ? validationJobsFile : undefined,
   expectedTrainJobs: jobCount,
   expectedEvalJobs: jobCount,
+  expectedValidationJobs: validationJobs.length,
+  requireValidation,
 });
 const optimized = JSON.parse(await readFile(join(leaderboardDir, "optimized_model.json"), "utf8")) as Record<string, unknown>;
 const leaderboard = JSON.parse(await readFile(join(leaderboardDir, "leaderboard.json"), "utf8")) as { entries?: unknown[] };
 if (!Array.isArray(leaderboard.entries) || leaderboard.entries.length !== jobCount) {
   throw new Error(`leaderboard has ${leaderboard.entries?.length ?? 0} entries, expected ${jobCount}`);
 }
+for (const entry of leaderboard.entries) {
+  const record = entry as Record<string, unknown>;
+  const modelId = String(record.model_id ?? record.adapter_id ?? "");
+  const evalJobId = String(record.job_id ?? "");
+  if (!modelId.startsWith(jobPrefix)) {
+    throw new Error(`leaderboard model ${modelId} does not belong to current job prefix ${jobPrefix}`);
+  }
+  if (!evalJobId.startsWith(`${jobPrefix}_eval`)) {
+    throw new Error(`leaderboard eval job ${evalJobId} does not belong to current job prefix ${jobPrefix}`);
+  }
+}
 const selected = optimized.selected as Record<string, unknown> | null;
+const selectedModelId = String(selected?.model_id ?? selected?.adapter_id ?? "");
+if (selected == null || !selectedModelId.startsWith(jobPrefix)) {
+  throw new Error(`selected model ${selectedModelId || "missing"} does not belong to current job prefix ${jobPrefix}`);
+}
 
 console.log(JSON.stringify({
   type: "marshall_ag_news_e2e_completed",
@@ -171,11 +270,16 @@ console.log(JSON.stringify({
   coordinator_url: coordinatorUrl ?? null,
   train_jobs: jobCount,
   eval_jobs: jobCount,
+  validation_jobs: validationJobs.length,
+  permissionless: swarmToken == null || swarmToken === "",
+  validation_quorum: requireValidation ? validationQuorum : null,
   artifacts_dir: artifactsDir,
   eval_artifacts_dir: evalArtifactsDir,
+  validation_artifacts_dir: requireValidation ? validationArtifactsDir : null,
   leaderboard_dir: leaderboardDir,
   model_package: join(modelPackageDir, "model_package.json"),
   query_dir: queryDir,
+  model_backend: modelBackend,
   selected_adapter_id: selected?.adapter_id ?? null,
   selected_accuracy: selected?.accuracy ?? null,
   coordinator,
@@ -190,19 +294,28 @@ interface CoordinatorVerificationOptions {
   coordinatorUrl: string;
   artifactsDir: string;
   evalJobsFile: string;
+  validationJobsFile?: string;
   expectedTrainJobs: number;
   expectedEvalJobs: number;
+  expectedValidationJobs: number;
+  requireValidation: boolean;
 }
 
 async function verifyCoordinator(options: CoordinatorVerificationOptions) {
   const client = new CoordinatorClient(options.coordinatorUrl, { token: coordinatorToken });
   const trainJobIds = await trainingJobIds(options.artifactsDir);
   const evalJobs = parseEvalJobs(JSON.parse(await readFile(options.evalJobsFile, "utf8")));
+  const validationJobs = options.validationJobsFile == null
+    ? []
+    : parseValidationJobs(JSON.parse(await readFile(options.validationJobsFile, "utf8")));
   if (trainJobIds.length !== options.expectedTrainJobs) {
     throw new Error(`coordinator verification found ${trainJobIds.length} train artifacts, expected ${options.expectedTrainJobs}`);
   }
   if (evalJobs.length !== options.expectedEvalJobs) {
     throw new Error(`coordinator verification found ${evalJobs.length} eval jobs, expected ${options.expectedEvalJobs}`);
+  }
+  if (validationJobs.length !== options.expectedValidationJobs) {
+    throw new Error(`coordinator verification found ${validationJobs.length} validation jobs, expected ${options.expectedValidationJobs}`);
   }
   for (const jobId of trainJobIds) {
     const job = await client.getJob(jobId);
@@ -210,8 +323,8 @@ async function verifyCoordinator(options: CoordinatorVerificationOptions) {
     if (job.status !== "completed") {
       throw new Error(`coordinator job ${jobId} is ${job.status ?? "missing status"}, expected completed`);
     }
-    if (artifact.artifact_type !== "lora_adapter") {
-      throw new Error(`coordinator artifact ${jobId} is ${artifact.artifact_type}, expected lora_adapter`);
+    if (artifact.artifact_type !== trainArtifactType) {
+      throw new Error(`coordinator artifact ${jobId} is ${artifact.artifact_type}, expected ${trainArtifactType}`);
     }
   }
   for (const job of evalJobs) {
@@ -221,16 +334,43 @@ async function verifyCoordinator(options: CoordinatorVerificationOptions) {
     if (persisted.status !== "completed") {
       throw new Error(`coordinator eval job ${job.job_id} is ${persisted.status ?? "missing status"}, expected completed`);
     }
-    if (spec.job_type !== "evaluate_adapter") {
+    if (spec.job_type !== job.job_type) {
       throw new Error(`coordinator eval job ${job.job_id} has invalid job_spec type`);
     }
-    if (artifact.artifact_type !== "adapter_evaluation") {
-      throw new Error(`coordinator artifact ${job.job_id} is ${artifact.artifact_type}, expected adapter_evaluation`);
+    if (artifact.artifact_type !== evalArtifactType) {
+      throw new Error(`coordinator artifact ${job.job_id} is ${artifact.artifact_type}, expected ${evalArtifactType}`);
+    }
+    if (options.requireValidation) {
+      if (artifact.verdict !== "accepted" || artifact.verdict_status !== "finalized") {
+        throw new Error(`coordinator eval artifact ${job.job_id} verdict is ${artifact.verdict ?? artifact.verdict_status ?? "missing"}, expected accepted/finalized`);
+      }
+      if ((artifact.verdict_votes ?? 0) < (artifact.verdict_quorum ?? 1)) {
+        throw new Error(`coordinator eval artifact ${job.job_id} has insufficient validation votes`);
+      }
+      const reputation = await client.workerReputation(artifact.worker_id);
+      if (reputation.accepted_artifacts < 1 || reputation.status === "suspended") {
+        throw new Error(`coordinator worker ${artifact.worker_id} has invalid reputation after validation`);
+      }
+    }
+  }
+  for (const job of validationJobs) {
+    const persisted = await client.getJob(job.job_id);
+    const artifact = await client.getArtifact(job.job_id);
+    const spec = MarshallJobSchema.parse(persisted.job_spec);
+    if (persisted.status !== "completed") {
+      throw new Error(`coordinator validation job ${job.job_id} is ${persisted.status ?? "missing status"}, expected completed`);
+    }
+    if (spec.job_type !== "validate_artifact") {
+      throw new Error(`coordinator validation job ${job.job_id} has invalid job_spec type`);
+    }
+    if (artifact.artifact_type !== "artifact_validation") {
+      throw new Error(`coordinator validation artifact ${job.job_id} is ${artifact.artifact_type}, expected artifact_validation`);
     }
   }
   return {
     train_jobs_completed: trainJobIds.length,
     eval_jobs_completed: evalJobs.length,
+    validation_jobs_completed: validationJobs.length,
   };
 }
 
@@ -274,7 +414,7 @@ async function trainingJobIds(artifactsDirPath: string): Promise<string[]> {
       continue;
     }
     const manifest = TrainingArtifactManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
-    if (manifest.artifact_type === "lora_adapter") {
+    if (manifest.artifact_type === trainArtifactType) {
       ids.push(manifest.job_id);
     }
   }
@@ -282,14 +422,29 @@ async function trainingJobIds(artifactsDirPath: string): Promise<string[]> {
   return ids;
 }
 
-function parseEvalJobs(value: unknown): AdapterEvaluationJob[] {
+type EvaluationJob = AdapterEvaluationJob | TextClassifierEvaluationJob;
+
+function parseEvalJobs(value: unknown): EvaluationJob[] {
   if (!Array.isArray(value)) {
     throw new Error("evaluation jobs file must contain an array");
   }
   return value.map((job) => {
     const parsed = MarshallJobSchema.parse(job);
-    if (parsed.job_type !== "evaluate_adapter") {
+    if (parsed.job_type !== "evaluate_adapter" && parsed.job_type !== "evaluate_text_classifier") {
       throw new Error(`evaluation jobs file contains ${parsed.job_type}`);
+    }
+    return parsed;
+  });
+}
+
+function parseValidationJobs(value: unknown): ArtifactValidationJob[] {
+  if (!Array.isArray(value)) {
+    throw new Error("validation jobs file must contain an array");
+  }
+  return value.map((job) => {
+    const parsed = MarshallJobSchema.parse(job);
+    if (parsed.job_type !== "validate_artifact") {
+      throw new Error(`validation jobs file contains ${parsed.job_type}`);
     }
     return parsed;
   });
@@ -482,6 +637,26 @@ function numberArg(value: string | undefined, fallback: number): number {
     throw new Error(`invalid positive integer: ${value}`);
   }
   return parsed;
+}
+
+function booleanArg(value: string | undefined, fallback: boolean): boolean {
+  if (value == null) {
+    return fallback;
+  }
+  if (value === "true" || value === "1" || value === "yes") {
+    return true;
+  }
+  if (value === "false" || value === "0" || value === "no") {
+    return false;
+  }
+  throw new Error(`invalid boolean: ${value}`);
+}
+
+function modelBackendArg(value: string): "mlx" | "text_classifier" {
+  if (value === "mlx" || value === "text_classifier") {
+    return value;
+  }
+  throw new Error(`unsupported model backend: ${value}`);
 }
 
 function numberValue(value: unknown, field: string): number {

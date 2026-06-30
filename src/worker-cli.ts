@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { multiaddr } from "@multiformats/multiaddr";
 import { defaultBackendForJob } from "./jobs.js";
 import type { Backend, JobType, MarshallJob } from "./schemas.js";
-import { runAdapterEvaluation, runArtifactValidation, runMlxLoraTraining, runMlxSmokeTraining, runToyTraining } from "./training-runner.js";
+import { runAdapterEvaluation, runArtifactValidation, runMlxLoraTraining, runMlxSmokeTraining, runTextClassifierEvaluation, runTextClassifierTraining, runToyTraining } from "./training-runner.js";
 import { WorkerPeer } from "./worker-peer.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -97,6 +97,13 @@ async function runClaimedJob(job: MarshallJob) {
       outputRoot,
     });
   }
+  if (job.job_type === "evaluate_text_classifier") {
+    return runTextClassifierEvaluation(job, {
+      outputRoot,
+      datasetCacheRoot,
+      pythonBin: args.python ?? process.env.MARSHALL_PYTHON,
+    });
+  }
   if (job.job_type === "evaluate_adapter") {
     return runAdapterEvaluation(job, {
       outputRoot,
@@ -125,6 +132,14 @@ async function runClaimedJob(job: MarshallJob) {
       gradCheckpoint: booleanArg(args["grad-checkpoint"] ?? process.env.MARSHALL_GRAD_CHECKPOINT, false),
     });
   }
+  if (job.job_type === "train_text_classifier") {
+    return runTextClassifierTraining(job, {
+      outputRoot,
+      datasetCacheRoot,
+      pythonBin: args.python ?? process.env.MARSHALL_PYTHON,
+      alpha: numberArg(args.alpha ?? process.env.MARSHALL_TEXT_CLASSIFIER_ALPHA, 1.0),
+    });
+  }
   if (job.job_type === "train_mlx_smoke") {
     return runMlxSmokeTraining(job, {
       outputRoot,
@@ -149,6 +164,9 @@ function maxTokensForJob(value: JobType): number {
     return 8_000;
   }
   if (value === "evaluate_adapter") {
+    return 8_000;
+  }
+  if (value === "evaluate_text_classifier") {
     return 8_000;
   }
   if (value === "validate_artifact") {
@@ -180,8 +198,8 @@ function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_mlx_smoke" | "train_adapter" | "evaluate_adapter" | "validate_artifact"> {
-  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter" || value === "evaluate_adapter" || value === "validate_artifact") {
+function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_mlx_smoke" | "train_adapter" | "train_text_classifier" | "evaluate_adapter" | "evaluate_text_classifier" | "validate_artifact"> {
+  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter" || value === "train_text_classifier" || value === "evaluate_adapter" || value === "evaluate_text_classifier" || value === "validate_artifact") {
     return value;
   }
   throw new Error(`unsupported worker CLI job type: ${value}`);

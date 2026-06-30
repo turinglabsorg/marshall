@@ -104,7 +104,7 @@ worker peer (TypeScript/libp2p)
 Initial worker backends:
 
 - `mlx` for Apple Silicon LoRA and evaluation;
-- `cpu` for cleaning, tokenization, and metadata validation.
+- `cpu` for cleaning, tokenization, metadata validation, and the stdlib AG News text-classifier E2E backend.
 
 CUDA support should be added after the MLX loop is stable.
 
@@ -171,6 +171,8 @@ Checks:
 - baseline regression;
 - duplicate or corrupted upload detection;
 - peer/worker identity consistency.
+
+The current validator supports both `adapter_evaluation` and `text_classifier_evaluation` artifacts. Validator jobs publish independent `artifact_validation` artifacts; the coordinator records per-validator votes and finalizes the target artifact only when one verdict reaches the requested quorum.
 
 ### Reputation
 

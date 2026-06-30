@@ -106,6 +106,7 @@ function passThroughArgs(values: Record<string, string>): string[] {
     "mask-prompt",
     "no-mask-prompt",
     "grad-checkpoint",
+    "alpha",
     "memory-gb",
     "tokens-per-second",
     "swarm-token",

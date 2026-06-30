@@ -16,6 +16,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - Node.js 22+ runtime for current js-libp2p dependencies.
 - TypeScript libp2p for the p2p substrate.
 - Python stdlib toy training runner for lightweight end-to-end smoke tests.
+- Python stdlib AG News text-classifier runner for real CPU-only product E2E tests when MLX is unavailable.
 - Python MLX-LM runner for Apple Silicon LoRA jobs.
 - Go for the native coordinator daemon.
 - Redis for coordinator state and append-only event logs.
@@ -41,7 +42,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/control-cli.ts` supports `--jobs-file` / `MARSHALL_JOBS_FILE` for mixed Marshall job definitions, including `evaluate_adapter` and `validate_artifact` jobs generated from coordinator artifacts.
 - `src/worker-cli.ts` starts a one-job worker that registers, claims, runs, publishes an artifact, and exits.
 - `src/worker-pool-cli.ts` starts bounded concurrent worker processes against a control peer. Use this for product E2E proof instead of manual shell loops.
-- `src/jobs.ts` defines local `train_toy_model`, `train_mlx_smoke`, and `train_adapter` job builders.
+- `src/jobs.ts` defines local `train_toy_model`, `train_mlx_smoke`, `train_adapter`, and `train_text_classifier` job builders.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured, sends the full `MarshallJob` as `job_spec`, and can read persisted jobs/artifacts back from the coordinator.
 - `src/coordinator-client.ts` supports coordinator write authentication with `MARSHALL_COORDINATOR_TOKEN` / `--coordinator-token` and worker heartbeat forwarding for live coordinator leases.
@@ -53,16 +54,19 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_ag_news_eval.py` for `evaluate_adapter` jobs and emits an `adapter_evaluation` artifact manifest.
-- `src/training-runner.ts` runs `validate_artifact` jobs for validator workers. The current validator checks target artifact hash and adapter-evaluation metrics, then emits an `artifact_validation` manifest with `accepted`, `poor`, `rejected`, or `malicious` plus the requested quorum.
+- `src/training-runner.ts` wraps `training/ag_news_text_classifier.py` for `train_text_classifier` and `evaluate_text_classifier` jobs, producing real CPU-only `text_classifier_model` and `text_classifier_evaluation` artifacts from AG News JSONL shards.
+- `src/training-runner.ts` runs `validate_artifact` jobs for validator workers. The current validator checks target artifact hash plus adapter-evaluation or text-classifier-evaluation metrics, then emits an `artifact_validation` manifest with `accepted`, `poor`, `rejected`, or `malicious` plus the requested quorum.
 - `src/control-peer.ts` forwards `artifact_validation` manifests into coordinator validator votes, so target worker reputation is updated only after a verdict reaches coordinator quorum.
 - `src/evaluation-jobs-cli.ts` scans `lora_adapter` manifests and creates `evaluate_adapter` jobs for a held-out eval shard.
-- `src/leaderboard-cli.ts` scans `adapter_evaluation` metrics and writes `leaderboard.json`, `top_k.json`, and `optimized_model.json`. With `--coordinator-url --require-verdict accepted`, it filters model selection to coordinator-accepted artifacts only.
-- `src/model-package-cli.ts` packages the selected optimized model as base model + LoRA adapter metadata and emits an `optimized_model_package` manifest.
-- `src/model-query-cli.ts` queries a packaged optimized model against a selected eval record and can fail unless the answer is correct.
-- `src/e2e-ag-news-cli.ts` runs the AG News product E2E path: training worker pool, evaluation worker pool, leaderboard, package, query, and optional coordinator persistence verification.
+- `src/text-classifier-evaluation-jobs-cli.ts` scans `text_classifier_model` manifests and creates `evaluate_text_classifier` jobs for a held-out eval shard.
+- `src/leaderboard-cli.ts` scans `adapter_evaluation` and `text_classifier_evaluation` metrics and writes `leaderboard.json`, `top_k.json`, and `optimized_model.json`. With `--coordinator-url --require-verdict accepted`, it filters model selection to coordinator-accepted artifacts only.
+- `src/model-package-cli.ts` packages the selected optimized model as either base model + LoRA adapter metadata or AG News text-classifier metadata and emits an `optimized_model_package` manifest.
+- `src/model-query-cli.ts` queries a packaged optimized model against a selected eval record and can fail unless the answer is correct. It supports both MLX adapters and the CPU text-classifier package.
+- `src/e2e-ag-news-cli.ts` runs the AG News product E2E path: training worker pool, evaluation worker pool, validation worker pool, coordinator quorum checks, leaderboard, package, query, and optional coordinator persistence verification. Use `--model-backend text_classifier` for the stdlib CPU path and `--model-backend mlx` for LoRA.
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
 - `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
+- `training/ag_news_text_classifier.py` trains and evaluates a stdlib multinomial Naive Bayes AG News classifier. It is intentionally small but real: it consumes assigned dataset shards, writes `model.json`, and evaluates exact-label accuracy without MLX, PyTorch, or Transformers.
 - `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes eval metrics.
 - `training/build_ag_news_dataset.py` downloads AG News CSVs into `.marshall/cache/raw/ag-news`, builds local train/valid/test/eval JSONL plus 4 shards under `.marshall/datasets/ag-news`, and writes a manifest consumed by adapter job creation.
@@ -71,12 +75,12 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training or evaluation. Single JSONL eval shards remain addressable as files after caching.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
 - `examples/datasets/marshall-instructions/manifest.json`, `{train,valid,test,eval}.jsonl`, and `shards/shard-*/{train,valid}.jsonl` are the private synthetic MIT dataset artifacts for Marshall coordinator-event summaries and multi-worker adapter claims.
-- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, `AdapterEvaluationJob`, `ArtifactValidationJob`, `MarshallJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, adapter evaluation metrics, artifact validation metrics, and ACK payloads. `ArtifactValidationPolicy.quorum` controls how many matching validator votes are required. `TrainingJob.dataset_shard`, `AdapterEvaluationJob.eval_shard`, and `ArtifactValidationJob.target` must include hashes verified by workers before producing artifacts or verdicts.
+- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, `AdapterEvaluationJob`, `TextClassifierEvaluationJob`, `ArtifactValidationJob`, `MarshallJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, text classifier metrics, adapter evaluation metrics, artifact validation metrics, and ACK payloads. `ArtifactValidationPolicy.quorum` controls how many matching validator votes are required. `TrainingJob.dataset_shard`, `AdapterEvaluationJob.eval_shard`, `TextClassifierEvaluationJob.eval_shard`, and `ArtifactValidationJob.target` must include hashes verified by workers before producing artifacts or verdicts.
 - `src/jobs.ts` supports `adapterDataset: "ag_news"` through a local manifest. The control CLI exposes this as `--adapter-dataset ag_news` or `MARSHALL_ADAPTER_DATASET=ag_news`, with `--adapter-dataset-dir` / `MARSHALL_ADAPTER_DATASET_DIR` pointing at the local dataset directory.
-- `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
+- `tests/jobs.test.ts` verifies adapter/text-classifier job builders and backend defaults.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers four workers claiming independent jobs concurrently.
 - `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set, including distributed artifact validation manifest to coordinator verdict bridging.
-- `tests/artifact-validation.test.ts` verifies accepted and malicious validator outcomes against real artifact hashes and adapter-evaluation metrics.
+- `tests/artifact-validation.test.ts` verifies accepted and malicious validator outcomes against real artifact hashes plus adapter-evaluation and text-classifier-evaluation metrics.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, full job specs, job claims, statuses, artifacts, and append-only events in Redis.
 - `coordinator/redis_store.go` maintains job leases and can requeue expired running jobs so abandoned work is visible and recoverable.
@@ -125,6 +129,21 @@ Prefer the single product runner when validating the whole AG News path:
 
 ```bash
 npm run e2e:ag-news:compiled -- --coordinator-url http://127.0.0.1:8080 --python ~/.marshall/mlx-venv/bin/python
+```
+
+CPU-only real-model E2E, useful when MLX is unavailable:
+
+```bash
+npm run e2e:ag-news:compiled -- \
+  --model-backend text_classifier \
+  --coordinator-url http://127.0.0.1:8080 \
+  --job-count 2 \
+  --concurrency 2 \
+  --eval-examples 40 \
+  --validation-quorum 2 \
+  --validators-per-artifact 2 \
+  --require-validation true \
+  --python python3
 ```
 
 The p2p integration test opens real TCP sockets on `127.0.0.1`, so sandboxed agents may need escalated execution for test/runtime commands.

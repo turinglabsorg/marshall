@@ -266,6 +266,9 @@ function jobDatasetUri(job: MarshallJob): string {
   if (job.job_type === "evaluate_adapter") {
     return job.eval_shard.uri;
   }
+  if (job.job_type === "evaluate_text_classifier") {
+    return job.eval_shard.uri;
+  }
   if (job.job_type === "validate_artifact") {
     return job.target.metrics_uri ?? job.target.artifact_uri;
   }

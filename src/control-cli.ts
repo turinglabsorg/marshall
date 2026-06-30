@@ -68,7 +68,9 @@ function jobTypeArg(value: string): JobType {
     value === "train_toy_model"
     || value === "train_mlx_smoke"
     || value === "train_adapter"
+    || value === "train_text_classifier"
     || value === "evaluate_adapter"
+    || value === "evaluate_text_classifier"
     || value === "validate_artifact"
   ) {
     return value;
@@ -77,7 +79,7 @@ function jobTypeArg(value: string): JobType {
 }
 
 function trainingJobTypeArg(value: JobType): TrainingJob["job_type"] {
-  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter") {
+  if (value === "train_toy_model" || value === "train_mlx_smoke" || value === "train_adapter" || value === "train_text_classifier") {
     return value;
   }
   throw new Error(`${value} requires --jobs-file or MARSHALL_JOBS_FILE`);
