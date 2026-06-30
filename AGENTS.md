@@ -45,7 +45,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured, sends the full `MarshallJob` as `job_spec`, and can read persisted jobs/artifacts back from the coordinator.
 - `src/coordinator-client.ts` supports coordinator write authentication with `MARSHALL_COORDINATOR_TOKEN` / `--coordinator-token` and worker heartbeat forwarding for live coordinator leases.
-- `src/coordinator-client.ts` can record artifact verdicts and read worker reputation through the coordinator API.
+- `src/coordinator-client.ts` can record artifact verdicts and read worker reputation through the coordinator API. Artifact verdict responses include `finalized`, `quorum`, `votes`, and per-verdict `tally`; artifact records include `verdict_status`, `verdict_votes`, and `verdict_quorum`.
 - `src/coordinator-client.ts` can list coordinator artifacts; `src/validation-jobs-cli.ts` turns unvalidated target artifacts into distributed `validate_artifact` jobs, scopes targets with `--target-job-prefix`, and defaults to quorum 2 with two validator jobs per artifact.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/worker-peer.ts` supports optional swarm authentication with `MARSHALL_SWARM_TOKEN` / `--swarm-token` so untrusted peers cannot register or claim jobs from permissioned control peers.
