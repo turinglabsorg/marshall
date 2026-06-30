@@ -21,7 +21,8 @@ const workerId = args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostn
 const worker = await WorkerPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_WORKER_KEY ?? ".marshall/worker.key",
   workerId,
-  controlAddr: multiaddr(controlAddr),
+  controlAddr: controlAddrs(controlAddr)[0],
+  controlAddrs: controlAddrs(controlAddr),
   listen: splitList(args.listen ?? process.env.MARSHALL_WORKER_LISTEN ?? "/ip4/0.0.0.0/tcp/0"),
   backend,
   supportedJobs: [jobType],
@@ -234,6 +235,18 @@ function parseArgs(values: string[]): Record<string, string> {
 
 function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function controlAddrs(primary: string): ReturnType<typeof multiaddr>[] {
+  const values = [
+    ...splitList(primary),
+    ...splitList(args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS ?? ""),
+  ].filter(Boolean);
+  const deduped = [...new Set(values)];
+  if (deduped.length === 0) {
+    throw new Error("--control or MARSHALL_CONTROL_ADDR is required");
+  }
+  return deduped.map((value) => multiaddr(value));
 }
 
 function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_mlx_smoke" | "train_adapter" | "evaluate_adapter" | "validate_artifact"> {

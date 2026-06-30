@@ -33,6 +33,7 @@ export interface WorkerPeerOptions {
   privateKeyPath: string;
   workerId: string;
   controlAddr: Multiaddr;
+  controlAddrs?: Multiaddr[];
   listen?: string[];
   backend?: Backend;
   supportedJobs?: JobType[];
@@ -44,6 +45,7 @@ export interface WorkerPeerOptions {
 export class WorkerPeer {
   private readonly artifacts = new Map<string, ArtifactManifest>();
   private readonly artifactBundles = new Map<string, ArtifactBundle>();
+  private activeControlAddr?: Multiaddr;
 
   private constructor(
     readonly node: Libp2p,
@@ -51,10 +53,11 @@ export class WorkerPeer {
   ) {}
 
   static async create(options: WorkerPeerOptions): Promise<WorkerPeer> {
+    const controlAddrs = workerControlAddrs(options);
     const node = await createMarshallNode({
       privateKeyPath: options.privateKeyPath,
       listen: options.listen ?? ["/ip4/127.0.0.1/tcp/0"],
-      bootstrapAddrs: [options.controlAddr.toString()],
+      bootstrapAddrs: controlAddrs.map((addr) => addr.toString()),
     });
     const peer = new WorkerPeer(node, options);
     await peer.registerHandlers();
@@ -85,7 +88,7 @@ export class WorkerPeer {
     };
 
     const response = WorkerRegistrationResponseSchema.parse(
-      await requestJson(this.node, this.options.controlAddr, PROTOCOLS.workerRegister, registration),
+      await this.requestControlJson(PROTOCOLS.workerRegister, registration),
     );
 
     if (!response.accepted) {
@@ -97,7 +100,7 @@ export class WorkerPeer {
 
   async heartbeat(status: "idle" | "working" = "idle", jobId?: string, leaseSeconds?: number): Promise<void> {
     const response = AckSchema.parse(
-      await requestJson(this.node, this.options.controlAddr, PROTOCOLS.workerHeartbeat, {
+      await this.requestControlJson(PROTOCOLS.workerHeartbeat, {
         ...this.authPayload(),
         peer_id: this.peerId,
         worker_id: this.options.workerId,
@@ -115,7 +118,7 @@ export class WorkerPeer {
 
   async claimJob(jobType: JobType, maxTokens = 2_000): Promise<JobClaimResponse> {
     return JobClaimResponseSchema.parse(
-      await requestJson(this.node, this.options.controlAddr, PROTOCOLS.jobClaim, {
+      await this.requestControlJson(PROTOCOLS.jobClaim, {
         ...this.authPayload(),
         peer_id: this.peerId,
         worker_id: this.options.workerId,
@@ -136,7 +139,7 @@ export class WorkerPeer {
 
   async reportJobStatus(status: Omit<JobStatus, "peer_id" | "worker_id">): Promise<void> {
     const response = AckSchema.parse(
-      await requestJson(this.node, this.options.controlAddr, PROTOCOLS.jobStatus, {
+      await this.requestControlJson(PROTOCOLS.jobStatus, {
         ...this.authPayload(),
         peer_id: this.peerId,
         worker_id: this.options.workerId,
@@ -159,7 +162,7 @@ export class WorkerPeer {
     const { auth_token: _authToken, ...storedPayload } = payload;
     this.artifacts.set(payload.job_id, ArtifactManifestSchema.parse(storedPayload));
     const response = AckSchema.parse(
-      await requestJson(this.node, this.options.controlAddr, PROTOCOLS.artifactManifest, payload),
+      await this.requestControlJson(PROTOCOLS.artifactManifest, payload),
     );
 
     if (!response.accepted) {
@@ -173,9 +176,7 @@ export class WorkerPeer {
     outputRoot: string,
     options: { chunkBytes?: number; maxChunkRetries?: number } = {},
   ): Promise<ArtifactManifest> {
-    const bundle = ArtifactFetchManifestResponseSchema.parse(await requestJson(
-      this.node,
-      this.options.controlAddr,
+    const bundle = ArtifactFetchManifestResponseSchema.parse(await this.requestControlJson(
       PROTOCOLS.artifactFetch,
       {
         ...this.authPayload(),
@@ -195,9 +196,7 @@ export class WorkerPeer {
       outputRoot,
       chunkBytes: options.chunkBytes,
       maxChunkRetries: options.maxChunkRetries,
-      fetchChunk: async (request) => ArtifactFetchChunkResponseSchema.parse(await requestJson(
-        this.node,
-        this.options.controlAddr,
+      fetchChunk: async (request) => ArtifactFetchChunkResponseSchema.parse(await this.requestControlJson(
         PROTOCOLS.artifactFetch,
         {
           ...this.authPayload(),
@@ -250,6 +249,37 @@ export class WorkerPeer {
     return bundle;
   }
 
+  private async requestControlJson(
+    protocol: Parameters<typeof requestJson>[2],
+    payload: unknown,
+    options?: Parameters<typeof requestJson>[4],
+  ): Promise<unknown> {
+    const controlAddrs = this.controlAddrsByPriority();
+    const failures: string[] = [];
+    for (const addr of controlAddrs) {
+      try {
+        const response = await requestJson(this.node, addr, protocol, payload, options);
+        this.activeControlAddr = addr;
+        return response;
+      } catch (error) {
+        failures.push(`${addr.toString()}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    throw new Error(`all control addresses failed for ${protocol}: ${failures.join("; ")}`);
+  }
+
+  private controlAddrsByPriority(): Multiaddr[] {
+    const all = workerControlAddrs(this.options);
+    if (this.activeControlAddr == null) {
+      return all;
+    }
+    const active = this.activeControlAddr.toString();
+    return [
+      this.activeControlAddr,
+      ...all.filter((addr) => addr.toString() !== active),
+    ];
+  }
+
   private async publicKey(): Promise<string> {
     const encoded = await readFile(this.options.privateKeyPath, "utf8");
     return publicKeyBase64(privateKeyFromProtobuf(Buffer.from(encoded, "base64")));
@@ -264,6 +294,17 @@ export class WorkerPeer {
     const token = this.options.swarmToken ?? process.env.MARSHALL_SWARM_TOKEN;
     return token == null || token === "" || payload.auth_token === token;
   }
+}
+
+function workerControlAddrs(options: WorkerPeerOptions): Multiaddr[] {
+  const values = options.controlAddrs == null || options.controlAddrs.length === 0
+    ? [options.controlAddr]
+    : options.controlAddrs;
+  const deduped = new Map<string, Multiaddr>();
+  for (const value of values) {
+    deduped.set(value.toString(), value);
+  }
+  return [...deduped.values()];
 }
 
 function rejectedArtifactFetchResponse(requestType: "manifest" | "chunk", reason: string): unknown {

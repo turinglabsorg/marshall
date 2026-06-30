@@ -114,6 +114,7 @@ function passThroughArgs(values: Record<string, string>): string[] {
     "heartbeat-interval-ms",
     "artifact-chunk-bytes",
     "artifact-chunk-retries",
+    "control-addrs",
   ];
   const output: string[] = [];
   for (const key of keys) {
