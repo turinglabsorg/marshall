@@ -1,180 +1,138 @@
 # Marshall
 
-Marshall is a p2p-first consumer AI compute network for asynchronous AI workloads on Apple Silicon Macs, consumer NVIDIA machines, and CPU-only nodes.
+Marshall is a permissionless training network for small language models.
 
-The first product is not a model. The first product is the network substrate:
+It turns consumer machines into a verifiable LoRA worker swarm: Macs and GPUs join over libp2p, claim real dataset shards, fine-tune adapters, publish hash-checked artifacts, and earn or lose reputation through distributed validation.
 
-- a coordinator/control peer that creates runs, schedules work, tracks status, and manages rounds;
-- a libp2p peer network that connects coordinator, workers, relay nodes, and future validators from day one;
-- a worker daemon that registers capabilities, claims jobs, runs tasks, and publishes artifact manifests over p2p streams;
-- an artifact registry for adapters, logs, datasets, evaluations, and manifests;
-- a scheduler that understands heterogeneous hardware;
-- a validation layer that scores contributions before they affect global state;
-- a reputation model used for scheduling before incentives.
+Marshall is not trying to pretend that random public machines are one synchronous GPU cluster. The public network scales through many independent adapter jobs, evaluation jobs, validator quorum, leaderboard selection, and future replicated inference. Model-parallel training and sharded inference belong to trusted cluster mode, not the open swarm default.
 
-Marshall should behave like a compute marketplace for bounded AI jobs, not like a synchronous GPU cluster.
+## Live Network
 
-## Deployment Domains
+- Training dashboard: <https://marshall.training>
+- Worker onboarding guide: <https://marshall.training/AGENTS.md>
+- Coordinator snapshot: <https://marshall.training/dashboard>
+- libp2p control peer descriptor: <https://marshall.training/control.json>
+- Roadmap: [ROADMAP.md](./ROADMAP.md)
 
-- `marshall.training` is the public training network surface: coordinator console, worker onboarding, active job visibility, and participation instructions.
-- `marshall.chat` is reserved for future model chat and inference demos after the training pipeline is validated.
+The public swarm is permissionless. Workers join through `/control.json`; there is no public worker join token.
 
-## Coordinator
+## What Marshall Does
 
-Marshall now includes a native Go coordinator prototype backed by Redis:
+Marshall coordinates bounded AI jobs across heterogeneous machines:
 
-- `cmd/marshall-coordinator` exposes a small HTTP admin API;
-- `coordinator/redis_store.go` stores derived state in Redis hashes/sets;
-- Redis Streams provide the append-only event log;
-- job claims are atomic through a Redis Lua script;
-- worker claims require a registered worker identity and are rejected once the worker is suspended;
-- artifact verdicts update worker reputation and can progressively degrade or suspend bad workers;
-- the TypeScript libp2p control peer can bridge worker lifecycle events into the coordinator through `coordinatorUrl`.
+- creates dataset-backed training runs;
+- splits datasets into content-addressed shards;
+- exposes a libp2p control peer for worker registration, heartbeat, job claim, status, and artifact publication;
+- lets workers train MLX LoRA adapters on assigned shards;
+- transfers artifacts over chunked, hash-verified p2p payloads;
+- creates downstream evaluation and validation jobs;
+- records validator votes and reputation in a Redis-backed Go coordinator;
+- hides stale workers from the live dashboard without deleting identity or reputation;
+- selects accepted adapters through deterministic leaderboard policy.
 
-Run it locally with Redis:
+The current public training target is adapter fine-tuning for SLMs. The roadmap adds richer model capability checks, larger-parameter adapter jobs, replicated distributed inference, and trusted cluster modes for workloads that cannot fit on one worker.
+
+## Network Flow
+
+```text
+Dataset manifest
+      |
+Run/job publisher
+      |
+Go coordinator + Redis  <---- public dashboard
+      |
+TypeScript libp2p control peer
+      |
+Workers: mlx | cuda | cpu
+      |
+LoRA adapters, metrics, logs
+      |
+Evaluation jobs
+      |
+Validator jobs + reputation
+      |
+Leaderboard + model package
+```
+
+Workers never receive Redis credentials. Redis is private to the coordinator host. Public workers interact through libp2p protocols and the coordinator bridge.
+
+## Current Status
+
+Implemented:
+
+- native Go coordinator with Redis state and append-only event stream;
+- terminal-style public dashboard at `marshall.training`;
+- permissionless libp2p control peer on public TCP `4001`;
+- public `/control.json` for worker discovery;
+- public `/AGENTS.md` worker onboarding;
+- TypeScript libp2p worker/control protocols;
+- persistent Ed25519 worker identities;
+- worker pool CLI for bounded concurrent jobs;
+- MLX LoRA training runner;
+- dataset manifest builder with HTTP/S shard URIs;
+- dataset cache with file size and SHA-256 verification;
+- chunked p2p artifact transfer with retry and final root hash checks;
+- artifact evaluation and validation jobs;
+- quorum-based validator verdicts;
+- worker reputation and suspension policy;
+- accepted-only adapter leaderboard and model package path;
+- GCP micro deployment with Caddy HTTPS, local Redis, coordinator, and control peer services.
+
+Not implemented yet:
+
+- full automatic round orchestration from training to validation to next run;
+- public `marshall.chat` inference gateway;
+- CUDA worker backend;
+- model cache capability reporting;
+- trusted model-parallel cluster scheduling;
+- incentives or payments.
+
+## Worker Quick Start
+
+For public participation, use the live guide:
+
+```text
+https://marshall.training/AGENTS.md
+```
+
+The worker flow is:
+
+1. install Node.js 22+;
+2. clone this repository;
+3. install dependencies and build;
+4. install an MLX Python environment on Apple Silicon;
+5. fetch the live control address from `https://marshall.training/control.json`;
+6. start `worker:pool:compiled` with `--job-type train_adapter`;
+7. let the worker download only its assigned shard, verify hashes, train, and publish the artifact.
+
+Generated worker state, dataset caches, model files, and artifacts stay under `.marshall/` and must not be committed.
+
+## Local Development
+
+Requirements:
+
+- Node.js 22 or newer;
+- Go 1.23+;
+- Redis 7 for coordinator integration tests;
+- Apple Silicon plus `mlx-lm` for MLX training jobs.
+
+Install and build:
+
+```bash
+npm ci
+npm run build
+go test ./...
+npm test
+```
+
+Run the coordinator locally:
 
 ```bash
 docker run --rm -p 6379:6379 redis:7-alpine
 MARSHALL_REDIS_ADDR=127.0.0.1:6379 go run ./cmd/marshall-coordinator
 ```
 
-Deploy the current public trial coordinator to a small GCP VM with local Redis:
-
-```bash
-./scripts/deploy-gcp-micro.sh
-```
-
-The deploy path creates or updates a dedicated `marshall-micro-1` instance in the `iconic-elevator-394020` project by default. Redis stays bound to localhost on the VM, `cmd/marshall-coordinator` listens internally on `127.0.0.1:8080`, Caddy terminates public HTTPS for `marshall.training`, and the public libp2p control peer listens on TCP `4001`. The control peer writes `/control.json` with the current public multiaddr so permissionless workers can join without a swarm token. Coordinator write authentication is configured through a generated admin token stored under `.marshall/secrets/`, which remains local and ignored by git.
-
-### Public Worker Reputation
-
-Marshall is moving toward open worker participation with validator-driven slashing instead of a permanently permissioned worker set. The current coordinator policy is intentionally simple and deterministic:
-
-| Verdict | Score Delta | Meaning |
-|---------|-------------|---------|
-| `accepted` | `+2` | Artifact passed validation |
-| `poor` | `-10` | Artifact is valid but low quality |
-| `rejected` | `-25` | Artifact failed validation |
-| `timeout` | `-15` | Worker held a job until its lease expired |
-| `malicious` | `-100` | Strong sabotage/canary failure signal |
-
-Worker reputation starts at `100`, is capped to `0..100`, becomes `degraded` below `70`, and becomes `suspended` below `20`. Suspended workers cannot claim new jobs.
-
-Coordinator endpoints:
-
-```text
-GET  /artifacts
-POST /artifacts/{job_id}/verdict
-GET  /workers/{worker_id}/reputation
-```
-
-Only the coordinator writes Redis. Workers do not receive Redis credentials and interact through libp2p worker protocols.
-
-### Distributed Artifact Validation
-
-Validation is modeled as ordinary p2p work, not as an operator-side manual step:
-
-- evaluation artifacts are published to the coordinator by the worker that produced them;
-- `npm run validation:jobs` reads unvalidated coordinator artifacts and creates multiple `validate_artifact` jobs per target artifact;
-- validator workers claim those jobs through libp2p and emit `artifact_validation` manifests;
-- the control peer converts `artifact_validation` manifests into coordinator validator votes;
-- the coordinator finalizes a target artifact only after a verdict reaches quorum, then updates target worker reputation once;
-- leaderboard/model selection can require `verdict=accepted` before an adapter enters the selected set.
-
-## First Concrete Target
-
-Build a real 3-worker p2p loop:
-
-- 1 coordinator/control peer;
-- 1 libp2p bootstrap/relay peer, colocated with the coordinator at first;
-- 3 Apple Silicon workers with persistent libp2p identities;
-- 1 TinyLlama-class base model;
-- 1 Italian JSONL dataset split into shards;
-- 1 MLX LoRA backend;
-- 1 adapter validator;
-- 1 merge script;
-- 1 evaluation script.
-
-The first milestone is complete when workers discover the network through libp2p, register capabilities, claim training jobs, publish artifact manifests, pass validation, merge accepted adapters, evaluate the merged adapter, and start the next round.
-
-## Non-Goals
-
-- No blockchain or token layer in the first version.
-- No synchronous distributed training.
-- No attempt to make consumer machines behave like one datacenter GPU cluster.
-- No full-model pretraining as the first workload.
-- No rewards before validation and reputation are reliable.
-- No assumption that HTTP polling is the worker network.
-
-## Repository Shape
-
-```text
-marshall/
-  src/
-    control-cli.ts
-    control-peer.ts
-    coordinator-client.ts
-    worker-cli.ts
-    worker-peer.ts
-    training-runner.ts
-  training/
-    tiny_char_lm.py
-    mlx_linear_smoke.py
-    mlx_lora_smoke.py
-    build_marshall_instruction_dataset.py
-    build_ag_news_dataset.py
-    mlx_ag_news_eval.py
-  coordinator/
-    redis_store.go
-    http.go
-  cmd/
-    marshall-coordinator/
-      main.go
-  docs/
-    architecture.md
-    p2p.md
-    mvp.md
-    backlog.md
-```
-
-The implementation starts with the libp2p substrate, a lightweight local training smoke test, and the MVP contracts in `docs/mvp.md`.
-
-## Prototype Status
-
-The first p2p substrate and toy training prototype is implemented.
-
-It proves:
-
-- a libp2p control peer can listen on localhost over TCP;
-- a worker peer can dial it over libp2p;
-- the worker can register over `/marshall/worker/register/1.0.0`;
-- the worker can send heartbeat, job claim, job status, and artifact manifest messages over versioned libp2p streams;
-- the control peer can assign one `train_toy_model` job and accept the worker artifact manifest only when it matches the assigned worker;
-- the worker can run a real stdlib-only Python character bigram training job against a built-in inline smoke dataset materialized into the local dataset cache;
-- the training runner emits `model.json`, `metrics.json`, `train.log`, and a `toy_language_model` manifest.
-- `training/mlx_linear_smoke.py` verifies that a remote Apple Silicon worker can run a tiny MLX gradient-descent job on GPU.
-- `train_mlx_smoke` can be assigned through the p2p lifecycle and emits an `mlx_smoke_result` artifact manifest.
-- `train_adapter` runs a tiny MLX-LM LoRA job against a generated local `.marshall/datasets/marshall-instructions` dataset and emits a `lora_adapter` artifact manifest.
-- `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks under `.marshall/datasets/marshall-instructions`.
-- `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes `eval.json` metrics.
-- `MARSHALL_JOB_COUNT` lets the control CLI create multiple jobs in one run; `train_adapter` uses dataset shards for multi-worker claims.
-- workers materialize only the assigned shard into a content-addressed cache under `.marshall/cache/datasets/<sha256>` before training.
-- `training/build_ag_news_dataset.py` builds a local private AG News classification dataset under `.marshall/datasets/ag-news`, and `training/mlx_ag_news_eval.py` scores base-model or adapter exact-label accuracy.
-- `validate_artifact` jobs let validator workers verify target artifact hashes and adapter-evaluation metrics before artifacts can affect coordinator reputation or accepted-only model selection.
-- validator workers reject internally inconsistent adapter-evaluation metrics as malicious, including impossible example counts, correct/invalid counts, rates, or labels outside the declared label set.
-- worker CLIs accept multiple control multiaddrs and fall back when a dial fails, which is required for real LAN/VPN/firewall variation across machines.
-- artifact payloads can move over `/marshall/artifact/fetch/1.0.0`; transfers are chunked, hash-checked per chunk and per file, retried on corrupt chunks, and verified against the final artifact root hash.
-- control peers can store verified worker artifacts locally and serve them back to downstream workers through `marshall-artifact://<job_id>` inputs, so remote evaluation and validation do not depend on coordinator-local filesystem paths.
-- adapter leaderboard outputs include an explicit `selection_policy` with score formula, tie breakers, top-K, required verdict, and current `single_adapter` merge mode.
-- dataset shards can declare a `files[]` list with worker-resolvable URIs, SHA-256 hashes, and optional byte sizes, so workers materialize only the assigned shard files before training.
-- dataset cache materialization supports local `file://` inputs and HTTP/S shard files, verifies each file hash, verifies optional file sizes, and verifies the final shard root hash before exposing the shard to training code.
-- `npm run dataset:manifest` builds private local content-addressed dataset manifests from JSONL inputs under `.marshall/`, with optional `--base-uri` for externally hosted shard files. It accepts existing chat records with `messages[]`, plain text records through `--text-field`, or instruction datasets through `--instruction-field`, `--response-field`, and optional `--context-field`.
-- `npm run dataset:run:prepare` is the product path from raw dataset input to scheduled work: it can create the dataset manifest, write a run bundle, write the `train_adapter` jobs file, and publish the jobs into the coordinator when `--coordinator-url` is provided.
-- `train_adapter` jobs carry `training_config` in the job spec. The base model and LoRA hyperparameters are run-level contract data, not worker-local choices.
-
-## CLI Runtime
-
-Start a control peer with a Redis-backed coordinator:
+Start a local control peer:
 
 ```bash
 MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 \
@@ -184,35 +142,22 @@ MARSHALL_JOB_COUNT=2 \
 npm run control:start
 ```
 
-Use the local AG News profile after building the dataset:
+Start a local worker:
 
 ```bash
-npm run dataset:ag-news:build
-MARSHALL_ADAPTER_DATASET=ag_news \
-MARSHALL_ADAPTER_DATASET_DIR=.marshall/datasets/ag-news \
-MARSHALL_JOB_TYPE=train_adapter \
-MARSHALL_JOB_COUNT=4 \
-npm run control:start
+npm run worker:pool -- \
+  --control /ip4/127.0.0.1/tcp/4001/p2p/<control-peer-id> \
+  --job-type train_adapter \
+  --backend mlx \
+  --concurrency 1 \
+  --max-jobs 1 \
+  --dataset-cache-dir .marshall/cache/datasets \
+  --python ~/.marshall/mlx-venv/bin/python
 ```
 
-Build a generic private JSONL manifest for larger dataset windows. The generated data stays under `.marshall/`; upload the shard files externally first when remote workers need HTTP/S URIs, then pass the matching `--base-uri`:
+## Dataset Runs
 
-```bash
-npm run dataset:manifest -- \
-  --input-jsonl .marshall/cache/raw/fineweb-window.jsonl \
-  --output-dir .marshall/datasets/fineweb-window \
-  --dataset-id fineweb-edu-window \
-  --shard-count 64 \
-  --base-uri https://storage.example/marshall/datasets/fineweb-window
-
-MARSHALL_ADAPTER_DATASET=manifest \
-MARSHALL_ADAPTER_DATASET_DIR=.marshall/datasets/fineweb-window \
-MARSHALL_JOB_TYPE=train_adapter \
-MARSHALL_JOB_COUNT=64 \
-npm run control:start
-```
-
-For instruction-tuning JSONL sources, prepare the dataset manifest and training run bundle in one command:
+Marshall jobs should be produced from dataset manifests, not hand-written shell loops. The generic run preparer creates a content-addressed dataset manifest, writes a run bundle, and emits `jobs/train-adapters.json` for the control peer:
 
 ```bash
 npm run dataset:run:prepare -- \
@@ -232,138 +177,105 @@ npm run dataset:run:prepare -- \
   --context-field context
 ```
 
-Add `--coordinator-url http://127.0.0.1:8080` to publish the generated jobs into the coordinator immediately. The same run bundle still writes `jobs/train-adapters.json`, so the p2p control peer can start from the generated jobs file:
+For remote public workers, shard URIs must be worker-resolvable HTTP/S URLs and every file must carry a SHA-256 hash and optional byte size. Workers fail the job on hash or size mismatch.
+
+External datasets and generated dataset artifacts are intentionally kept out of the repository unless explicitly approved.
+
+## Public Deployment
+
+The current public trial deploy target is a small GCP VM:
+
+- project: `iconic-elevator-394020`;
+- instance: `marshall-micro-1`;
+- domain: `marshall.training`;
+- HTTPS proxy: Caddy;
+- coordinator: Go service on `127.0.0.1:8080`;
+- control peer: Node.js libp2p service on TCP `4001`;
+- Redis: local-only on the VM.
+
+Deploy:
 
 ```bash
-npm run control:start -- \
-  --jobs-file .marshall/runs/run_dolly_15k_001/jobs/train-adapters.json \
-  --artifact-store-dir .marshall/runs/run_dolly_15k_001/train-artifacts
+./scripts/deploy-gcp-micro.sh
 ```
 
-For large-scale scheduling tests without fake adapters, build a micro-sharded AG News dataset. Each shard still contains real AG News examples and each job trains a real LoRA adapter:
+The deploy script builds the TypeScript runtime and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery.
 
-```bash
-MARSHALL_MICRO_SHARDS=128 npm run dataset:ag-news:micro:build
-MARSHALL_ADAPTER_DATASET=ag_news \
-MARSHALL_ADAPTER_DATASET_DIR=.marshall/datasets/ag-news-micro \
-MARSHALL_JOB_TYPE=train_adapter \
-MARSHALL_JOB_COUNT=128 \
-npm run control:start
+## Architecture
+
+Core components:
+
+- `cmd/marshall-coordinator`: native Go coordinator daemon;
+- `coordinator/`: Redis-backed state, HTTP API, dashboard, reputation, validation votes;
+- `src/control-peer.ts`: libp2p control peer and worker protocol handlers;
+- `src/worker-peer.ts`: worker registration, heartbeat, claim, status, and artifact publication;
+- `src/training-runner.ts`: training, evaluation, and validation runner bridge;
+- `src/dataset-manifest.ts`: content-addressed dataset manifest generation;
+- `src/artifact-transfer.ts`: chunked p2p artifact transfer and verification;
+- `training/`: MLX and local smoke training scripts;
+- `ROADMAP.md`: product and architecture roadmap.
+
+Important protocol families:
+
+```text
+/marshall/worker/register/1.0.0
+/marshall/worker/heartbeat/1.0.0
+/marshall/job/claim/1.0.0
+/marshall/job/status/1.0.0
+/marshall/artifact/manifest/1.0.0
+/marshall/artifact/fetch/1.0.0
 ```
 
-Start a worker against a control multiaddr:
+## Reputation And Validation
 
-```bash
-MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python \
-npm run worker:start -- \
-  --control /ip4/127.0.0.1/tcp/4001/p2p/<control-peer-id> \
-  --job-type train_adapter \
-  --backend mlx \
-  --worker-id macbook-mlx-01 \
-  --dataset-cache-dir .marshall/cache/datasets \
-  --iters 20 \
-  --batch-size 1 \
-  --num-layers 4
-```
+Marshall is permissionless, but accepted work is not trustless-by-default. Artifacts are evaluated and validated before they affect model selection.
 
-For remote workers, pass every usable control address. The worker tries them in order, remembers the first successful address, and falls back if a later dial fails. If a LAN address times out while basic TCP probes succeed, check the host firewall and keep a second route, such as a VPN or relay multiaddr, in the list:
+Current score policy:
 
-```bash
-npm run worker:start -- \
-  --control /ip4/192.168.1.129/tcp/4001/p2p/<control-peer-id>,/ip4/100.102.25.69/tcp/4001/p2p/<control-peer-id> \
-  --job-type train_adapter \
-  --backend mlx \
-  --worker-id macbook-mlx-01
-```
+| Verdict | Score Delta | Meaning |
+| --- | ---: | --- |
+| `accepted` | `+2` | Artifact passed validation |
+| `poor` | `-10` | Artifact is valid but low quality |
+| `rejected` | `-25` | Artifact failed validation |
+| `timeout` | `-15` | Worker held a job until its lease expired |
+| `malicious` | `-100` | Strong sabotage or canary failure signal |
 
-For product E2E runs, keep artifact payloads on the p2p artifact plane. The control peer should materialize verified copies, and generated downstream jobs should reference them with `marshall-artifact://<job_id>`:
+Workers start at `100`, become `degraded` below `70`, and become `suspended` below `20`. Suspended workers cannot claim new jobs. Stale workers disappear from the live dashboard after 15 minutes without recent activity, but identity and reputation records stay in Redis.
 
-```bash
-MARSHALL_JOB_TYPE=train_adapter \
-npm run control:start -- \
-  --artifact-store-dir .marshall/runs/<run-id>/train-artifacts
+## Verification
 
-npm run eval:jobs -- \
-  --artifacts-dir .marshall/runs/<run-id>/train-artifacts \
-  --artifact-uri-mode p2p \
-  --eval-file .marshall/datasets/ag-news/eval.jsonl \
-  --output .marshall/runs/<run-id>/eval-jobs.json
-
-MARSHALL_JOB_TYPE=evaluate_adapter \
-MARSHALL_JOBS_FILE=.marshall/runs/<run-id>/eval-jobs.json \
-npm run control:start -- \
-  --artifact-store-dir .marshall/runs/<run-id>/eval-artifacts \
-  --artifact-serve-dirs .marshall/runs/<run-id>/train-artifacts
-```
-
-Create and run validation work after evaluation artifacts have been published to the coordinator:
-
-```bash
-npm run validation:jobs -- \
-  --coordinator-url http://127.0.0.1:8080 \
-  --target-artifact-type adapter_evaluation \
-  --target-uri-mode p2p \
-  --quorum 2 \
-  --validators-per-artifact 2 \
-  --output .marshall/jobs/validate-artifacts.json
-
-MARSHALL_JOBS_FILE=.marshall/jobs/validate-artifacts.json \
-MARSHALL_JOB_TYPE=validate_artifact \
-npm run control:start -- \
-  --artifact-store-dir .marshall/validation-artifacts \
-  --artifact-serve-dirs .marshall/eval-artifacts
-
-npm run worker:pool -- \
-  --control /ip4/127.0.0.1/tcp/4001/p2p/<control-peer-id> \
-  --job-type validate_artifact \
-  --backend cpu \
-  --concurrency 2 \
-  --max-jobs 2 \
-  --input-artifacts-dir .marshall/validation-inputs
-```
-
-Build a leaderboard from only accepted evaluation artifacts:
-
-```bash
-npm run leaderboard:adapters -- \
-  --eval-artifacts-dir .marshall/eval-artifacts \
-  --coordinator-url http://127.0.0.1:8080 \
-  --require-verdict accepted \
-  --output-dir .marshall/leaderboard
-```
-
-## Development
-
-Use Node.js 22 or newer.
+Use Node.js 22+ for JavaScript tests.
 
 ```bash
 nvm use
-npm install
 npm run build
-npm run dataset:marshall:check
-npm run dataset:ag-news:build
-npm run dataset:ag-news:check
-MARSHALL_MICRO_SHARDS=128 npm run dataset:ag-news:micro:build
-MARSHALL_MICRO_SHARDS=128 npm run dataset:ag-news:micro:check
 npm test
-npm run demo:compiled
-MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
-MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora
-MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora:eval
-MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:ag-news:eval
 go test ./...
-MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
-MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
 ```
 
-The integration test opens real TCP sockets on `127.0.0.1`, starts a control peer and worker peer, and verifies the full p2p job lifecycle.
-It also runs the toy trainer and asserts that the loss decreases before publishing the artifact manifest.
-The MLX smoke test is intended for Apple Silicon workers with MLX installed and verifies GPU execution.
-The Redis-backed coordinator integration tests require a reachable Redis server.
-The coordinator bridge test requires the Go coordinator running and verifies that p2p worker registration, job claim, status, and artifact publication are persisted as coordinator events.
+Additional checks:
 
-Dataset artifacts are private/local for now. Generated datasets, external datasets, local harness artifacts, and exploratory fixtures stay outside the repo unless explicitly approved for repository inclusion.
+```bash
+npm run dataset:marshall:check
+npm run dataset:ag-news:check
+MARSHALL_REDIS_ADDR=127.0.0.1:6379 go test ./...
+MARSHALL_COORDINATOR_URL=http://127.0.0.1:8080 npm test
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:smoke
+MARSHALL_PYTHON=~/.marshall/mlx-venv/bin/python npm run test:mlx:lora
+```
+
+The p2p tests open real TCP sockets on `127.0.0.1`. MLX tests require Apple Silicon and an MLX-capable Python environment.
+
+## Non-Goals
+
+- no public worker join token for the permissionless swarm;
+- no Redis access for workers;
+- no blockchain, token, or payment layer before validation and reputation are reliable;
+- no synchronous optimizer steps across random public Internet workers;
+- no single inference request split across arbitrary permissionless machines;
+- no unvalidated artifact entering model selection;
+- no generated datasets, model files, local harness artifacts, or exploratory fixtures committed to the repository.
 
 ## License
 
-Marshall source code is MIT licensed. The project remains private for structure validation; external datasets and generated training artifacts are not published from this repository.
+Marshall source code is MIT licensed. External datasets, generated training artifacts, and model outputs are not published from this repository.

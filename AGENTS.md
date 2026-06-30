@@ -1,6 +1,6 @@
 # Marshall Agent Notes
 
-Marshall is a p2p-first consumer AI compute network for asynchronous AI workloads.
+Marshall is a permissionless distributed training network for small language models.
 
 ## Deployment Domains
 

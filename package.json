@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "P2P-first consumer AI compute network prototype",
+  "description": "Permissionless SLM training network for verifiable LoRA worker swarms",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dataset:marshall:build": "python3 training/build_marshall_instruction_dataset.py --output-dir .marshall/datasets/marshall-instructions",
