@@ -44,7 +44,9 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/jobs.ts` defines local `train_toy_model`, `train_mlx_smoke`, and `train_adapter` job builders.
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured, sends the full `MarshallJob` as `job_spec`, and can read persisted jobs/artifacts back from the coordinator.
+- `src/coordinator-client.ts` supports coordinator write authentication with `MARSHALL_COORDINATOR_TOKEN` / `--coordinator-token` and worker heartbeat forwarding for live coordinator leases.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
+- `src/worker-peer.ts` supports optional swarm authentication with `MARSHALL_SWARM_TOKEN` / `--swarm-token` so untrusted peers cannot register or claim jobs from permissioned control peers.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.
@@ -72,7 +74,11 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `tests/coordinator-bridge.integration.test.ts` verifies that the p2p lifecycle is persisted into the Go coordinator event log when `MARSHALL_COORDINATOR_URL` is set.
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, full job specs, job claims, statuses, artifacts, and append-only events in Redis.
-- `coordinator/http.go` exposes the initial coordinator HTTP admin API, including `GET /jobs/{job_id}` and `GET /artifacts/{job_id}` for persisted state reads.
+- `coordinator/redis_store.go` maintains job leases and can requeue expired running jobs so abandoned work is visible and recoverable.
+- `coordinator/http.go` exposes the coordinator HTTP admin API, including `GET /jobs/{job_id}`, `GET /artifacts/{job_id}`, `POST /jobs/requeue-expired`, `GET /dashboard`, `GET /events/stream`, and the embedded public console at `/`.
+- `coordinator/http.go` enforces optional bearer-token write authentication when `MARSHALL_COORDINATOR_TOKEN` is set; read endpoints remain available for the public console.
+- `coordinator/public/index.html` is the embedded terminal-style swarm console for worker status, job status, artifacts, and live coordinator events.
+- `coordinator/public/AGENTS.md` is the public worker onboarding file served at `/AGENTS.md`.
 - `coordinator/*_integration_test.go` verifies the Redis store and HTTP lifecycle against a real Redis server when `MARSHALL_REDIS_ADDR` is set.
 
 ## Verification
