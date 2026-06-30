@@ -6,28 +6,41 @@
     <title>Marshall Swarm Console</title>
     <style>
       :root {
-        --paper: #f7f4ed;
-        --ink: #161616;
-        --muted: #67645f;
-        --line: #d8d1c3;
-        --panel: #fffdf7;
-        --green: #1f8a4c;
-        --blue: #2457d6;
-        --red: #b4372b;
-        --yellow: #d4a514;
-        --black: #0b0b0b;
+        --bg: #020403;
+        --panel: #070b08;
+        --panel-2: #0a120d;
+        --panel-3: #0d1911;
+        --line: rgba(68, 255, 139, 0.24);
+        --line-strong: rgba(68, 255, 139, 0.44);
+        --text: #ddffe6;
+        --muted: #7fa989;
+        --dim: #4c6d55;
+        --green: #33ff88;
+        --green-soft: rgba(51, 255, 136, 0.11);
+        --cyan: #66d9ef;
+        --amber: #ffd166;
+        --red: #ff5f6d;
+        --mono: "Berkeley Mono", "JetBrains Mono", "SFMono-Regular", "IBM Plex Mono", "Fira Code", Menlo, Consolas, monospace;
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html {
+        background: var(--bg);
+      }
+
       body {
         margin: 0;
-        background: var(--paper);
-        color: var(--ink);
-        font-family: "Avenir Next", "Helvetica Neue", Helvetica, sans-serif;
-        font-size: 15px;
+        background:
+          repeating-linear-gradient(0deg, rgba(51, 255, 136, 0.035) 0, rgba(51, 255, 136, 0.035) 1px, transparent 1px, transparent 5px),
+          linear-gradient(180deg, #020403 0%, #030804 48%, #010201 100%);
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1.45;
+        min-height: 100vh;
       }
 
       a {
@@ -48,10 +61,12 @@
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        padding: 14px 22px;
+        min-height: 58px;
+        padding: 10px 18px;
         border-bottom: 1px solid var(--line);
-        background: rgba(247, 244, 237, 0.92);
+        background: rgba(2, 4, 3, 0.92);
         backdrop-filter: blur(14px);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
       }
 
       .brand {
@@ -62,38 +77,49 @@
       }
 
       .mark {
-        width: 32px;
-        height: 32px;
-        border: 2px solid var(--black);
-        background:
-          linear-gradient(90deg, transparent 45%, var(--black) 45%, var(--black) 55%, transparent 55%),
-          linear-gradient(0deg, transparent 45%, var(--black) 45%, var(--black) 55%, transparent 55%),
-          var(--yellow);
-        box-shadow: 4px 4px 0 var(--black);
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
         flex: 0 0 auto;
+        border: 1px solid var(--line-strong);
+        background: var(--panel-2);
+        color: var(--green);
+        box-shadow: inset 0 0 18px rgba(51, 255, 136, 0.12), 0 0 22px rgba(51, 255, 136, 0.08);
+      }
+
+      .mark::before {
+        content: ">_";
+        font-size: 13px;
+        font-weight: 700;
       }
 
       .brand h1 {
         margin: 0;
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 22px;
+        color: var(--green);
+        font-size: 16px;
         font-weight: 700;
+        letter-spacing: 0;
+        text-transform: lowercase;
       }
 
       .brand span {
+        display: block;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 11px;
+        white-space: nowrap;
       }
 
       .status {
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        min-height: 34px;
-        padding: 0 12px;
+        min-height: 32px;
+        padding: 0 11px;
         border: 1px solid var(--line);
         background: var(--panel);
-        font-size: 13px;
+        color: var(--text);
+        font-size: 12px;
         white-space: nowrap;
       }
 
@@ -101,7 +127,8 @@
         width: 9px;
         height: 9px;
         border-radius: 50%;
-        background: var(--yellow);
+        background: var(--amber);
+        box-shadow: 0 0 12px currentColor;
       }
 
       .dot.ok {
@@ -113,144 +140,228 @@
       }
 
       main {
-        width: min(1440px, 100%);
+        width: min(1520px, 100%);
         margin: 0 auto;
-        padding: 24px;
+        padding: 18px;
       }
 
-      .hero {
+      .terminal-head {
         display: grid;
-        grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
-        gap: 20px;
-        align-items: stretch;
-        margin-bottom: 22px;
+        gap: 1px;
+        margin-bottom: 14px;
+        border: 1px solid var(--line);
+        background: var(--line);
+        box-shadow: 0 0 0 1px rgba(51, 255, 136, 0.04), 0 28px 70px rgba(0, 0, 0, 0.38);
+      }
+
+      .prompt-line {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 38px;
+        padding: 0 12px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        background: #030704;
+        color: var(--text);
+        white-space: nowrap;
+        scrollbar-width: thin;
+        scrollbar-color: var(--line-strong) transparent;
+      }
+
+      .prompt-user,
+      .prompt-symbol {
+        color: var(--green);
+      }
+
+      .prompt-path {
+        color: var(--cyan);
+      }
+
+      .cursor {
+        display: inline-block;
+        width: 8px;
+        height: 16px;
+        margin-left: 2px;
+        background: var(--green);
+        box-shadow: 0 0 14px rgba(51, 255, 136, 0.55);
+        animation: blink 1.1s steps(2, start) infinite;
+      }
+
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      .boot-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(360px, 0.72fr);
+        gap: 1px;
+        background: var(--line);
+      }
+
+      .statement,
+      .join-panel {
+        min-width: 0;
+        background: rgba(7, 11, 8, 0.96);
       }
 
       .statement {
-        min-height: 280px;
-        padding: 28px;
-        border: 2px solid var(--black);
-        background:
-          linear-gradient(135deg, rgba(36, 87, 214, 0.13), transparent 34%),
-          linear-gradient(0deg, rgba(31, 138, 76, 0.12), transparent 48%),
-          var(--panel);
-        box-shadow: 8px 8px 0 var(--black);
+        padding: 18px;
       }
 
       .statement h2 {
-        max-width: 780px;
-        margin: 0 0 18px;
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: clamp(34px, 5vw, 68px);
-        line-height: 0.96;
+        max-width: 860px;
+        margin: 0 0 10px;
+        color: var(--text);
+        font-size: clamp(26px, 3.8vw, 52px);
+        font-weight: 700;
+        line-height: 1.02;
         letter-spacing: 0;
+        text-transform: uppercase;
       }
 
       .statement p {
-        max-width: 720px;
+        max-width: 820px;
         margin: 0;
-        color: #34322f;
-        font-size: 18px;
-        line-height: 1.5;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .kicker {
+        margin: 0 0 12px;
+        color: var(--green);
+        font-size: 12px;
+      }
+
+      .kicker::before {
+        content: "[ok] ";
+        color: var(--green);
       }
 
       .join-panel {
-        border: 1px solid var(--line);
-        background: var(--panel);
-        padding: 20px;
         display: grid;
-        gap: 14px;
+        gap: 12px;
         align-content: start;
+        padding: 14px;
       }
 
       .join-panel h3,
       .section h3 {
         margin: 0;
-        font-size: 15px;
-        text-transform: uppercase;
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 700;
         letter-spacing: 0;
+        text-transform: uppercase;
       }
 
       .join-panel p {
         margin: 0;
         color: var(--muted);
-        line-height: 1.45;
       }
 
       .command {
         display: block;
         overflow: auto;
+        max-width: 100%;
         padding: 12px;
         border: 1px solid var(--line);
-        background: #111;
-        color: #f8f0d8;
-        font-family: "SFMono-Regular", Consolas, monospace;
-        font-size: 12px;
-        line-height: 1.5;
+        background: #020403;
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.55;
         white-space: pre;
+      }
+
+      .command::selection,
+      td::selection,
+      th::selection,
+      span::selection,
+      strong::selection {
+        background: rgba(51, 255, 136, 0.3);
       }
 
       .actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 8px;
       }
 
       .button {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 38px;
-        padding: 0 14px;
-        border: 1px solid var(--black);
-        background: var(--black);
-        color: white;
+        min-height: 34px;
+        padding: 0 11px;
+        border: 1px solid var(--line-strong);
+        background: var(--green-soft);
+        color: var(--green);
         text-decoration: none;
+        font-size: 12px;
         font-weight: 700;
       }
 
+      .button::before {
+        content: "$ ";
+        color: var(--muted);
+      }
+
+      .button:hover {
+        border-color: var(--green);
+        background: rgba(51, 255, 136, 0.18);
+      }
+
       .button.secondary {
-        background: var(--panel);
-        color: var(--ink);
+        color: var(--text);
+        background: rgba(221, 255, 230, 0.04);
       }
 
       .summary-grid {
         display: grid;
         grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 12px;
-        margin-bottom: 18px;
+        gap: 10px;
+        margin-bottom: 14px;
       }
 
       .metric {
-        min-height: 108px;
-        padding: 16px;
+        min-height: 92px;
+        padding: 13px;
         border: 1px solid var(--line);
         background: var(--panel);
+        box-shadow: inset 0 0 24px rgba(51, 255, 136, 0.04);
       }
 
       .metric strong {
         display: block;
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 38px;
-        line-height: 1;
+        margin-top: 10px;
+        color: var(--green);
+        font-size: clamp(30px, 4vw, 46px);
+        font-weight: 700;
+        line-height: 0.9;
+        text-shadow: 0 0 20px rgba(51, 255, 136, 0.18);
       }
 
       .metric span {
         display: block;
-        margin-top: 10px;
         color: var(--muted);
+        font-size: 11px;
+        overflow-wrap: anywhere;
       }
 
       .grid {
         display: grid;
-        grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
-        gap: 18px;
+        grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+        gap: 14px;
       }
 
       .section {
         min-width: 0;
         border: 1px solid var(--line);
         background: var(--panel);
+        box-shadow: inset 0 0 30px rgba(51, 255, 136, 0.035);
       }
 
       .section-header {
@@ -258,13 +369,22 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        padding: 14px 16px;
+        min-height: 42px;
+        padding: 0 13px;
         border-bottom: 1px solid var(--line);
+        background: var(--panel-2);
+      }
+
+      .section-header h3::before {
+        content: "./";
+        color: var(--muted);
       }
 
       .section-header span {
         color: var(--muted);
-        font-size: 13px;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+        text-align: right;
       }
 
       .table-wrap {
@@ -279,82 +399,114 @@
 
       th,
       td {
-        padding: 11px 14px;
-        border-bottom: 1px solid var(--line);
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(68, 255, 139, 0.12);
         text-align: left;
         vertical-align: top;
       }
 
       th {
-        color: var(--muted);
-        font-size: 12px;
+        color: var(--dim);
+        font-size: 11px;
         font-weight: 700;
-        text-transform: uppercase;
         letter-spacing: 0;
+        text-transform: uppercase;
       }
 
       td {
-        word-break: break-word;
+        color: var(--text);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+
+      td strong {
+        color: var(--text);
+        font-weight: 700;
+      }
+
+      td span {
+        color: var(--muted);
+      }
+
+      tr:hover td {
+        background: rgba(51, 255, 136, 0.045);
       }
 
       .pill {
         display: inline-flex;
         align-items: center;
-        min-height: 24px;
-        padding: 0 8px;
+        min-height: 22px;
+        padding: 0 7px;
         border: 1px solid var(--line);
-        background: #f1eadf;
-        font-size: 12px;
+        background: rgba(221, 255, 230, 0.04);
+        color: var(--muted);
+        font-size: 11px;
         font-weight: 700;
         white-space: nowrap;
         word-break: normal;
       }
 
       .pill.running {
-        color: var(--blue);
-        border-color: rgba(36, 87, 214, 0.35);
-        background: rgba(36, 87, 214, 0.08);
+        color: var(--cyan);
+        border-color: rgba(102, 217, 239, 0.48);
+        background: rgba(102, 217, 239, 0.09);
       }
 
       .pill.completed {
         color: var(--green);
-        border-color: rgba(31, 138, 76, 0.35);
-        background: rgba(31, 138, 76, 0.08);
+        border-color: rgba(51, 255, 136, 0.5);
+        background: var(--green-soft);
       }
 
       .pill.failed {
         color: var(--red);
-        border-color: rgba(180, 55, 43, 0.35);
-        background: rgba(180, 55, 43, 0.08);
+        border-color: rgba(255, 95, 109, 0.55);
+        background: rgba(255, 95, 109, 0.1);
+      }
+
+      .pill.queued {
+        color: var(--amber);
+        border-color: rgba(255, 209, 102, 0.48);
+        background: rgba(255, 209, 102, 0.09);
+      }
+
+      .pill.idle {
+        color: var(--muted);
       }
 
       .event-log {
         display: grid;
         gap: 1px;
-        background: var(--line);
+        max-height: 560px;
+        overflow: auto;
+        background: rgba(68, 255, 139, 0.12);
       }
 
       .event {
         display: grid;
-        grid-template-columns: 132px minmax(0, 1fr);
+        grid-template-columns: 96px minmax(0, 1fr);
         gap: 10px;
-        padding: 12px 14px;
+        padding: 10px 12px;
         background: var(--panel);
       }
 
       .event time {
-        color: var(--muted);
-        font-size: 12px;
+        color: var(--dim);
+        font-size: 11px;
       }
 
       .event strong {
         display: block;
-        font-size: 13px;
+        color: var(--green);
+        font-size: 12px;
+        overflow-wrap: anywhere;
       }
 
       .event span {
+        display: block;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 11px;
+        overflow-wrap: anywhere;
       }
 
       .empty {
@@ -362,8 +514,8 @@
         color: var(--muted);
       }
 
-      @media (max-width: 980px) {
-        .hero,
+      @media (max-width: 1080px) {
+        .boot-grid,
         .grid {
           grid-template-columns: 1fr;
         }
@@ -380,17 +532,15 @@
         }
 
         main {
-          padding: 16px;
-        }
-
-        .statement {
-          min-height: auto;
-          padding: 22px;
-          box-shadow: 5px 5px 0 var(--black);
+          padding: 12px;
         }
 
         .summary-grid {
           grid-template-columns: 1fr;
+        }
+
+        .statement h2 {
+          font-size: 30px;
         }
 
         .event {
@@ -405,58 +555,64 @@
         <div class="brand">
           <div class="mark" aria-hidden="true"></div>
           <div>
-            <h1>Marshall</h1>
-            <span>Swarm coordinator console</span>
+            <h1>marshall</h1>
+            <span>coordinator tty / live swarm</span>
           </div>
         </div>
-        <div class="status"><span class="dot" id="healthDot"></span><span id="healthText">Connecting</span></div>
+        <div class="status"><span class="dot" id="healthDot"></span><span id="healthText">connecting</span></div>
       </header>
 
       <main>
-        <section class="hero">
-          <div class="statement">
-            <h2>Active jobs, live workers, verified artifacts.</h2>
-            <p>Marshall coordinates small model work across agents. Workers claim jobs from the coordinator, publish signed artifacts, and feed the leaderboard and model package pipeline.</p>
+        <section class="terminal-head">
+          <div class="prompt-line">
+            <span class="prompt-user">marshall@swarm</span><span class="prompt-path">:~/coordinator</span><span class="prompt-symbol">$</span><span>./marshall status --live</span><span class="cursor" aria-hidden="true"></span>
           </div>
-          <aside class="join-panel">
-            <h3>Participate</h3>
-            <p>Give another agent the public instructions file, the control peer address, and a swarm token. The worker connects to the control peer, keeps a live heartbeat, and claims compatible jobs.</p>
-            <code class="command">npm run worker:pool:compiled -- \
+          <div class="boot-grid">
+            <div class="statement">
+              <p class="kicker">control plane online</p>
+              <h2>Distributed training monitor</h2>
+              <p>Workers claim jobs, send heartbeats, publish artifacts, and stream coordinator events into this terminal.</p>
+            </div>
+            <aside class="join-panel">
+              <h3>worker bootstrap</h3>
+              <p>Give an agent the swarm instructions, control peer address, and token.</p>
+              <code class="command">npm run worker:pool:compiled -- \
   --control /ip4/&lt;host&gt;/tcp/&lt;port&gt;/p2p/&lt;peer&gt; \
   --job-type evaluate_adapter \
   --backend mlx \
   --swarm-token &lt;token&gt; \
   --concurrency 1 \
   --max-jobs 1</code>
-            <div class="actions">
-              <a class="button" href="/AGENTS.md">Open AGENTS.md</a>
-              <a class="button secondary" href="/dashboard">Raw dashboard JSON</a>
-            </div>
-          </aside>
+              <div class="actions">
+                <a class="button" href="/AGENTS.md">open AGENTS.md</a>
+                <a class="button secondary" href="/dashboard">cat /dashboard.json</a>
+              </div>
+            </aside>
+          </div>
         </section>
 
         <section class="summary-grid" aria-label="Swarm summary">
-          <div class="metric"><strong id="workersRegistered">0</strong><span>registered workers</span></div>
-          <div class="metric"><strong id="workersBusy">0</strong><span>busy workers</span></div>
-          <div class="metric"><strong id="jobsRunning">0</strong><span>running jobs</span></div>
-          <div class="metric"><strong id="jobsCompleted">0</strong><span>completed jobs</span></div>
-          <div class="metric"><strong id="artifactsPublished">0</strong><span>published artifacts</span></div>
+          <div class="metric"><span>workers.registered</span><strong id="workersRegistered">0</strong></div>
+          <div class="metric"><span>workers.busy</span><strong id="workersBusy">0</strong></div>
+          <div class="metric"><span>jobs.running</span><strong id="jobsRunning">0</strong></div>
+          <div class="metric"><span>jobs.completed</span><strong id="jobsCompleted">0</strong></div>
+          <div class="metric"><span>artifacts.published</span><strong id="artifactsPublished">0</strong></div>
         </section>
 
         <section class="grid">
           <div class="section">
             <div class="section-header">
-              <h3>Workers</h3>
-              <span id="workersUpdated">Waiting for data</span>
+              <h3>workers</h3>
+              <span id="workersUpdated">waiting for data</span>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th style="width: 28%">Worker</th>
-                    <th style="width: 18%">Backend</th>
-                    <th style="width: 20%">Status</th>
-                    <th style="width: 34%">Last output</th>
+                    <th style="width: 28%">worker</th>
+                    <th style="width: 18%">backend</th>
+                    <th style="width: 20%">state</th>
+                    <th style="width: 34%">output</th>
                   </tr>
                 </thead>
                 <tbody id="workersTable"></tbody>
@@ -466,25 +622,25 @@
 
           <div class="section">
             <div class="section-header">
-              <h3>Event Stream</h3>
-              <span id="streamText">Opening stream</span>
+              <h3>event stream</h3>
+              <span id="streamText">opening stream</span>
             </div>
             <div class="event-log" id="eventLog"></div>
           </div>
 
           <div class="section">
             <div class="section-header">
-              <h3>Jobs</h3>
-              <span>Latest coordinator state</span>
+              <h3>jobs</h3>
+              <span>latest coordinator state</span>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th style="width: 32%">Job</th>
-                    <th style="width: 18%">Type</th>
-                    <th style="width: 16%">Status</th>
-                    <th style="width: 34%">Worker / Artifact</th>
+                    <th style="width: 32%">job</th>
+                    <th style="width: 18%">type</th>
+                    <th style="width: 16%">state</th>
+                    <th style="width: 34%">worker / artifact</th>
                   </tr>
                 </thead>
                 <tbody id="jobsTable"></tbody>
@@ -494,16 +650,16 @@
 
           <div class="section">
             <div class="section-header">
-              <h3>Artifacts</h3>
-              <span>What workers published</span>
+              <h3>artifacts</h3>
+              <span>worker outputs</span>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th style="width: 28%">Job</th>
-                    <th style="width: 22%">Type</th>
-                    <th style="width: 50%">Hash</th>
+                    <th style="width: 28%">job</th>
+                    <th style="width: 22%">type</th>
+                    <th style="width: 50%">hash</th>
                   </tr>
                 </thead>
                 <tbody id="artifactsTable"></tbody>
@@ -559,21 +715,21 @@
           for (const event of dashboard.recent_events || []) {
             state.events.set(event.id, event);
           }
-          setHealth(true, "Coordinator online");
+          setHealth(true, "coordinator online");
           render();
         } catch (error) {
-          setHealth(false, "Coordinator offline");
+          setHealth(false, "coordinator offline");
         }
       }
 
       function openEventStream() {
         if (!("EventSource" in window)) {
-          nodes.streamText.textContent = "Polling";
+          nodes.streamText.textContent = "polling";
           return;
         }
         const source = new EventSource("/events/stream");
         source.addEventListener("open", () => {
-          nodes.streamText.textContent = "Live";
+          nodes.streamText.textContent = "live";
         });
         source.addEventListener("marshall_event", (message) => {
           const event = JSON.parse(message.data);
@@ -582,7 +738,7 @@
           renderEvents();
         });
         source.addEventListener("error", () => {
-          nodes.streamText.textContent = "Reconnecting";
+          nodes.streamText.textContent = "reconnecting";
         });
       }
 
@@ -612,7 +768,7 @@
         nodes.jobsRunning.textContent = summary.jobs_running ?? 0;
         nodes.jobsCompleted.textContent = summary.jobs_completed ?? 0;
         nodes.artifactsPublished.textContent = summary.artifacts_published ?? 0;
-        nodes.workersUpdated.textContent = `Updated ${timeLabel(dashboard.generated_at)}`;
+        nodes.workersUpdated.textContent = `updated ${timeLabel(dashboard.generated_at)}`;
         renderWorkers(dashboard.workers || []);
         renderJobs(dashboard.jobs || []);
         renderArtifacts(dashboard.artifacts || []);
@@ -697,8 +853,14 @@
         if (status === "failed") {
           return "failed";
         }
-        if (status === "running" || status === "claimed") {
+        if (status === "running" || status === "claimed" || status === "working") {
           return "running";
+        }
+        if (status === "queued") {
+          return "queued";
+        }
+        if (status === "idle" || status === "registered") {
+          return "idle";
         }
         return "";
       }
