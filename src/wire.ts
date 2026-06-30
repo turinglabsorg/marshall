@@ -4,6 +4,8 @@ import { toString } from "uint8arrays/to-string";
 import type { DialTarget, Libp2p, Stream } from "@libp2p/interface";
 import type { ProtocolName } from "./protocols.js";
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 export async function readJson(stream: Stream): Promise<unknown> {
   const chunks: Uint8Array[] = [];
 
@@ -31,9 +33,21 @@ export async function requestJson(
   options: { timeoutMs?: number } = {},
 ): Promise<unknown> {
   const stream = await node.dialProtocol(target, protocol, {
-    signal: AbortSignal.timeout(options.timeoutMs ?? 5_000),
+    signal: AbortSignal.timeout(options.timeoutMs ?? defaultRequestTimeoutMs()),
   });
 
   await writeJson(stream, payload);
   return readJson(stream);
+}
+
+function defaultRequestTimeoutMs(): number {
+  const value = process.env.MARSHALL_P2P_REQUEST_TIMEOUT_MS;
+  if (value == null || value === "") {
+    return DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`invalid MARSHALL_P2P_REQUEST_TIMEOUT_MS: ${value}`);
+  }
+  return parsed;
 }
