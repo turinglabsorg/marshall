@@ -10,7 +10,7 @@ There is no worker join token for the public swarm. Do not set `MARSHALL_SWARM_T
 
 ## What Your Mac Will Do
 
-Your Mac connects to the public Marshall control peer over libp2p, registers its hardware capability, claims one compatible job, downloads only the assigned dataset shard files, verifies every declared SHA-256 hash and byte size, trains the adapter locally, then publishes an artifact manifest back to the swarm.
+Your Mac connects to the public Marshall control peer over libp2p, registers its hardware capability, claims compatible jobs, downloads only the assigned dataset shard files, verifies every declared SHA-256 hash and byte size, trains adapters locally, then publishes artifact manifests back to the swarm. The worker pool is long-running by default and keeps polling for new compatible jobs.
 
 The active job defines the base model, dataset shard, LoRA settings, and evaluation contract. Workers must not override those values locally unless the operator explicitly asks for a debugging run.
 
@@ -92,7 +92,7 @@ The value should look like:
 
 ## Claim Available Training Work
 
-Run one worker first. It will claim one compatible `train_adapter` job if work is available.
+Run one worker slot first. It will claim compatible `train_adapter` jobs as work becomes available.
 
 ```sh
 npm run worker:pool:compiled -- \
@@ -100,7 +100,6 @@ npm run worker:pool:compiled -- \
   --job-type train_adapter \
   --backend mlx \
   --concurrency 1 \
-  --max-jobs 1 \
   --job-lease-seconds 900 \
   --heartbeat-interval-ms 15000 \
   --worker-id-prefix "$(hostname)-marshall-train" \
@@ -110,7 +109,7 @@ npm run worker:pool:compiled -- \
   --python "$MARSHALL_PYTHON"
 ```
 
-To let the same Mac process more than one job sequentially, increase `--max-jobs`. Keep `--concurrency 1` until you know the machine has enough memory for parallel MLX runs.
+Keep this process running. When one job finishes, the same slot immediately asks for another compatible job. Keep `--concurrency 1` until you know the machine has enough memory for parallel MLX runs; then increase `--concurrency` to run multiple slots on the same Mac.
 
 ## Monitor Progress
 
@@ -131,7 +130,7 @@ curl -fsS https://marshall.training/events?count=20
 
 ## If There Is No Job
 
-If the worker exits with `no job assigned`, it connected correctly but no compatible work was available at that moment. Leave the command ready and try again after the dashboard shows queued jobs.
+If the dashboard shows no compatible queued jobs, the worker pool stays idle and polls again automatically. If you intentionally want a one-shot maintenance run, pass `--max-jobs <n> --exit-when-idle`; do not use those flags for normal public participation.
 
 ## Worker Rules
 

@@ -67,7 +67,7 @@ Implemented:
 - public `/AGENTS.md` worker onboarding;
 - TypeScript libp2p worker/control protocols;
 - persistent Ed25519 worker identities;
-- worker pool CLI for bounded concurrent jobs;
+- persistent worker pool CLI with stable concurrent slots;
 - MLX LoRA training runner;
 - dataset manifest builder with HTTP/S shard URIs;
 - dataset cache with file size and SHA-256 verification;
@@ -150,10 +150,11 @@ npm run worker:pool -- \
   --job-type train_adapter \
   --backend mlx \
   --concurrency 1 \
-  --max-jobs 1 \
   --dataset-cache-dir .marshall/cache/datasets \
   --python ~/.marshall/mlx-venv/bin/python
 ```
+
+`worker:pool` is long-running by default: each stable worker slot claims another compatible job after completing the previous one. Use `--max-jobs <n>` and `--exit-when-idle` only for bounded local tests or maintenance runs.
 
 ## Dataset Runs
 

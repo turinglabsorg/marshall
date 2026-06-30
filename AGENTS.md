@@ -54,7 +54,7 @@ Marshall is a permissionless distributed training network for small language mod
 - `src/worker-cli.ts` accepts comma-separated control multiaddrs through `--control` and extra addresses through `--control-addrs` / `MARSHALL_CONTROL_ADDRS`; `src/worker-peer.ts` tries them in order, remembers the first successful address, and falls back when a dial fails.
 - Remote worker runs should receive every usable control multiaddr. If a LAN multiaddr times out while basic TCP probes succeed, check host firewall/routing and keep a second route or relay address available.
 - `src/worker-cli.ts` materializes `marshall-artifact://<job_id>` job inputs from the control peer before `evaluate_adapter` or `validate_artifact` execution.
-- `src/worker-pool-cli.ts` starts bounded concurrent worker processes against a control peer. Use this for product E2E proof instead of manual shell loops.
+- `src/worker-pool-cli.ts` starts persistent concurrent worker slots against a control peer. Each slot runs a one-job worker process, then immediately claims more compatible work. Without `--max-jobs`, the pool keeps polling when the queue is empty; use `--max-jobs` and `--exit-when-idle` only for bounded tests or maintenance runs. Use this for product E2E proof instead of manual shell loops.
 - `src/artifact-transfer.ts` implements chunked artifact bundles. Every chunk carries a SHA-256 hash, receivers retry corrupted chunks, every file is hashed after download, and the final artifact root hash must match the manifest before the control peer publishes it.
 - `src/wire.ts` uses `MARSHALL_P2P_REQUEST_TIMEOUT_MS` for libp2p JSON request timeouts and defaults to 30 seconds so cold remote dials are not rejected by the old 5 second local-only timeout.
 - `src/jobs.ts` defines local `train_toy_model`, `train_mlx_smoke`, and `train_adapter` job builders.
@@ -141,13 +141,13 @@ Product E2E validation should use this shape:
 
 ```bash
 npm run control:start -- --job-type train_adapter --job-count 4 --adapter-dataset ag_news --artifact-store-dir <adapter-artifacts>
-npm run worker:pool -- --control <control-multiaddr> --job-type train_adapter --concurrency 4 --max-jobs 4 --artifacts-dir <worker-adapter-artifacts>
+npm run worker:pool -- --control <control-multiaddr> --job-type train_adapter --concurrency 4 --max-jobs 4 --exit-when-idle --artifacts-dir <worker-adapter-artifacts>
 npm run eval:jobs -- --artifacts-dir <adapter-artifacts> --artifact-uri-mode p2p --eval-kind ag_news --eval-file <eval.jsonl> --output <eval-jobs.json> --run-id <eval-run-id> --round-id <round-id> --job-prefix <eval-job-prefix> --model <base-model> --max-examples <n> --max-tokens <n>
 npm run control:start -- --job-type evaluate_adapter --jobs-file <eval-jobs.json> --artifact-store-dir <eval-artifacts> --artifact-serve-dirs <adapter-artifacts>
-npm run worker:pool -- --control <control-multiaddr> --job-type evaluate_adapter --concurrency 4 --max-jobs 4 --artifacts-dir <worker-eval-artifacts> --input-artifacts-dir <input-artifacts>
+npm run worker:pool -- --control <control-multiaddr> --job-type evaluate_adapter --concurrency 4 --max-jobs 4 --exit-when-idle --artifacts-dir <worker-eval-artifacts> --input-artifacts-dir <input-artifacts>
 npm run validation:jobs -- --coordinator-url <coordinator-url> --target-artifact-type adapter_evaluation --target-uri-mode p2p --quorum 2 --validators-per-artifact 2 --output <validation-jobs.json>
 npm run control:start -- --job-type validate_artifact --jobs-file <validation-jobs.json> --artifact-store-dir <validation-artifacts> --artifact-serve-dirs <eval-artifacts>
-npm run worker:pool -- --control <control-multiaddr> --job-type validate_artifact --backend cpu --concurrency 4 --max-jobs 4 --artifacts-dir <worker-validation-artifacts> --input-artifacts-dir <input-artifacts>
+npm run worker:pool -- --control <control-multiaddr> --job-type validate_artifact --backend cpu --concurrency 4 --max-jobs 4 --exit-when-idle --artifacts-dir <worker-validation-artifacts> --input-artifacts-dir <input-artifacts>
 npm run leaderboard:adapters -- --eval-artifacts-dir <eval-artifacts> --coordinator-url <coordinator-url> --require-verdict accepted --output-dir <leaderboard-dir>
 npm run model:package -- --optimized-model <leaderboard-dir>/optimized_model.json --adapter-artifacts-dir <adapter-artifacts> --output-dir <package-dir>
 npm run model:query -- --package <package-dir>/model_package.json --eval-file <eval.jsonl> --require-correct true

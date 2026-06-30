@@ -16,55 +16,74 @@ if (jobType == null) {
 }
 
 const concurrency = numberArg(args.concurrency ?? process.env.MARSHALL_WORKER_POOL_CONCURRENCY, 1);
-const maxJobs = numberArg(args["max-jobs"] ?? process.env.MARSHALL_WORKER_POOL_MAX_JOBS, 1);
+const maxJobs = optionalNumberArg(args["max-jobs"] ?? process.env.MARSHALL_WORKER_POOL_MAX_JOBS);
+const idleBackoffMs = numberArg(args["idle-backoff-ms"] ?? process.env.MARSHALL_WORKER_POOL_IDLE_BACKOFF_MS, 5_000);
+const exitWhenIdle = booleanArg(args["exit-when-idle"] ?? process.env.MARSHALL_WORKER_POOL_EXIT_WHEN_IDLE, false);
 const workerPrefix = args["worker-id-prefix"] ?? process.env.MARSHALL_WORKER_ID_PREFIX ?? "marshall-worker";
 const keyDir = args["key-dir"] ?? process.env.MARSHALL_WORKER_KEY_DIR ?? ".marshall/worker-pool-keys";
 const workerScript = args["worker-script"] ?? siblingScript("worker-cli");
 
 await mkdir(keyDir, { recursive: true });
 
-let launched = 0;
+let reserved = 0;
 let completed = 0;
 let failed = 0;
+let idleClaims = 0;
 let stopping = false;
 
-const active = new Set<Promise<void>>();
-while (!stopping && launched < maxJobs) {
-  while (!stopping && active.size < concurrency && launched < maxJobs) {
-    launched += 1;
-    const promise = runWorker(launched)
-      .catch((error) => {
-        failed += 1;
-        if (String(error?.message ?? error).includes("no job assigned")) {
-          stopping = true;
-          return;
-        }
-        throw error;
-      })
-      .finally(() => {
-        active.delete(promise);
-      });
-    active.add(promise);
-  }
-  if (active.size > 0) {
-    await Promise.race(active);
-  }
-}
-await Promise.allSettled(active);
+await Promise.all(Array.from({ length: concurrency }, (_value, index) => runSlot(index + 1)));
 
 console.log(JSON.stringify({
   type: "marshall_worker_pool_completed",
   job_type: jobType,
   control,
   concurrency,
-  max_jobs: maxJobs,
-  launched,
+  max_jobs: maxJobs ?? null,
   completed,
   failed,
+  idle_claims: idleClaims,
+  persistent: maxJobs == null,
 }, null, 2));
 
-async function runWorker(index: number): Promise<void> {
-  const suffix = String(index).padStart(4, "0");
+async function runSlot(slot: number): Promise<void> {
+  while (!stopping) {
+    if (!reserveRun()) {
+      return;
+    }
+    const result = await runWorker(slot);
+    if (result === "completed") {
+      completed += 1;
+      continue;
+    }
+    if (result === "idle") {
+      releaseReservedRun();
+      idleClaims += 1;
+      if (exitWhenIdle) {
+        stopping = true;
+        return;
+      }
+      await sleep(idleBackoffMs);
+      continue;
+    }
+    failed += 1;
+    await sleep(idleBackoffMs);
+  }
+}
+
+function reserveRun(): boolean {
+  if (maxJobs != null && reserved >= maxJobs) {
+    return false;
+  }
+  reserved += 1;
+  return true;
+}
+
+function releaseReservedRun(): void {
+  reserved = Math.max(0, reserved - 1);
+}
+
+async function runWorker(slot: number): Promise<"completed" | "failed" | "idle"> {
+  const suffix = String(slot).padStart(4, "0");
   const workerArgs = [
     workerScript,
     "--control",
@@ -83,9 +102,13 @@ async function runWorker(index: number): Promise<void> {
   await mkdir(dirname(resolve(keyDir, `${workerPrefix}-${suffix}.key`)), { recursive: true });
   const result = await runProcess(scriptCommand(workerScript), scriptArgs(workerScript, workerArgs));
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || `worker ${suffix} exited ${result.exitCode}`);
+    if (isNoJobAssigned(result)) {
+      return "idle";
+    }
+    process.stderr.write(result.stderr || result.stdout || `worker ${suffix} exited ${result.exitCode}\n`);
+    return "failed";
   }
-  completed += 1;
+  return "completed";
 }
 
 function passThroughArgs(values: Record<string, string>): string[] {
@@ -112,6 +135,7 @@ function passThroughArgs(values: Record<string, string>): string[] {
     "swarm-token",
     "job-lease-seconds",
     "heartbeat-interval-ms",
+    "idle-backoff-ms",
     "artifact-chunk-bytes",
     "artifact-chunk-retries",
     "control-addrs",
@@ -182,6 +206,15 @@ function parseArgs(values: string[]): Record<string, string> {
   return parsed;
 }
 
+function isNoJobAssigned(result: { stdout: string; stderr: string }): boolean {
+  const output = `${result.stderr}\n${result.stdout}`.toLowerCase();
+  return output.includes("no job assigned");
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function numberArg(value: string | undefined, fallback: number): number {
   if (value == null) {
     return fallback;
@@ -191,4 +224,24 @@ function numberArg(value: string | undefined, fallback: number): number {
     throw new Error(`invalid positive integer: ${value}`);
   }
   return parsed;
+}
+
+function optionalNumberArg(value: string | undefined): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  return numberArg(value, 1);
+}
+
+function booleanArg(value: string | undefined, fallback: boolean): boolean {
+  if (value == null) {
+    return fallback;
+  }
+  if (value === "true" || value === "1" || value === "yes") {
+    return true;
+  }
+  if (value === "false" || value === "0" || value === "no") {
+    return false;
+  }
+  throw new Error(`invalid boolean: ${value}`);
 }
