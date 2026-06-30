@@ -7,6 +7,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - Use `marshall.training` for the public training network surface: coordinator console, active jobs, worker onboarding, and participation instructions.
 - Keep `marshall.chat` reserved for future chat/inference demos after model quality and serving are validated.
 - Use `./scripts/deploy-gcp-micro.sh` for the current public trial coordinator deployment. It targets a dedicated GCP VM, keeps Redis local to the VM, exposes only coordinator HTTP, and stores generated secrets under ignored `.marshall/secrets/`.
+- Current public trial host: GCP project `iconic-elevator-394020`, instance `marshall-micro-1`, zone `us-east1-b`, static address `marshall-training-ip` (`34.148.63.131`). Redis must remain bound to `127.0.0.1:6379` on the VM; only coordinator HTTP port `80` is public for this trial.
 
 ## Architecture Direction
 
