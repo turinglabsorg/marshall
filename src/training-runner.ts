@@ -166,7 +166,7 @@ export async function runMlxLoraTraining(job: TrainingJob, options: MlxLoraRunne
     projectRoot,
     cacheRoot: options.datasetCacheRoot,
   });
-  const datasetPath = preparedDataset.path;
+  const datasetPath = preparedDataset.cachePath;
   const outputDir = resolve(options.outputRoot, job.job_id);
   const scriptPath = resolve(projectRoot, "training/mlx_lora_smoke.py");
   const adapterDir = join(outputDir, "adapters");
