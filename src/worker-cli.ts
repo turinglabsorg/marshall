@@ -60,7 +60,7 @@ try {
   heartbeatTelemetry.update(20, "executing runner");
   const training = await runClaimedJob(runnableJob);
   heartbeatTelemetry.update(92, "publishing artifact");
-  await worker.publishArtifactManifest(training.manifest);
+  await publishArtifactManifestWithRetry(training.manifest);
   artifactPublished = true;
   heartbeatTelemetry.update(98, "reporting completion");
   await reportJobStatusWithRetry({
@@ -145,9 +145,27 @@ async function reportJobStatusWithRetry(status: Parameters<typeof worker.reportJ
   throw lastError;
 }
 
+async function publishArtifactManifestWithRetry(manifest: Parameters<typeof worker.publishArtifactManifest>[0]): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      await worker.publishArtifactManifest(manifest);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 5 || !isTransientWorkerStatusError(error)) {
+        throw error;
+      }
+      await sleep(attempt * 1_000);
+    }
+  }
+  throw lastError;
+}
+
 function isTransientWorkerStatusError(error: unknown): boolean {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return message.includes("timeout")
+    || message.includes("empty stream payload")
     || message.includes("temporarily unavailable")
     || message.includes("econnreset")
     || message.includes("econnrefused")
