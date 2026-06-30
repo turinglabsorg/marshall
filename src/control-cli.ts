@@ -6,10 +6,14 @@ import { createTrainingJobs, type AdapterDatasetProfile } from "./jobs.js";
 import { MarshallJobSchema, type JobType, type TrainingJob } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
+const coordinatorJobSource = booleanArg(args["coordinator-jobs"] ?? process.env.MARSHALL_COORDINATOR_JOBS, false);
 const jobType = jobTypeArg(args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? "train_toy_model");
 const jobCount = numberArg(args["job-count"] ?? process.env.MARSHALL_JOB_COUNT, 1);
-const jobs = args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE
-  ? readJobsFile(args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE!)
+const jobsFile = args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE;
+const jobs = coordinatorJobSource
+  ? []
+  : jobsFile != null && jobsFile !== ""
+  ? readJobsFile(jobsFile)
   : createTrainingJobs(trainingJobTypeArg(jobType), jobCount, {
     jobId: args["job-id"] ?? process.env.MARSHALL_JOB_ID,
     runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID,
@@ -28,9 +32,10 @@ const control = await ControlPeer.create({
   artifactServeDirs: splitList(args["artifact-serve-dirs"] ?? process.env.MARSHALL_ARTIFACT_SERVE_DIRS ?? ""),
   artifactChunkBytes: numberArg(args["artifact-chunk-bytes"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_BYTES, 1024 * 1024),
   artifactMaxChunkRetries: numberArg(args["artifact-chunk-retries"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_RETRIES, 3),
+  coordinatorJobSource,
   jobs,
 });
-const effectiveJobType = jobs[0]?.job_type ?? jobType;
+const effectiveJobType = coordinatorJobSource ? "coordinator_jobs" : jobs[0]?.job_type ?? jobType;
 
 const started = {
   type: "marshall_control_started",
@@ -39,7 +44,8 @@ const started = {
   control_addr: publicControlAddr(control.peerId),
   job_type: effectiveJobType,
   job_count: jobs.length,
-  jobs_file: args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE ?? null,
+  coordinator_jobs: coordinatorJobSource,
+  jobs_file: jobsFile ?? null,
   adapter_dataset: args["adapter-dataset"] ?? process.env.MARSHALL_ADAPTER_DATASET ?? "marshall_instructions",
   coordinator_url: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL ?? null,
   artifact_store_dir: args["artifact-store-dir"] ?? process.env.MARSHALL_ARTIFACT_STORE_DIR ?? null,
@@ -142,6 +148,19 @@ function numberArg(value: string | undefined, fallback: number): number {
     throw new Error(`invalid positive integer: ${value}`);
   }
   return parsed;
+}
+
+function booleanArg(value: string | undefined, fallback: boolean): boolean {
+  if (value == null || value === "") {
+    return fallback;
+  }
+  if (value === "true" || value === "1" || value === "yes") {
+    return true;
+  }
+  if (value === "false" || value === "0" || value === "no") {
+    return false;
+  }
+  throw new Error(`invalid boolean: ${value}`);
 }
 
 async function waitForShutdown(onShutdown: () => Promise<void>): Promise<void> {

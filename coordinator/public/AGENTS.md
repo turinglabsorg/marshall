@@ -10,7 +10,7 @@ There is no worker join token for the public swarm. Do not set `MARSHALL_SWARM_T
 
 ## What Your Mac Will Do
 
-Your Mac connects to the public Marshall control peer over libp2p, registers its hardware capability, claims compatible jobs, downloads only the assigned dataset shard files, verifies every declared SHA-256 hash and byte size, trains adapters locally, then publishes artifact manifests back to the swarm. The worker pool is long-running by default and keeps polling for new compatible jobs.
+Your Mac connects to the public Marshall control peer over libp2p, registers its hardware capability, claims compatible jobs, downloads only the assigned dataset shard or artifact files, verifies every declared SHA-256 hash and byte size, trains/evaluates/validates locally, then publishes artifact manifests back to the swarm. Worker pools are long-running by default and keep polling for new compatible jobs.
 
 The active job defines the base model, dataset shard, LoRA settings, and evaluation contract. Workers must not override those values locally unless the operator explicitly asks for a debugging run.
 
@@ -91,27 +91,25 @@ The value should look like:
 /dns4/marshall.training/tcp/4001/p2p/<control-peer-id>
 ```
 
-## Claim Available Training Work
+## Join Available Work
 
-Run one worker slot first. It will claim compatible `train_adapter` jobs as work becomes available.
+Run the multi-role worker supervisor. It starts separate persistent pools for training, adapter evaluation, and artifact validation, so your Mac can keep participating as the round moves through phases.
 
 ```sh
-npm run worker:pool:compiled -- \
+npm run worker:join:compiled -- \
   --control "$MARSHALL_CONTROL_ADDR" \
-  --job-type train_adapter \
-  --backend mlx \
-  --concurrency 1 \
-  --job-lease-seconds 900 \
-  --heartbeat-interval-ms 15000 \
-  --worker-id-prefix "$(hostname)-marshall-train" \
-  --key-dir .marshall/worker-keys/train \
-  --artifacts-dir .marshall/worker-artifacts/train \
-  --dataset-cache-dir .marshall/worker-cache/train \
+  --worker-id-base "$(hostname)" \
+  --state-dir .marshall/public-worker \
+  --train-concurrency 1 \
+  --eval-concurrency 1 \
+  --validation-concurrency 2 \
   --python "$MARSHALL_PYTHON"
 ```
 
-Keep this process running. When one job finishes, the same slot immediately asks for another compatible job. Keep `--concurrency 1` until you know the machine has enough memory for parallel MLX runs; then increase `--concurrency` to run multiple slots on the same Mac.
-For later restarts, keep the same `--worker-id-prefix` and `--key-dir` if you want to preserve the same worker identity and reputation.
+Keep this process running. When one job finishes, the same role immediately asks for more compatible work. Keep train/eval concurrency at `1` until you know the machine has enough memory for parallel MLX runs; validation is CPU-light and can usually use more slots.
+For later restarts, keep the same `--worker-id-base` and `--state-dir` if you want to preserve the same worker identities and reputation.
+
+If you intentionally want to run only one role for debugging, use `npm run worker:pool:compiled` with an explicit `--job-type`, separate `--worker-id-prefix`, `--key-dir`, and role-specific cache/artifact directories.
 
 ## Monitor Progress
 
@@ -132,12 +130,12 @@ curl -fsS https://marshall.training/events?count=20
 
 ## If There Is No Job
 
-If the dashboard shows no compatible queued jobs, the worker pool stays idle and polls again automatically. If you intentionally want a one-shot maintenance run, pass `--max-jobs <n> --exit-when-idle`; do not use those flags for normal public participation.
+If the dashboard shows no compatible queued jobs, worker pools stay idle and poll again automatically. If you intentionally want a one-shot maintenance run, pass `--max-jobs <n> --exit-when-idle` to `worker:pool:compiled`; do not use those flags for normal public participation.
 
 ## Worker Rules
 
 - Do not set a swarm token for the public permissionless swarm.
-- Claim jobs only through `npm run worker:pool:compiled` or `npm run worker:start:compiled`.
+- Claim jobs only through `npm run worker:join:compiled`, `npm run worker:pool:compiled`, or `npm run worker:start:compiled`.
 - Do not manually edit job specs, dataset files, artifact manifests, metrics, hashes, or leaderboard files.
 - Do not download unassigned dataset shards.
 - Keep heartbeat enabled while working; expired jobs can be requeued.
@@ -165,5 +163,5 @@ python -m pip install --upgrade mlx mlx-lm numpy
 If a dataset hash check fails, delete only your local worker dataset cache and retry:
 
 ```sh
-rm -rf .marshall/worker-cache/train
+rm -rf .marshall/public-worker/*/dataset-cache
 ```

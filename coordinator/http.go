@@ -47,6 +47,7 @@ func (server *Server) routes() {
 	server.mux.HandleFunc("POST /workers", server.requireAuth(server.registerWorker))
 	server.mux.HandleFunc("POST /workers/{worker_id}/heartbeat", server.requireAuth(server.workerHeartbeat))
 	server.mux.HandleFunc("GET /workers/{worker_id}/reputation", server.workerReputation)
+	server.mux.HandleFunc("GET /jobs", server.jobs)
 	server.mux.HandleFunc("POST /jobs", server.requireAuth(server.createJob))
 	server.mux.HandleFunc("POST /jobs/requeue-expired", server.requireAuth(server.requeueExpiredJobs))
 	server.mux.HandleFunc("GET /jobs/{job_id}", server.getJob)
@@ -129,6 +130,11 @@ func (server *Server) createJob(response http.ResponseWriter, request *http.Requ
 	}
 	event, err := server.store.CreateJob(request.Context(), job)
 	writeResult(response, event, err)
+}
+
+func (server *Server) jobs(response http.ResponseWriter, request *http.Request) {
+	jobs, err := server.store.Jobs(request.Context())
+	writeResult(response, jobs, err)
 }
 
 func (server *Server) getJob(response http.ResponseWriter, request *http.Request) {

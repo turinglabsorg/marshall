@@ -220,6 +220,10 @@ export class CoordinatorClient {
     return this.get(`/jobs/${encodeURIComponent(jobId)}`, CoordinatorJobSchema);
   }
 
+  async jobs(): Promise<CoordinatorJob[]> {
+    return this.get("/jobs", z.array(CoordinatorJobSchema));
+  }
+
   async getArtifact(jobId: string): Promise<CoordinatorArtifact> {
     return this.get(`/artifacts/${encodeURIComponent(jobId)}`, CoordinatorArtifactSchema);
   }
@@ -237,7 +241,7 @@ export class CoordinatorClient {
       headers: this.headers(),
     });
     const body = await response.text();
-    const json = body.length > 0 ? JSON.parse(body) : null;
+    const json = parseJsonBody(body) as { error?: unknown } | null;
 
     if (!response.ok) {
       const message = typeof json?.error === "string" ? json.error : body;
@@ -257,7 +261,7 @@ export class CoordinatorClient {
     });
 
     const body = await response.text();
-    const json = body.length > 0 ? JSON.parse(body) : null;
+    const json = parseJsonBody(body) as { error?: unknown } | null;
 
     if (!response.ok) {
       const message = typeof json?.error === "string" ? json.error : body;
@@ -291,6 +295,17 @@ export class CoordinatorClient {
       ...values,
       authorization: `Bearer ${this.token}`,
     };
+  }
+}
+
+function parseJsonBody(body: string): unknown {
+  if (body.length === 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
   }
 }
 

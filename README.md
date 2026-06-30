@@ -216,7 +216,9 @@ Use `eval_kind ag_news` for exact-label AG News scoring and `eval_kind instructi
 - schedules quorum `validate_artifact` jobs from unvalidated `adapter_evaluation` artifacts;
 - writes accepted-only leaderboard files and an optional verified model package after validation is finalized.
 
-Example:
+For unattended runs, use `round:daemon`. It polls live coordinator jobs/artifacts, waits for each phase to finish, writes filtered artifact snapshots for the active run, schedules evaluation and validation jobs, and writes the final leaderboard/model package after quorum verdicts are finalized. It is the operational path for public multi-Mac runs.
+
+Example one-shot phase advancement:
 
 ```bash
 npm run round:advance -- \
@@ -233,7 +235,53 @@ npm run round:advance -- \
   --package-dir <package-dir>
 ```
 
-The returned `control.job_type` and `control.jobs_file` indicate which job file the control peer should serve next.
+The public control peer should run with `--coordinator-jobs true`, so it reads queued job specs from the coordinator on every claim. The returned `control.job_type` and `control.jobs_file` are still useful for local/static debugging, but production runs should not require restarting the control peer between train, eval, and validation phases.
+
+Example unattended round manager:
+
+```bash
+npm run round:daemon:compiled -- \
+  --coordinator-url https://marshall.training \
+  --run-id <run-id> \
+  --round-id <round-id> \
+  --jobs-dir .marshall/runs/<run-id>/jobs \
+  --train-job-prefix <train-job-prefix> \
+  --eval-job-prefix <eval-job-prefix> \
+  --validation-job-prefix <validation-job-prefix> \
+  --eval-file <eval.jsonl> \
+  --eval-uri https://marshall.training/datasets/<dataset-id>/eval/instruction_terms.jsonl \
+  --eval-kind instruction_terms \
+  --model <base-model> \
+  --max-examples <n> \
+  --max-tokens <n> \
+  --validators-per-artifact 2 \
+  --quorum 2 \
+  --min-accuracy 0.3 \
+  --max-invalid-rate 0.2 \
+  --min-examples 1 \
+  --artifact-store-dir /var/lib/marshall/artifacts/control \
+  --leaderboard-dir /var/lib/marshall/leaderboards/<run-id> \
+  --package-dir /var/lib/marshall/model-packages/<run-id> \
+  --top-k 10 \
+  --require-verdict accepted
+```
+
+## Multi-Mac Workers
+
+Use `worker:join:compiled` for a Mac that should remain available across train, evaluation, and validation phases. It fetches `/control.json`, starts separate persistent pools per role, and keeps role identities, caches, input artifacts, and outputs separated.
+
+```bash
+npm run worker:join:compiled -- \
+  --control-url https://marshall.training/control.json \
+  --worker-id-base "$(hostname)" \
+  --state-dir .marshall/public-worker \
+  --train-concurrency 1 \
+  --eval-concurrency 1 \
+  --validation-concurrency 2 \
+  --python "$MARSHALL_PYTHON"
+```
+
+Increase role concurrency only after confirming memory headroom on that Mac. Keep the same `--worker-id-base` and `--state-dir` across restarts to preserve worker identity and reputation.
 
 ## Public Deployment
 
@@ -245,7 +293,7 @@ The current public trial deploy target is a small GCP VM:
 - domain: `marshall.training`;
 - HTTPS proxy: Caddy;
 - coordinator: Go service on `127.0.0.1:8080`;
-- control peer: Node.js libp2p service on TCP `4001`;
+- control peer: Node.js libp2p service on TCP `4001`, serving live coordinator jobs with `--coordinator-jobs true`;
 - Redis: local-only on the VM.
 
 Deploy:
@@ -264,6 +312,8 @@ Core components:
 - `coordinator/`: Redis-backed state, HTTP API, dashboard, reputation, validation votes;
 - `src/control-peer.ts`: libp2p control peer and worker protocol handlers;
 - `src/worker-peer.ts`: worker registration, heartbeat, claim, status, and artifact publication;
+- `src/worker-supervisor-cli.ts`: multi-role Mac worker supervisor for train/eval/validation pools;
+- `src/round-daemon-cli.ts`: unattended train/eval/validation/selection round manager;
 - `src/training-runner.ts`: training, evaluation, and validation runner bridge;
 - `src/dataset-manifest.ts`: content-addressed dataset manifest generation;
 - `src/artifact-transfer.ts`: chunked p2p artifact transfer and verification;

@@ -19,6 +19,7 @@ import {
   JobClaimSchema,
   JobClaimResponseSchema,
   JobStatusSchema,
+  MarshallJobSchema,
   WorkerHeartbeatSchema,
   WorkerRegistrationSchema,
   type Ack,
@@ -48,6 +49,7 @@ export interface ControlPeerOptions {
   artifactServeDirs?: string[];
   artifactChunkBytes?: number;
   artifactMaxChunkRetries?: number;
+  coordinatorJobSource?: boolean;
 }
 
 export interface ControlPeerState {
@@ -78,6 +80,7 @@ export class ControlPeer {
     private readonly artifactServeDirs: string[] = [],
     private readonly artifactChunkBytes?: number,
     private readonly artifactMaxChunkRetries?: number,
+    private readonly coordinatorJobSource = false,
   ) {}
 
   static async create(options: ControlPeerOptions): Promise<ControlPeer> {
@@ -85,7 +88,7 @@ export class ControlPeer {
       privateKeyPath: options.privateKeyPath,
       listen: options.listen ?? ["/ip4/127.0.0.1/tcp/0"],
     });
-    const jobs = options.jobs ?? [defaultToyTrainingJob()];
+    const jobs = options.coordinatorJobSource ? [] : options.jobs ?? [defaultToyTrainingJob()];
     const coordinator = options.coordinatorUrl == null
       ? undefined
       : new CoordinatorClient(options.coordinatorUrl, { token: options.coordinatorToken ?? process.env.MARSHALL_COORDINATOR_TOKEN });
@@ -105,8 +108,11 @@ export class ControlPeer {
       artifactServeDirs,
       options.artifactChunkBytes ?? numberEnv("MARSHALL_ARTIFACT_CHUNK_BYTES", 1024 * 1024),
       options.artifactMaxChunkRetries ?? numberEnv("MARSHALL_ARTIFACT_CHUNK_RETRIES", 3),
+      options.coordinatorJobSource ?? booleanEnv("MARSHALL_COORDINATOR_JOBS", false),
     );
-    await coordinator?.initializeJobs(jobs);
+    if (!peer.coordinatorJobSource) {
+      await coordinator?.initializeJobs(jobs);
+    }
     await peer.registerHandlers();
     return peer;
   }
@@ -219,7 +225,8 @@ export class ControlPeer {
     }
 
     let lastRejection: string | undefined;
-    for (const job of this.jobs) {
+    const jobs = await this.candidateJobs();
+    for (const job of jobs) {
       if (
         job.job_type !== claim.job_type
         || job.backend !== claim.backend
@@ -264,6 +271,27 @@ export class ControlPeer {
       job: null,
       reason: lastRejection ?? "no compatible job available",
     };
+  }
+
+  private async candidateJobs(): Promise<MarshallJob[]> {
+    if (!this.coordinatorJobSource) {
+      return this.jobs;
+    }
+    if (this.coordinator == null) {
+      throw new Error("coordinator job source requires a coordinator URL");
+    }
+    const jobs = await this.coordinator.jobs();
+    const claimable: MarshallJob[] = [];
+    for (const job of jobs) {
+      if (job.status != null && job.status !== "" && job.status !== "queued") {
+        continue;
+      }
+      const parsed = MarshallJobSchema.safeParse(job.job_spec);
+      if (parsed.success) {
+        claimable.push(parsed.data);
+      }
+    }
+    return claimable;
   }
 
   private async participationError(job: MarshallJob, claim: JobClaim): Promise<string | undefined> {
@@ -501,6 +529,20 @@ function numberEnv(key: string, fallback: number): number {
     throw new Error(`invalid ${key}: ${value}`);
   }
   return parsed;
+}
+
+function booleanEnv(key: string, fallback: boolean): boolean {
+  const value = process.env[key];
+  if (value == null || value === "") {
+    return fallback;
+  }
+  if (value === "true" || value === "1" || value === "yes") {
+    return true;
+  }
+  if (value === "false" || value === "0" || value === "no") {
+    return false;
+  }
+  throw new Error(`invalid ${key}: ${value}`);
 }
 
 function splitListEnv(key: string): string[] {

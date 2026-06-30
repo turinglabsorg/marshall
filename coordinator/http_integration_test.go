@@ -79,6 +79,11 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	if persistedJob.JobID != "job_http_001" || len(persistedJob.JobSpec) == 0 {
 		t.Fatalf("unexpected persisted job: %+v", persistedJob)
 	}
+	var jobs []Job
+	getJSONInto(t, server.URL+"/jobs", http.StatusOK, &jobs)
+	if len(jobs) != 1 || jobs[0].JobID != "job_http_001" || len(jobs[0].JobSpec) == 0 {
+		t.Fatalf("unexpected persisted job list: %+v", jobs)
+	}
 
 	var claim JobClaimResult
 	postJSONInto(t, server.URL+"/jobs/job_http_001/claim", JobClaim{
