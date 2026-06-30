@@ -1,8 +1,20 @@
-import type { Libp2p, Stream } from "@libp2p/interface";
+import type { Connection, DialTarget, Libp2p, Stream } from "@libp2p/interface";
 import type { Multiaddr } from "@multiformats/multiaddr";
+import { readFile } from "node:fs/promises";
+import {
+  artifactBundleManifestResponse,
+  artifactStoreManifestPath,
+  createArtifactBundle,
+  readArtifactBundleChunk,
+  storeFetchedArtifact,
+  type ArtifactBundle,
+} from "./artifact-transfer.js";
 import { PROTOCOLS } from "./protocols.js";
 import {
   AckSchema,
+  ArtifactFetchChunkResponseSchema,
+  ArtifactFetchManifestResponseSchema,
+  ArtifactFetchRequestSchema,
   ArtifactManifestSchema,
   JobClaimSchema,
   JobClaimResponseSchema,
@@ -22,7 +34,7 @@ import {
 import { CoordinatorClient } from "./coordinator-client.js";
 import { createToyTrainingJob } from "./jobs.js";
 import { createMarshallNode } from "./node.js";
-import { readJson, writeJson } from "./wire.js";
+import { readJson, requestJson, writeJson } from "./wire.js";
 
 export interface ControlPeerOptions {
   privateKeyPath: string;
@@ -32,6 +44,10 @@ export interface ControlPeerOptions {
   coordinatorToken?: string;
   swarmToken?: string;
   jobLeaseSeconds?: number;
+  artifactStoreDir?: string;
+  artifactServeDirs?: string[];
+  artifactChunkBytes?: number;
+  artifactMaxChunkRetries?: number;
 }
 
 export interface ControlPeerState {
@@ -50,6 +66,7 @@ export class ControlPeer {
     manifests: [],
     assignedJobs: new Map(),
   };
+  private readonly servedArtifactBundles = new Map<string, ArtifactBundle>();
 
   private constructor(
     readonly node: Libp2p,
@@ -57,6 +74,10 @@ export class ControlPeer {
     private readonly coordinator?: CoordinatorClient,
     private readonly swarmToken?: string,
     private readonly jobLeaseSeconds = 300,
+    private readonly artifactStoreDir?: string,
+    private readonly artifactServeDirs: string[] = [],
+    private readonly artifactChunkBytes?: number,
+    private readonly artifactMaxChunkRetries?: number,
   ) {}
 
   static async create(options: ControlPeerOptions): Promise<ControlPeer> {
@@ -68,12 +89,22 @@ export class ControlPeer {
     const coordinator = options.coordinatorUrl == null
       ? undefined
       : new CoordinatorClient(options.coordinatorUrl, { token: options.coordinatorToken ?? process.env.MARSHALL_COORDINATOR_TOKEN });
+    const artifactStoreDir = options.artifactStoreDir ?? process.env.MARSHALL_ARTIFACT_STORE_DIR;
+    const configuredServeDirs = options.artifactServeDirs ?? splitListEnv("MARSHALL_ARTIFACT_SERVE_DIRS");
+    const artifactServeDirs = uniqueStrings([
+      ...configuredServeDirs,
+      ...(artifactStoreDir == null || artifactStoreDir === "" ? [] : [artifactStoreDir]),
+    ]);
     const peer = new ControlPeer(
       node,
       jobs,
       coordinator,
       options.swarmToken ?? process.env.MARSHALL_SWARM_TOKEN,
       options.jobLeaseSeconds ?? numberEnv("MARSHALL_JOB_LEASE_SECONDS", 300),
+      artifactStoreDir,
+      artifactServeDirs,
+      options.artifactChunkBytes ?? numberEnv("MARSHALL_ARTIFACT_CHUNK_BYTES", 1024 * 1024),
+      options.artifactMaxChunkRetries ?? numberEnv("MARSHALL_ARTIFACT_CHUNK_RETRIES", 3),
     );
     await coordinator?.initializeJobs(jobs);
     await peer.registerHandlers();
@@ -97,7 +128,8 @@ export class ControlPeer {
     await this.node.handle(PROTOCOLS.workerHeartbeat, (stream) => this.handleWorkerHeartbeat(stream));
     await this.node.handle(PROTOCOLS.jobClaim, (stream) => this.handleJobClaim(stream));
     await this.node.handle(PROTOCOLS.jobStatus, (stream) => this.handleJobStatus(stream));
-    await this.node.handle(PROTOCOLS.artifactManifest, (stream) => this.handleArtifactManifest(stream));
+    await this.node.handle(PROTOCOLS.artifactManifest, (stream, connection) => this.handleArtifactManifest(stream, connection));
+    await this.node.handle(PROTOCOLS.artifactFetch, (stream) => this.handleArtifactFetch(stream));
   }
 
   private async handleWorkerRegister(stream: Stream): Promise<void> {
@@ -253,7 +285,7 @@ export class ControlPeer {
     await writeJson(stream, AckSchema.parse({ accepted: true }));
   }
 
-  private async handleArtifactManifest(stream: Stream): Promise<void> {
+  private async handleArtifactManifest(stream: Stream, connection: Connection): Promise<void> {
     const payload = ArtifactManifestSchema.parse(await readJson(stream));
     if (!this.hasValidToken(payload)) {
       await writeJson(stream, AckSchema.parse({
@@ -273,16 +305,18 @@ export class ControlPeer {
       return;
     }
 
+    let storedManifest = manifest;
     try {
-      await this.coordinator?.publishArtifact(manifest);
-      if (manifest.artifact_type === "artifact_validation" && manifest.validation != null) {
-        await this.coordinator?.recordArtifactVerdict(manifest.validation.target_job_id, {
-          worker_id: manifest.validation.target_worker_id,
-          verdict: manifest.validation.verdict,
-          validator_id: manifest.worker_id,
-          reason: manifest.validation.reason,
-          created_at: manifest.created_at,
-          quorum: manifest.validation.quorum,
+      storedManifest = await this.fetchArtifactPayload(manifest, connection.remotePeer);
+      await this.coordinator?.publishArtifact(storedManifest);
+      if (storedManifest.artifact_type === "artifact_validation" && storedManifest.validation != null) {
+        await this.coordinator?.recordArtifactVerdict(storedManifest.validation.target_job_id, {
+          worker_id: storedManifest.validation.target_worker_id,
+          verdict: storedManifest.validation.verdict,
+          validator_id: storedManifest.worker_id,
+          reason: storedManifest.validation.reason,
+          created_at: storedManifest.created_at,
+          quorum: storedManifest.validation.quorum,
         });
       }
     } catch (error) {
@@ -293,12 +327,103 @@ export class ControlPeer {
       return;
     }
 
-    this.state.manifests.push(manifest);
+    this.state.manifests.push(storedManifest);
     await writeJson(stream, AckSchema.parse({ accepted: true }));
+  }
+
+  private async fetchArtifactPayload(manifest: ArtifactManifest, worker: DialTarget): Promise<ArtifactManifest> {
+    if (this.artifactStoreDir == null || this.artifactStoreDir === "") {
+      return manifest;
+    }
+
+    const bundle = ArtifactFetchManifestResponseSchema.parse(await requestJson(
+      this.node,
+      worker,
+      PROTOCOLS.artifactFetch,
+      {
+        ...this.authPayload(),
+        request_type: "manifest",
+        job_id: manifest.job_id,
+        artifact_hash: manifest.artifact_hash,
+      },
+      { timeoutMs: 30_000 },
+    ));
+
+    return storeFetchedArtifact({
+      manifest,
+      bundle,
+      outputRoot: this.artifactStoreDir,
+      chunkBytes: this.artifactChunkBytes,
+      maxChunkRetries: this.artifactMaxChunkRetries,
+      fetchChunk: async (request) => ArtifactFetchChunkResponseSchema.parse(await requestJson(
+        this.node,
+        worker,
+        PROTOCOLS.artifactFetch,
+        {
+          ...this.authPayload(),
+          ...request,
+        },
+        { timeoutMs: 30_000 },
+      )),
+    });
+  }
+
+  private async handleArtifactFetch(stream: Stream): Promise<void> {
+    const request = ArtifactFetchRequestSchema.parse(await readJson(stream));
+    if (!this.hasValidToken(request)) {
+      await writeJson(stream, rejectedArtifactFetchResponse(request.request_type, "invalid swarm token"));
+      return;
+    }
+
+    try {
+      const bundle = await this.storedArtifactBundle(request.job_id, request.artifact_hash);
+      if (request.request_type === "manifest") {
+        await writeJson(stream, await artifactBundleManifestResponse(bundle));
+        return;
+      }
+      await writeJson(stream, await readArtifactBundleChunk(bundle, request));
+    } catch (error) {
+      await writeJson(stream, rejectedArtifactFetchResponse(
+        request.request_type,
+        error instanceof Error ? error.message : "artifact fetch failed",
+      ));
+    }
+  }
+
+  private async storedArtifactBundle(jobID: string, artifactHash: string): Promise<ArtifactBundle> {
+    const cacheKey = `${jobID}:${artifactHash}`;
+    const existing = this.servedArtifactBundles.get(cacheKey);
+    if (existing != null) {
+      return existing;
+    }
+
+    for (const serveDir of this.artifactServeDirs) {
+      const manifestPath = artifactStoreManifestPath(serveDir, jobID);
+      try {
+        const manifest = ArtifactManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
+        if (manifest.artifact_hash !== artifactHash) {
+          continue;
+        }
+        const bundle = await createArtifactBundle(manifest);
+        this.servedArtifactBundles.set(cacheKey, bundle);
+        return bundle;
+      } catch (error) {
+        if (isMissingFile(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new Error("artifact is not available from this control peer");
   }
 
   private hasValidToken(payload: { auth_token?: string }): boolean {
     return this.swarmToken == null || this.swarmToken === "" || payload.auth_token === this.swarmToken;
+  }
+
+  private authPayload(): { auth_token?: string } {
+    return this.swarmToken == null || this.swarmToken === "" ? {} : { auth_token: this.swarmToken };
   }
 }
 
@@ -321,4 +446,35 @@ function numberEnv(key: string, fallback: number): number {
     throw new Error(`invalid ${key}: ${value}`);
   }
   return parsed;
+}
+
+function splitListEnv(key: string): string[] {
+  const value = process.env[key];
+  if (value == null || value === "") {
+    return [];
+  }
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function rejectedArtifactFetchResponse(requestType: "manifest" | "chunk", reason: string): unknown {
+  if (requestType === "manifest") {
+    return ArtifactFetchManifestResponseSchema.parse({
+      response_type: "manifest",
+      accepted: false,
+      reason,
+    });
+  }
+  return ArtifactFetchChunkResponseSchema.parse({
+    response_type: "chunk",
+    accepted: false,
+    reason,
+  });
 }

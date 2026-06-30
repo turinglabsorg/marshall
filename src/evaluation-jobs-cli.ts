@@ -17,6 +17,7 @@ const jobs = await createAdapterEvaluationJobs({
   artifactsDir,
   evalFile,
   evalUri: args["eval-uri"] ?? process.env.MARSHALL_EVAL_URI,
+  artifactUriMode: artifactUriModeArg(args["artifact-uri-mode"] ?? process.env.MARSHALL_ARTIFACT_URI_MODE ?? "file"),
   runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID ?? "run_adapter_eval_001",
   roundId: args["round-id"] ?? process.env.MARSHALL_ROUND_ID ?? "round_001",
   jobPrefix: args["job-prefix"] ?? process.env.MARSHALL_JOB_ID ?? "job_eval_adapter",
@@ -41,6 +42,7 @@ interface CreateAdapterEvaluationJobsOptions {
   artifactsDir: string;
   evalFile: string;
   evalUri?: string;
+  artifactUriMode: "file" | "p2p";
   runId: string;
   roundId: string;
   jobPrefix: string;
@@ -80,7 +82,7 @@ async function createAdapterEvaluationJobs(options: CreateAdapterEvaluationJobsO
       model: options.model,
       adapter: {
         adapter_id: manifest.job_id,
-        artifact_uri: manifest.artifact_uri,
+        artifact_uri: options.artifactUriMode === "p2p" ? `marshall-artifact://${manifest.job_id}` : manifest.artifact_uri,
         artifact_hash: manifest.artifact_hash,
         config_hash: manifest.config_hash,
         source_job_id: manifest.job_id,
@@ -95,6 +97,13 @@ async function createAdapterEvaluationJobs(options: CreateAdapterEvaluationJobsO
       max_tokens: options.maxTokens,
     });
   });
+}
+
+function artifactUriModeArg(value: string): "file" | "p2p" {
+  if (value === "file" || value === "p2p") {
+    return value;
+  }
+  throw new Error(`unsupported artifact uri mode: ${value}`);
 }
 
 async function findArtifactManifests(root: string): Promise<string[]> {

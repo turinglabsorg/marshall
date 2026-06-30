@@ -91,6 +91,7 @@ async function runWorker(index: number): Promise<void> {
 function passThroughArgs(values: Record<string, string>): string[] {
   const keys = [
     "artifacts-dir",
+    "input-artifacts-dir",
     "dataset-cache-dir",
     "python",
     "model",
@@ -111,6 +112,8 @@ function passThroughArgs(values: Record<string, string>): string[] {
     "swarm-token",
     "job-lease-seconds",
     "heartbeat-interval-ms",
+    "artifact-chunk-bytes",
+    "artifact-chunk-retries",
   ];
   const output: string[] = [];
   for (const key of keys) {

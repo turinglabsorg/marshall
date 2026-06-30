@@ -1,4 +1,5 @@
 import { hostname } from "node:os";
+import { join } from "node:path";
 import { multiaddr } from "@multiformats/multiaddr";
 import { defaultBackendForJob } from "./jobs.js";
 import type { Backend, JobType, MarshallJob } from "./schemas.js";
@@ -16,9 +17,10 @@ const jobType = jobTypeArg(args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? 
 const backend = backendArg(args.backend ?? process.env.MARSHALL_BACKEND ?? defaultBackendForJob(jobType));
 const jobLeaseSeconds = positiveIntegerArg(args["job-lease-seconds"] ?? process.env.MARSHALL_JOB_LEASE_SECONDS, 300);
 const heartbeatIntervalMs = positiveIntegerArg(args["heartbeat-interval-ms"] ?? process.env.MARSHALL_HEARTBEAT_INTERVAL_MS, 15_000);
+const workerId = args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostname()}-${backend}`;
 const worker = await WorkerPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_WORKER_KEY ?? ".marshall/worker.key",
-  workerId: args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostname()}-${backend}`,
+  workerId,
   controlAddr: multiaddr(controlAddr),
   listen: splitList(args.listen ?? process.env.MARSHALL_WORKER_LISTEN ?? "/ip4/0.0.0.0/tcp/0"),
   backend,
@@ -49,7 +51,8 @@ try {
     message: `${claim.job.job_type} runner started`,
   });
 
-  const training = await runClaimedJob(claim.job);
+  const runnableJob = await materializeJobInputs(claim.job);
+  const training = await runClaimedJob(runnableJob);
   await worker.publishArtifactManifest(training.manifest);
   await worker.reportJobStatus({
     job_id: claim.job.job_id,
@@ -63,7 +66,7 @@ try {
   console.log(JSON.stringify({
     type: "marshall_worker_completed",
     peer_id: worker.peerId,
-    worker_id: args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostname()}-${backend}`,
+    worker_id: workerId,
     job_id: claim.job.job_id,
     job_type: claim.job.job_type,
     artifact_hash: training.manifest.artifact_hash,
@@ -139,6 +142,59 @@ async function runClaimedJob(job: MarshallJob) {
     });
   }
   throw new Error(`worker CLI cannot run job type: ${job.job_type}`);
+}
+
+async function materializeJobInputs(job: MarshallJob): Promise<MarshallJob> {
+  const inputArtifactsDir = join(args["input-artifacts-dir"] ?? process.env.MARSHALL_INPUT_ARTIFACTS_DIR ?? ".marshall/input-artifacts", workerId);
+  const chunkBytes = numberArg(args["artifact-chunk-bytes"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_BYTES, 1024 * 1024);
+  const maxChunkRetries = positiveIntegerArg(args["artifact-chunk-retries"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_RETRIES, 3);
+
+  if (job.job_type === "evaluate_adapter" && isMarshallArtifactUri(job.adapter.artifact_uri)) {
+    const sourceJobId = marshallArtifactJobId(job.adapter.artifact_uri) ?? job.adapter.source_job_id ?? job.adapter.adapter_id;
+    const manifest = await worker.fetchArtifactFromControl(sourceJobId, job.adapter.artifact_hash, inputArtifactsDir, {
+      chunkBytes,
+      maxChunkRetries,
+    });
+    return {
+      ...job,
+      adapter: {
+        ...job.adapter,
+        artifact_uri: manifest.artifact_uri,
+        config_hash: job.adapter.config_hash ?? manifest.config_hash,
+      },
+    };
+  }
+
+  if (job.job_type === "validate_artifact") {
+    const targetUri = job.target.metrics_uri ?? job.target.artifact_uri;
+    if (isMarshallArtifactUri(targetUri)) {
+      const sourceJobId = marshallArtifactJobId(targetUri) ?? job.target.job_id;
+      const manifest = await worker.fetchArtifactFromControl(sourceJobId, job.target.artifact_hash, inputArtifactsDir, {
+        chunkBytes,
+        maxChunkRetries,
+      });
+      return {
+        ...job,
+        target: {
+          ...job.target,
+          artifact_uri: manifest.artifact_uri,
+          metrics_uri: job.target.metrics_uri == null ? undefined : manifest.metrics_uri ?? manifest.artifact_uri,
+        },
+      };
+    }
+  }
+
+  return job;
+}
+
+function isMarshallArtifactUri(value: string): boolean {
+  return value.startsWith("marshall-artifact://") || value.startsWith("marshall-artifact:");
+}
+
+function marshallArtifactJobId(value: string): string | undefined {
+  const parsed = new URL(value);
+  const id = parsed.hostname || parsed.pathname.replace(/^\/+/, "");
+  return id === "" ? undefined : id;
 }
 
 function maxTokensForJob(value: JobType): number {

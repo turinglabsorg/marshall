@@ -28,9 +28,10 @@ export async function requestJson(
   target: DialTarget,
   protocol: ProtocolName,
   payload: unknown,
+  options: { timeoutMs?: number } = {},
 ): Promise<unknown> {
   const stream = await node.dialProtocol(target, protocol, {
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(options.timeoutMs ?? 5_000),
   });
 
   await writeJson(stream, payload);

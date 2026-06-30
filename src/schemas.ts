@@ -197,6 +197,71 @@ export const TrainingArtifactManifestSchema = ArtifactManifestSchema.omit({
   worker_id: true,
 });
 
+export const ArtifactBundleFileSchema = z.object({
+  path: z.string().min(1),
+  bytes: z.number().int().nonnegative(),
+  sha256: z.string().min(1),
+});
+
+export const ArtifactFetchManifestRequestSchema = z.object({
+  auth_token: z.string().min(1).optional(),
+  request_type: z.literal("manifest"),
+  job_id: z.string().min(1),
+  artifact_hash: z.string().min(1),
+});
+
+export const ArtifactFetchChunkRequestSchema = z.object({
+  auth_token: z.string().min(1).optional(),
+  request_type: z.literal("chunk"),
+  job_id: z.string().min(1),
+  artifact_hash: z.string().min(1),
+  path: z.string().min(1),
+  offset: z.number().int().nonnegative(),
+  length: z.number().int().positive(),
+});
+
+export const ArtifactFetchRequestSchema = z.discriminatedUnion("request_type", [
+  ArtifactFetchManifestRequestSchema,
+  ArtifactFetchChunkRequestSchema,
+]);
+
+export const ArtifactFetchManifestResponseSchema = z.discriminatedUnion("accepted", [
+  z.object({
+    response_type: z.literal("manifest"),
+    accepted: z.literal(true),
+    job_id: z.string().min(1),
+    artifact_hash: z.string().min(1),
+    artifact_path: z.string().min(1),
+    metrics_path: z.string().min(1).optional(),
+    manifest: ArtifactManifestSchema,
+    files: z.array(ArtifactBundleFileSchema),
+  }),
+  z.object({
+    response_type: z.literal("manifest"),
+    accepted: z.literal(false),
+    reason: z.string().min(1).optional(),
+  }),
+]);
+
+export const ArtifactFetchChunkResponseSchema = z.discriminatedUnion("accepted", [
+  z.object({
+    response_type: z.literal("chunk"),
+    accepted: z.literal(true),
+    job_id: z.string().min(1),
+    artifact_hash: z.string().min(1),
+    path: z.string().min(1),
+    offset: z.number().int().nonnegative(),
+    bytes: z.number().int().nonnegative(),
+    chunk_hash: z.string().min(1),
+    data_base64: z.string(),
+  }),
+  z.object({
+    response_type: z.literal("chunk"),
+    accepted: z.literal(false),
+    reason: z.string().min(1).optional(),
+  }),
+]);
+
 export const ToyTrainingMetricsSchema = z.object({
   job_id: z.string().min(1),
   dataset: z.string().min(1),
@@ -303,6 +368,12 @@ export type JobClaimResponse = z.infer<typeof JobClaimResponseSchema>;
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
 export type TrainingArtifactManifest = z.infer<typeof TrainingArtifactManifestSchema>;
+export type ArtifactBundleFile = z.infer<typeof ArtifactBundleFileSchema>;
+export type ArtifactFetchManifestRequest = z.infer<typeof ArtifactFetchManifestRequestSchema>;
+export type ArtifactFetchChunkRequest = z.infer<typeof ArtifactFetchChunkRequestSchema>;
+export type ArtifactFetchRequest = z.infer<typeof ArtifactFetchRequestSchema>;
+export type ArtifactFetchManifestResponse = z.infer<typeof ArtifactFetchManifestResponseSchema>;
+export type ArtifactFetchChunkResponse = z.infer<typeof ArtifactFetchChunkResponseSchema>;
 export type ToyTrainingMetrics = z.infer<typeof ToyTrainingMetricsSchema>;
 export type MlxSmokeMetrics = z.infer<typeof MlxSmokeMetricsSchema>;
 export type MlxLoraMetrics = z.infer<typeof MlxLoraMetricsSchema>;

@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { AdapterEvaluationMetricsSchema, TrainingArtifactManifestSchema } from "./schemas.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { artifactStoreManifestPath } from "./artifact-transfer.js";
+import { AdapterEvaluationMetricsSchema, ArtifactManifestSchema, TrainingArtifactManifestSchema } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
 const optimizedModelPath = args["optimized-model"] ?? process.env.MARSHALL_OPTIMIZED_MODEL ?? ".marshall/leaderboard/optimized_model.json";
 const outputDir = args["output-dir"] ?? process.env.MARSHALL_MODEL_PACKAGE_DIR ?? ".marshall/model-package";
+const adapterArtifactsDir = args["adapter-artifacts-dir"] ?? process.env.MARSHALL_ADAPTER_ARTIFACTS_DIR;
 
 const optimized = parseOptimizedModel(JSON.parse(await readFile(optimizedModelPath, "utf8")));
 if (optimized.selected == null) {
@@ -14,6 +16,9 @@ if (optimized.selected == null) {
 }
 
 const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(optimized.selected.metrics_path, "utf8")));
+const adapterPath = adapterArtifactsDir == null || adapterArtifactsDir === ""
+  ? optimized.selected.adapter_path
+  : await storedAdapterPath(adapterArtifactsDir, optimized.selected.adapter_id, optimized.selected.adapter_artifact_hash);
 const packagePath = join(outputDir, "model_package.json");
 const manifestPath = join(outputDir, "manifest.json");
 const createdAt = new Date().toISOString();
@@ -26,7 +31,7 @@ const modelPackage = {
   created_at: createdAt,
   base_model: metrics.model,
   adapter_id: optimized.selected.adapter_id,
-  adapter_path: optimized.selected.adapter_path,
+  adapter_path: adapterPath,
   adapter_artifact_hash: optimized.selected.adapter_artifact_hash,
   eval: {
     job_id: optimized.selected.job_id,
@@ -51,6 +56,7 @@ const manifest = TrainingArtifactManifestSchema.parse({
     strategy: optimized.strategy,
     adapter_id: optimized.selected.adapter_id,
     adapter_artifact_hash: optimized.selected.adapter_artifact_hash,
+    adapter_path: adapterPath,
     metrics_path: optimized.selected.metrics_path,
   })),
   created_at: createdAt,
@@ -99,6 +105,14 @@ function parseOptimizedModel(value: unknown): OptimizedModel {
     strategy: stringValue(record.strategy, "strategy"),
     selected: record.selected == null ? null : parseLeaderboardEntry(record.selected),
   };
+}
+
+async function storedAdapterPath(artifactsDir: string, adapterId: string, adapterHash: string): Promise<string> {
+  const manifest = ArtifactManifestSchema.parse(JSON.parse(await readFile(artifactStoreManifestPath(artifactsDir, adapterId), "utf8")));
+  if (manifest.artifact_hash !== adapterHash) {
+    throw new Error(`stored adapter ${adapterId} hash mismatch: expected ${adapterHash}, got ${manifest.artifact_hash}`);
+  }
+  return manifest.artifact_uri.startsWith("file://") ? fileURLToPath(manifest.artifact_uri) : manifest.artifact_uri;
 }
 
 function parseLeaderboardEntry(value: unknown): LeaderboardEntry {

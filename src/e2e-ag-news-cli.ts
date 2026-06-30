@@ -34,15 +34,21 @@ if (validatorsPerArtifact < validationQuorum) {
 }
 
 const artifactsDir = args["artifacts-dir"] ?? join(runRoot, "artifacts");
+const workerArtifactsDir = args["worker-artifacts-dir"] ?? join(runRoot, "worker-artifacts");
 const evalJobsFile = args["eval-jobs-file"] ?? join(runRoot, "jobs", "evaluate-adapters.json");
 const evalArtifactsDir = args["eval-artifacts-dir"] ?? join(runRoot, "eval-artifacts");
+const evalWorkerArtifactsDir = args["eval-worker-artifacts-dir"] ?? join(runRoot, "eval-worker-artifacts");
 const validationJobsFile = args["validation-jobs-file"] ?? join(runRoot, "jobs", "validate-artifacts.json");
 const validationArtifactsDir = args["validation-artifacts-dir"] ?? join(runRoot, "validation-artifacts");
+const validationWorkerArtifactsDir = args["validation-worker-artifacts-dir"] ?? join(runRoot, "validation-worker-artifacts");
 const leaderboardDir = args["leaderboard-dir"] ?? join(runRoot, "leaderboard");
 const modelPackageDir = args["model-package-dir"] ?? join(runRoot, "model-package");
 const queryDir = args["query-dir"] ?? join(runRoot, "query");
 const datasetCacheDir = args["dataset-cache-dir"] ?? join(runRoot, "cache", "datasets");
 const evalDatasetCacheDir = args["eval-dataset-cache-dir"] ?? join(runRoot, "cache", "eval-datasets");
+const inputArtifactsDir = args["input-artifacts-dir"] ?? join(runRoot, "input-artifacts");
+const artifactChunkBytes = args["artifact-chunk-bytes"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_BYTES;
+const artifactChunkRetries = args["artifact-chunk-retries"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_RETRIES;
 
 const controlScript = siblingScript("control-cli");
 const workerScript = siblingScript("worker-cli");
@@ -65,10 +71,13 @@ const trainControl = await startControl([
   "--adapter-dataset", "ag_news",
   "--adapter-dataset-dir", datasetDir,
   "--key", join(runRoot, "control-train.key"),
+  "--artifact-store-dir", artifactsDir,
   ...optionalArg("--coordinator-url", coordinatorUrl),
   ...optionalArg("--coordinator-token", coordinatorToken),
   ...optionalArg("--swarm-token", swarmToken),
   ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
+  ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
+  ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
 ]);
 try {
   assertWorkerPoolResult("training", parseWorkerPoolResult(await runScript(workerPoolScript, [
@@ -80,11 +89,13 @@ try {
     "--worker-id-prefix", `${runId}-train`,
     "--key-dir", join(runRoot, "worker-keys", "train"),
     "--worker-script", workerScript,
-    "--artifacts-dir", artifactsDir,
+    "--artifacts-dir", workerArtifactsDir,
     "--dataset-cache-dir", datasetCacheDir,
     ...optionalArg("--swarm-token", swarmToken),
     ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
     ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
+    ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
+    ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
     "--iters", args.iters ?? process.env.MARSHALL_ITERS ?? "20",
     "--batch-size", args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE ?? "1",
     "--num-layers", args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS ?? "2",
@@ -103,6 +114,7 @@ await runScript(evalJobsScript, [
   "--artifacts-dir", artifactsDir,
   "--adapter-job-prefix", jobPrefix,
   "--eval-file", evalFile,
+  "--artifact-uri-mode", "p2p",
   "--output", evalJobsFile,
   "--run-id", `${runId}_eval`,
   "--job-prefix", `${jobPrefix}_eval`,
@@ -119,10 +131,14 @@ const evalControl = await startControl([
   "--job-type", "evaluate_adapter",
   "--jobs-file", evalJobsFile,
   "--key", join(runRoot, "control-eval.key"),
+  "--artifact-store-dir", evalArtifactsDir,
+  "--artifact-serve-dirs", artifactsDir,
   ...optionalArg("--coordinator-url", coordinatorUrl),
   ...optionalArg("--coordinator-token", coordinatorToken),
   ...optionalArg("--swarm-token", swarmToken),
   ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
+  ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
+  ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
 ]);
 try {
   assertWorkerPoolResult("evaluation", parseWorkerPoolResult(await runScript(workerPoolScript, [
@@ -134,11 +150,14 @@ try {
     "--worker-id-prefix", `${runId}-eval`,
     "--key-dir", join(runRoot, "worker-keys", "eval"),
     "--worker-script", workerScript,
-    "--artifacts-dir", evalArtifactsDir,
+    "--artifacts-dir", evalWorkerArtifactsDir,
+    "--input-artifacts-dir", inputArtifactsDir,
     "--dataset-cache-dir", evalDatasetCacheDir,
     ...optionalArg("--swarm-token", swarmToken),
     ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
     ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
+    ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
+    ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
     ...optionalArg("--python", pythonBin),
   ])), jobCount);
 } finally {
@@ -154,6 +173,7 @@ if (requireValidation) {
     "--job-prefix", `${jobPrefix}_validate`,
     "--target-artifact-type", "adapter_evaluation",
     "--target-job-prefix", `${jobPrefix}_eval`,
+    "--target-uri-mode", "p2p",
     "--quorum", String(validationQuorum),
     "--validators-per-artifact", String(validatorsPerArtifact),
     "--min-accuracy", args["validation-min-accuracy"] ?? process.env.MARSHALL_VALIDATION_MIN_ACCURACY ?? "0.3",
@@ -172,10 +192,14 @@ if (requireValidation) {
     "--job-type", "validate_artifact",
     "--jobs-file", validationJobsFile,
     "--key", join(runRoot, "control-validation.key"),
+    "--artifact-store-dir", validationArtifactsDir,
+    "--artifact-serve-dirs", evalArtifactsDir,
     ...optionalArg("--coordinator-url", coordinatorUrl),
     ...optionalArg("--coordinator-token", coordinatorToken),
     ...optionalArg("--swarm-token", swarmToken),
     ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
+    ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
+    ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
   ]);
   try {
     assertWorkerPoolResult("validation", parseWorkerPoolResult(await runScript(workerPoolScript, [
@@ -187,10 +211,13 @@ if (requireValidation) {
       "--worker-id-prefix", `${runId}-validator`,
       "--key-dir", join(runRoot, "worker-keys", "validation"),
       "--worker-script", workerScript,
-      "--artifacts-dir", validationArtifactsDir,
+      "--artifacts-dir", validationWorkerArtifactsDir,
+      "--input-artifacts-dir", inputArtifactsDir,
       ...optionalArg("--swarm-token", swarmToken),
       ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
       ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
+      ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
+      ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
     ])), validationJobs.length);
   } finally {
     await stopControl(validationControl.child);
@@ -209,6 +236,7 @@ await runScript(leaderboardScript, [
 await runScript(modelPackageScript, [
   "--optimized-model", join(leaderboardDir, "optimized_model.json"),
   "--output-dir", modelPackageDir,
+  "--adapter-artifacts-dir", artifactsDir,
 ]);
 
 await runScript(modelQueryScript, [
@@ -245,8 +273,11 @@ console.log(JSON.stringify({
   eval_jobs: jobCount,
   validation_jobs: validationJobs.length,
   artifacts_dir: artifactsDir,
+  worker_artifacts_dir: workerArtifactsDir,
   eval_artifacts_dir: evalArtifactsDir,
+  eval_worker_artifacts_dir: evalWorkerArtifactsDir,
   validation_artifacts_dir: requireValidation ? validationArtifactsDir : null,
+  validation_worker_artifacts_dir: requireValidation ? validationWorkerArtifactsDir : null,
   leaderboard_dir: leaderboardDir,
   model_package: join(modelPackageDir, "model_package.json"),
   query_dir: queryDir,

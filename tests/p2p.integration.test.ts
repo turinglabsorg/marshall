@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sha256Path } from "../src/artifact-transfer.js";
 import { ControlPeer } from "../src/control-peer.js";
 import { createTrainingJobs } from "../src/jobs.js";
 import { runToyTraining } from "../src/training-runner.js";
@@ -161,6 +162,51 @@ describe("Marshall p2p substrate", () => {
     expect(new Set(control.state.manifests.map((manifest) => manifest.job_id)).size).toBe(4);
     expect(control.state.statuses.filter((status) => status.status === "completed")).toHaveLength(4);
   }, 20_000);
+
+  it("transfers artifact payloads over libp2p and verifies stored hashes", async () => {
+    const controlArtifactStore = join(tempDir, "control-artifacts");
+    control = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "control.key"),
+      artifactStoreDir: controlArtifactStore,
+      artifactChunkBytes: 16,
+      artifactMaxChunkRetries: 2,
+    });
+    worker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "worker.key"),
+      workerId: "mac-worker-artifact-transfer",
+      controlAddr: control.multiaddrs[0],
+      memoryGb: 64,
+      tokensPerSecond: 1234,
+    });
+
+    await worker.register();
+    const claim = await worker.claimToyTrainingJob(2_000);
+    if (claim.job == null || claim.job.job_type !== "train_toy_model") {
+      throw new Error("expected train_toy_model job");
+    }
+
+    const training = await runToyTraining(claim.job, {
+      outputRoot: join(tempDir, "worker-artifacts"),
+      datasetCacheRoot: join(tempDir, "dataset-cache"),
+      epochs: 10,
+      learningRate: 0.35,
+    });
+    await worker.publishArtifactManifest(training.manifest);
+
+    expect(control.state.manifests).toHaveLength(1);
+    const storedManifest = control.state.manifests[0];
+    expect(storedManifest.artifact_uri).not.toBe(training.manifest.artifact_uri);
+    expect(fileURLToPath(storedManifest.artifact_uri).startsWith(controlArtifactStore)).toBe(true);
+    expect(await sha256Path(fileURLToPath(storedManifest.artifact_uri))).toBe(training.manifest.artifact_hash);
+
+    const materializedInput = await worker.fetchArtifactFromControl(
+      storedManifest.job_id,
+      storedManifest.artifact_hash,
+      join(tempDir, "worker-input-artifacts"),
+      { chunkBytes: 16, maxChunkRetries: 2 },
+    );
+    expect(await sha256Path(fileURLToPath(materializedInput.artifact_uri))).toBe(storedManifest.artifact_hash);
+  }, 15_000);
 
   it("rejects workers that do not present the configured swarm token", async () => {
     control = await ControlPeer.create({

@@ -26,6 +26,7 @@ const jobs = await createArtifactValidationJobs({
   jobPrefix: args["job-prefix"] ?? process.env.MARSHALL_JOB_ID ?? "job_validate_artifact",
   targetArtifactType: args["target-artifact-type"] ?? process.env.MARSHALL_VALIDATION_TARGET_ARTIFACT_TYPE ?? "adapter_evaluation",
   targetJobPrefix: args["target-job-prefix"] ?? process.env.MARSHALL_VALIDATION_TARGET_JOB_PREFIX,
+  targetUriMode: artifactUriModeArg(args["target-uri-mode"] ?? process.env.MARSHALL_VALIDATION_TARGET_URI_MODE ?? "file"),
   validatorsPerArtifact,
   includeValidated: booleanArg(args["include-validated"] ?? process.env.MARSHALL_INCLUDE_VALIDATED_ARTIFACTS, false),
   limit: optionalNumberArg(args.limit ?? process.env.MARSHALL_VALIDATION_JOB_LIMIT),
@@ -53,6 +54,7 @@ interface CreateArtifactValidationJobsOptions {
   jobPrefix: string;
   targetArtifactType: string;
   targetJobPrefix?: string;
+  targetUriMode: "file" | "p2p";
   validatorsPerArtifact: number;
   includeValidated: boolean;
   limit?: number;
@@ -83,15 +85,22 @@ async function createArtifactValidationJobs(options: CreateArtifactValidationJob
           worker_id: artifact.worker_id,
           peer_id: artifact.peer_id,
           artifact_type: artifact.artifact_type,
-          artifact_uri: artifact.artifact_uri,
+          artifact_uri: options.targetUriMode === "p2p" ? `marshall-artifact://${artifact.job_id}` : artifact.artifact_uri,
           artifact_hash: artifact.artifact_hash,
           config_hash: artifact.config_hash,
-          metrics_uri: artifact.metrics_uri,
+          metrics_uri: options.targetUriMode === "p2p" && artifact.metrics_uri != null ? `marshall-artifact://${artifact.job_id}` : artifact.metrics_uri,
         },
         policy: options.policy,
       });
     })
   ));
+}
+
+function artifactUriModeArg(value: string): "file" | "p2p" {
+  if (value === "file" || value === "p2p") {
+    return value;
+  }
+  throw new Error(`unsupported artifact uri mode: ${value}`);
 }
 
 function parseArgs(values: string[]): Record<string, string> {

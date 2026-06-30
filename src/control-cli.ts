@@ -22,6 +22,10 @@ const control = await ControlPeer.create({
   coordinatorToken: args["coordinator-token"] ?? process.env.MARSHALL_COORDINATOR_TOKEN,
   swarmToken: args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN,
   jobLeaseSeconds: numberArg(args["job-lease-seconds"] ?? process.env.MARSHALL_JOB_LEASE_SECONDS, 300),
+  artifactStoreDir: args["artifact-store-dir"] ?? process.env.MARSHALL_ARTIFACT_STORE_DIR,
+  artifactServeDirs: splitList(args["artifact-serve-dirs"] ?? process.env.MARSHALL_ARTIFACT_SERVE_DIRS ?? ""),
+  artifactChunkBytes: numberArg(args["artifact-chunk-bytes"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_BYTES, 1024 * 1024),
+  artifactMaxChunkRetries: numberArg(args["artifact-chunk-retries"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_RETRIES, 3),
   jobs,
 });
 
@@ -34,6 +38,8 @@ console.log(JSON.stringify({
   jobs_file: args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE ?? null,
   adapter_dataset: args["adapter-dataset"] ?? process.env.MARSHALL_ADAPTER_DATASET ?? "marshall_instructions",
   coordinator_url: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL ?? null,
+  artifact_store_dir: args["artifact-store-dir"] ?? process.env.MARSHALL_ARTIFACT_STORE_DIR ?? null,
+  artifact_serve_dirs: splitList(args["artifact-serve-dirs"] ?? process.env.MARSHALL_ARTIFACT_SERVE_DIRS ?? ""),
 }, null, 2));
 
 await waitForShutdown(async () => {

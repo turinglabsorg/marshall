@@ -5,6 +5,7 @@ export const PROTOCOLS = {
   jobClaim: "/marshall/job/claim/1.0.0",
   jobStatus: "/marshall/job/status/1.0.0",
   artifactManifest: "/marshall/artifact/manifest/1.0.0",
+  artifactFetch: "/marshall/artifact/fetch/1.0.0",
 } as const;
 
 export type ProtocolName = (typeof PROTOCOLS)[keyof typeof PROTOCOLS];
