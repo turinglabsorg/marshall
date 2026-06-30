@@ -10,6 +10,22 @@ export interface TrainingJobOptions {
   roundId?: string;
   adapterDataset?: AdapterDatasetProfile;
   adapterDatasetDir?: string;
+  adapterTrainingConfig?: AdapterTrainingConfig;
+}
+
+export interface AdapterTrainingConfig {
+  model: string;
+  iters: number;
+  batch_size: number;
+  learning_rate: number;
+  num_layers: number;
+  max_seq_length: number;
+  steps_per_report: number;
+  steps_per_eval: number;
+  val_batches: number;
+  seed: number;
+  mask_prompt: boolean;
+  grad_checkpoint: boolean;
 }
 
 interface AdapterDatasetShardDefinition {
@@ -106,6 +122,21 @@ const MARSHALL_INSTRUCTIONS_DATASET: AdapterDatasetDefinition = {
   shards: MARSHALL_INSTRUCTIONS_SHARDS,
 };
 
+export const DEFAULT_ADAPTER_TRAINING_CONFIG: AdapterTrainingConfig = {
+  model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+  iters: 20,
+  batch_size: 1,
+  learning_rate: 1e-5,
+  num_layers: 4,
+  max_seq_length: 512,
+  steps_per_report: 10,
+  steps_per_eval: 20,
+  val_batches: -1,
+  seed: 42,
+  mask_prompt: true,
+  grad_checkpoint: false,
+};
+
 export function createToyTrainingJob(options: TrainingJobOptions = {}): TrainingJob {
   return TrainingJobSchema.parse({
     job_id: options.jobId ?? "job_toy_001",
@@ -140,6 +171,7 @@ export function createMlxSmokeJob(options: TrainingJobOptions = {}): TrainingJob
 
 export function createAdapterTrainingJob(options: TrainingJobOptions = {}): TrainingJob {
   const dataset = adapterDatasetDefinition(options);
+  const trainingConfig = adapterTrainingConfig(options);
   return TrainingJobSchema.parse({
     job_id: options.jobId ?? "job_adapter_001",
     run_id: options.runId ?? "run_adapter_001",
@@ -157,11 +189,13 @@ export function createAdapterTrainingJob(options: TrainingJobOptions = {}): Trai
       hash: dataset.root.hash,
       files: dataset.root.files,
     },
+    training_config: trainingConfig,
   });
 }
 
 export function createAdapterTrainingShardJobs(count: number, options: TrainingJobOptions = {}): TrainingJob[] {
   const dataset = adapterDatasetDefinition(options);
+  const trainingConfig = adapterTrainingConfig(options);
   if (!Number.isInteger(count) || count < 1 || count > dataset.shards.length) {
     throw new Error(`adapter shard job count must be between 1 and ${dataset.shards.length}`);
   }
@@ -185,6 +219,7 @@ export function createAdapterTrainingShardJobs(count: number, options: TrainingJ
         hash: shard.hash,
         files: shard.files,
       },
+      training_config: trainingConfig,
     });
   });
 }
@@ -237,6 +272,13 @@ function adapterDatasetDefinition(options: TrainingJobOptions): AdapterDatasetDe
     return readAdapterDatasetManifest(options.adapterDatasetDir ?? ".marshall/datasets/ag-news");
   }
   return MARSHALL_INSTRUCTIONS_DATASET;
+}
+
+function adapterTrainingConfig(options: TrainingJobOptions): AdapterTrainingConfig {
+  return {
+    ...DEFAULT_ADAPTER_TRAINING_CONFIG,
+    ...options.adapterTrainingConfig,
+  };
 }
 
 function readAdapterDatasetManifest(datasetDir: string): AdapterDatasetDefinition {

@@ -80,6 +80,7 @@ npm run worker:pool:compiled -- \
 
 Only run training jobs when the operator has published compatible dataset shards.
 Workers materialize only the assigned shard files into their local dataset cache. Every declared file hash, optional byte size, and final shard hash must verify before training starts.
+The base model and LoRA hyperparameters are part of the claimed job spec. Do not override them locally unless the operator explicitly asks for a controlled debugging run.
 
 ```sh
 npm run worker:pool:compiled -- \

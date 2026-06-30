@@ -77,6 +77,20 @@ export const TrainingJobSchema = z.object({
   job_type: z.enum(["train_toy_model", "train_mlx_smoke", "train_adapter"]),
   backend: BackendSchema,
   dataset_shard: DatasetShardSchema,
+  training_config: z.object({
+    model: z.string().min(1),
+    iters: z.number().int().positive(),
+    batch_size: z.number().int().positive(),
+    learning_rate: z.number().positive(),
+    num_layers: z.number().int().positive(),
+    max_seq_length: z.number().int().positive(),
+    steps_per_report: z.number().int().positive(),
+    steps_per_eval: z.number().int().positive(),
+    val_batches: z.number().int(),
+    seed: z.number().int(),
+    mask_prompt: z.boolean(),
+    grad_checkpoint: z.boolean(),
+  }).optional(),
 });
 
 export const AdapterReferenceSchema = z.object({

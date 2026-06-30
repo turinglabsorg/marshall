@@ -47,6 +47,22 @@ const jobsFile = join(jobsDir, "train-adapters.json");
 const runFile = join(runDir, "run.json");
 const coordinatorUrl = args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL;
 const publish = booleanArg(args.publish ?? process.env.MARSHALL_PUBLISH_JOBS, coordinatorUrl != null && coordinatorUrl !== "");
+const adapterTrainingConfig = {
+  model: args.model ?? process.env.MARSHALL_MODEL ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+  iters: positiveIntegerArg(args.iters ?? process.env.MARSHALL_ITERS, 20),
+  batch_size: positiveIntegerArg(args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE, 1),
+  learning_rate: positiveNumberArg(args["learning-rate"] ?? process.env.MARSHALL_LEARNING_RATE, 1e-5),
+  num_layers: positiveIntegerArg(args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS, 4),
+  max_seq_length: positiveIntegerArg(args["max-seq-length"] ?? process.env.MARSHALL_MAX_SEQ_LENGTH, 512),
+  steps_per_report: positiveIntegerArg(args["steps-per-report"] ?? process.env.MARSHALL_STEPS_PER_REPORT, 10),
+  steps_per_eval: positiveIntegerArg(args["steps-per-eval"] ?? process.env.MARSHALL_STEPS_PER_EVAL, 20),
+  val_batches: integerArg(args["val-batches"] ?? process.env.MARSHALL_VAL_BATCHES, -1),
+  seed: integerArg(args.seed ?? process.env.MARSHALL_SEED, 42),
+  mask_prompt: args["no-mask-prompt"] === "true"
+    ? false
+    : booleanArg(args["mask-prompt"] ?? process.env.MARSHALL_MASK_PROMPT, true),
+  grad_checkpoint: booleanArg(args["grad-checkpoint"] ?? process.env.MARSHALL_GRAD_CHECKPOINT, false),
+};
 
 const jobs = createTrainingJobs("train_adapter", jobCount, {
   jobId: jobIdPrefix,
@@ -54,6 +70,7 @@ const jobs = createTrainingJobs("train_adapter", jobCount, {
   roundId,
   adapterDataset: "manifest",
   adapterDatasetDir: datasetDir,
+  adapterTrainingConfig,
 });
 
 await mkdir(jobsDir, { recursive: true });
@@ -85,6 +102,7 @@ const runBundle = {
   job_count: jobs.length,
   shard_count: manifest.shards.length,
   token_estimate: manifest.token_estimate,
+  training_config: adapterTrainingConfig,
   coordinator_url: coordinatorUrl ?? null,
   published_jobs: publishedJobs,
   control: {
@@ -155,9 +173,25 @@ function optionalStringArg(value: string | undefined): string | undefined {
 }
 
 function positiveIntegerArg(value: string | undefined, fallback: number): number {
-  const parsed = value == null ? fallback : Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
+  const parsed = integerArg(value, fallback);
+  if (parsed < 1) {
     throw new Error(`invalid positive integer: ${value ?? fallback}`);
+  }
+  return parsed;
+}
+
+function integerArg(value: string | undefined, fallback: number): number {
+  const parsed = value == null ? fallback : Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`invalid integer: ${value ?? fallback}`);
+  }
+  return parsed;
+}
+
+function positiveNumberArg(value: string | undefined, fallback: number): number {
+  const parsed = value == null ? fallback : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value ?? fallback}`);
   }
   return parsed;
 }

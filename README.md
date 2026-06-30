@@ -162,6 +162,7 @@ It proves:
 - dataset cache materialization supports local `file://` inputs and HTTP/S shard files, verifies each file hash, verifies optional file sizes, and verifies the final shard root hash before exposing the shard to training code.
 - `npm run dataset:manifest` builds private local content-addressed dataset manifests from JSONL inputs under `.marshall/`, with optional `--base-uri` for externally hosted shard files. It accepts existing chat records with `messages[]`, plain text records through `--text-field`, or instruction datasets through `--instruction-field`, `--response-field`, and optional `--context-field`.
 - `npm run dataset:run:prepare` is the product path from raw dataset input to scheduled work: it can create the dataset manifest, write a run bundle, write the `train_adapter` jobs file, and publish the jobs into the coordinator when `--coordinator-url` is provided.
+- `train_adapter` jobs carry `training_config` in the job spec. The base model and LoRA hyperparameters are run-level contract data, not worker-local choices.
 
 ## CLI Runtime
 
@@ -214,6 +215,10 @@ npm run dataset:run:prepare -- \
   --run-dir .marshall/runs/run_dolly_15k_001 \
   --shard-count 32 \
   --job-count 32 \
+  --model mlx-community/Qwen2.5-0.5B-Instruct-4bit \
+  --iters 20 \
+  --learning-rate 0.00001 \
+  --num-layers 4 \
   --instruction-field instruction \
   --response-field response \
   --context-field context

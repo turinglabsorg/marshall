@@ -33,6 +33,10 @@ describe("dataset run CLI", () => {
         "--run-dir", runDir,
         "--shard-count", "3",
         "--job-count", "3",
+        "--model", "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+        "--iters", "12",
+        "--learning-rate", "0.00002",
+        "--num-layers", "6",
         "--instruction-field", "instruction",
         "--response-field", "response",
         "--context-field", "context",
@@ -67,6 +71,12 @@ describe("dataset run CLI", () => {
           dataset_id: "dataset-run-smoke",
           files: expect.any(Array),
         },
+        training_config: {
+          model: "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+          iters: 12,
+          learning_rate: 0.00002,
+          num_layers: 6,
+        },
       });
 
       const run = JSON.parse(await readFile(summary.run_file, "utf8")) as {
@@ -75,11 +85,19 @@ describe("dataset run CLI", () => {
           adapter_dataset: string;
           adapter_dataset_dir: string;
         };
+        training_config: {
+          model: string;
+          iters: number;
+        };
       };
       expect(run.control).toMatchObject({
         jobs_file: summary.jobs_file,
         adapter_dataset: "manifest",
         adapter_dataset_dir: datasetDir,
+      });
+      expect(run.training_config).toMatchObject({
+        model: "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+        iters: 12,
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });

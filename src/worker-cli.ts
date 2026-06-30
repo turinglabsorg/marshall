@@ -109,24 +109,25 @@ async function runClaimedJob(job: MarshallJob) {
     });
   }
   if (job.job_type === "train_adapter") {
+    const config = job.training_config;
     return runMlxLoraTraining(job, {
       outputRoot,
       datasetCacheRoot,
       pythonBin: args.python ?? process.env.MARSHALL_PYTHON,
-      model: args.model ?? process.env.MARSHALL_MODEL,
-      iters: numberArg(args.iters ?? process.env.MARSHALL_ITERS, 20),
-      batchSize: numberArg(args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE, 1),
-      learningRate: numberArg(args["learning-rate"] ?? process.env.MARSHALL_LEARNING_RATE, 1e-5),
-      numLayers: numberArg(args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS, 4),
-      maxSeqLength: numberArg(args["max-seq-length"] ?? process.env.MARSHALL_MAX_SEQ_LENGTH, 512),
-      stepsPerReport: numberArg(args["steps-per-report"] ?? process.env.MARSHALL_STEPS_PER_REPORT, 10),
-      stepsPerEval: numberArg(args["steps-per-eval"] ?? process.env.MARSHALL_STEPS_PER_EVAL, 20),
-      valBatches: numberArg(args["val-batches"] ?? process.env.MARSHALL_VAL_BATCHES, -1),
-      seed: numberArg(args.seed ?? process.env.MARSHALL_SEED, 42),
-      maskPrompt: args["no-mask-prompt"] === "true"
+      model: config?.model ?? args.model ?? process.env.MARSHALL_MODEL,
+      iters: config?.iters ?? numberArg(args.iters ?? process.env.MARSHALL_ITERS, 20),
+      batchSize: config?.batch_size ?? numberArg(args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE, 1),
+      learningRate: config?.learning_rate ?? numberArg(args["learning-rate"] ?? process.env.MARSHALL_LEARNING_RATE, 1e-5),
+      numLayers: config?.num_layers ?? numberArg(args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS, 4),
+      maxSeqLength: config?.max_seq_length ?? numberArg(args["max-seq-length"] ?? process.env.MARSHALL_MAX_SEQ_LENGTH, 512),
+      stepsPerReport: config?.steps_per_report ?? numberArg(args["steps-per-report"] ?? process.env.MARSHALL_STEPS_PER_REPORT, 10),
+      stepsPerEval: config?.steps_per_eval ?? numberArg(args["steps-per-eval"] ?? process.env.MARSHALL_STEPS_PER_EVAL, 20),
+      valBatches: config?.val_batches ?? numberArg(args["val-batches"] ?? process.env.MARSHALL_VAL_BATCHES, -1),
+      seed: config?.seed ?? numberArg(args.seed ?? process.env.MARSHALL_SEED, 42),
+      maskPrompt: config?.mask_prompt ?? (args["no-mask-prompt"] === "true"
         ? false
-        : booleanArg(args["mask-prompt"] ?? process.env.MARSHALL_MASK_PROMPT, true),
-      gradCheckpoint: booleanArg(args["grad-checkpoint"] ?? process.env.MARSHALL_GRAD_CHECKPOINT, false),
+        : booleanArg(args["mask-prompt"] ?? process.env.MARSHALL_MASK_PROMPT, true)),
+      gradCheckpoint: config?.grad_checkpoint ?? booleanArg(args["grad-checkpoint"] ?? process.env.MARSHALL_GRAD_CHECKPOINT, false),
     });
   }
   if (job.job_type === "train_mlx_smoke") {

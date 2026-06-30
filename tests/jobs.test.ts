@@ -25,6 +25,12 @@ describe("training job builders", () => {
     });
     expect(defaultBackendForJob("train_adapter")).toBe("mlx");
     expect(defaultBackendForJob("validate_artifact")).toBe("cpu");
+    expect(job.training_config).toMatchObject({
+      model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      iters: 20,
+      batch_size: 1,
+      num_layers: 4,
+    });
   });
 
   it("creates sharded MLX adapter jobs for multi-worker runs", () => {
@@ -48,6 +54,7 @@ describe("training job builders", () => {
     ]);
     expect(new Set(jobs.map((job) => job.dataset_shard.uri)).size).toBe(4);
     expect(jobs.every((job) => job.backend === "mlx")).toBe(true);
+    expect(jobs.every((job) => job.training_config?.model === "mlx-community/Qwen2.5-0.5B-Instruct-4bit")).toBe(true);
   });
 
   it("creates adapter jobs from a local AG News manifest", async () => {
@@ -176,5 +183,42 @@ describe("training job builders", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("creates adapter jobs with explicit training config", () => {
+    const jobs = createTrainingJobs("train_adapter", 2, {
+      jobId: "job_configured",
+      runId: "run_configured",
+      adapterTrainingConfig: {
+        model: "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+        iters: 80,
+        batch_size: 2,
+        learning_rate: 2e-5,
+        num_layers: 8,
+        max_seq_length: 1024,
+        steps_per_report: 5,
+        steps_per_eval: 20,
+        val_batches: 4,
+        seed: 7,
+        mask_prompt: true,
+        grad_checkpoint: true,
+      },
+    });
+
+    expect(jobs).toHaveLength(2);
+    expect(jobs[0].training_config).toEqual({
+      model: "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+      iters: 80,
+      batch_size: 2,
+      learning_rate: 2e-5,
+      num_layers: 8,
+      max_seq_length: 1024,
+      steps_per_report: 5,
+      steps_per_eval: 20,
+      val_batches: 4,
+      seed: 7,
+      mask_prompt: true,
+      grad_checkpoint: true,
+    });
   });
 });

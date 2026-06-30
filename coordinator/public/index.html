@@ -326,6 +326,63 @@
         margin-bottom: 14px;
       }
 
+      .contract-panel {
+        display: grid;
+        grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.6fr);
+        gap: 1px;
+        margin-bottom: 14px;
+        border: 1px solid var(--line);
+        background: var(--line);
+        box-shadow: inset 0 0 30px rgba(51, 255, 136, 0.035);
+      }
+
+      .contract-main,
+      .contract-side {
+        min-width: 0;
+        background: var(--panel);
+      }
+
+      .contract-main {
+        padding: 14px;
+      }
+
+      .contract-side {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .contract-side .metric {
+        min-height: 84px;
+        border-width: 0 0 1px 1px;
+        box-shadow: none;
+      }
+
+      .contract-label {
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .contract-title {
+        margin: 8px 0 12px;
+        color: var(--text);
+        font-size: clamp(20px, 2.8vw, 38px);
+        font-weight: 700;
+        line-height: 1.05;
+        overflow-wrap: anywhere;
+      }
+
+      .contract-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .contract-meta .pill {
+        min-height: 24px;
+      }
+
       .metric {
         min-height: 92px;
         padding: 13px;
@@ -355,6 +412,10 @@
         display: grid;
         grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
         gap: 14px;
+      }
+
+      .grid.vertical {
+        grid-template-columns: 1fr;
       }
 
       .section {
@@ -516,8 +577,13 @@
 
       @media (max-width: 1080px) {
         .boot-grid,
+        .contract-panel,
         .grid {
           grid-template-columns: 1fr;
+        }
+
+        .contract-side {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
         .summary-grid {
@@ -536,6 +602,10 @@
         }
 
         .summary-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .contract-side {
           grid-template-columns: 1fr;
         }
 
@@ -591,6 +661,20 @@
           </div>
         </section>
 
+        <section class="contract-panel" aria-label="Current training contract">
+          <div class="contract-main">
+            <div class="contract-label" id="jobContractLabel">active training contract</div>
+            <div class="contract-title" id="jobContractTitle">No training job published</div>
+            <div class="contract-meta" id="jobContractMeta"></div>
+          </div>
+          <div class="contract-side">
+            <div class="metric"><span>dataset.shards</span><strong id="contractShards">0</strong></div>
+            <div class="metric"><span>jobs.queued</span><strong id="contractQueued">0</strong></div>
+            <div class="metric"><span>adapter.iters</span><strong id="contractIters">0</strong></div>
+            <div class="metric"><span>lora.layers</span><strong id="contractLayers">0</strong></div>
+          </div>
+        </section>
+
         <section class="summary-grid" aria-label="Swarm summary">
           <div class="metric"><span>workers.registered</span><strong id="workersRegistered">0</strong></div>
           <div class="metric"><span>workers.busy</span><strong id="workersBusy">0</strong></div>
@@ -599,7 +683,7 @@
           <div class="metric"><span>artifacts.published</span><strong id="artifactsPublished">0</strong></div>
         </section>
 
-        <section class="grid">
+        <section class="grid vertical">
           <div class="section">
             <div class="section-header">
               <h3>workers</h3>
@@ -618,14 +702,6 @@
                 <tbody id="workersTable"></tbody>
               </table>
             </div>
-          </div>
-
-          <div class="section">
-            <div class="section-header">
-              <h3>event stream</h3>
-              <span id="streamText">opening stream</span>
-            </div>
-            <div class="event-log" id="eventLog"></div>
           </div>
 
           <div class="section">
@@ -666,6 +742,14 @@
               </table>
             </div>
           </div>
+
+          <div class="section">
+            <div class="section-header">
+              <h3>event stream</h3>
+              <span id="streamText">opening stream</span>
+            </div>
+            <div class="event-log" id="eventLog"></div>
+          </div>
         </section>
       </main>
     </div>
@@ -687,6 +771,13 @@
         jobsRunning: document.getElementById("jobsRunning"),
         jobsCompleted: document.getElementById("jobsCompleted"),
         artifactsPublished: document.getElementById("artifactsPublished"),
+        jobContractLabel: document.getElementById("jobContractLabel"),
+        jobContractTitle: document.getElementById("jobContractTitle"),
+        jobContractMeta: document.getElementById("jobContractMeta"),
+        contractShards: document.getElementById("contractShards"),
+        contractQueued: document.getElementById("contractQueued"),
+        contractIters: document.getElementById("contractIters"),
+        contractLayers: document.getElementById("contractLayers"),
         workersTable: document.getElementById("workersTable"),
         jobsTable: document.getElementById("jobsTable"),
         artifactsTable: document.getElementById("artifactsTable"),
@@ -769,10 +860,58 @@
         nodes.jobsCompleted.textContent = summary.jobs_completed ?? 0;
         nodes.artifactsPublished.textContent = summary.artifacts_published ?? 0;
         nodes.workersUpdated.textContent = `updated ${timeLabel(dashboard.generated_at)}`;
+        renderTrainingContract(dashboard.jobs || []);
         renderWorkers(dashboard.workers || []);
         renderJobs(dashboard.jobs || []);
         renderArtifacts(dashboard.artifacts || []);
         renderEvents();
+      }
+
+      function renderTrainingContract(jobs) {
+        const selected = selectContractJob(jobs);
+        if (!selected) {
+          nodes.jobContractLabel.textContent = "active training contract";
+          nodes.jobContractTitle.textContent = "No training job published";
+          nodes.jobContractMeta.innerHTML = `<span class="pill idle">waiting</span>`;
+          nodes.contractShards.textContent = "0";
+          nodes.contractQueued.textContent = "0";
+          nodes.contractIters.textContent = "0";
+          nodes.contractLayers.textContent = "0";
+          return;
+        }
+
+        const job = selected.job || {};
+        const spec = job.job_spec || {};
+        const shard = spec.dataset_shard || {};
+        const config = spec.training_config || {};
+        const runJobs = jobs.filter((entry) => (entry.job || {}).run_id === job.run_id);
+        const queued = runJobs.filter((entry) => ((entry.job || {}).status || "queued") === "queued").length;
+        const title = `${config.model || "model unset"} :: ${shard.dataset_id || shard.id || job.dataset_uri || "dataset unset"}`;
+        nodes.jobContractLabel.textContent = `${job.job_type || "job"} / ${job.status || "unknown"}`;
+        nodes.jobContractTitle.textContent = title;
+        nodes.jobContractMeta.innerHTML = [
+          metaPill(`run ${job.run_id || "unknown"}`, "running"),
+          metaPill(`dataset ${shard.dataset_version || "unversioned"}`),
+          metaPill(`shard ${shard.id || "unknown"}`),
+          metaPill(`seq ${config.max_seq_length || "?"}`),
+          metaPill(`lr ${config.learning_rate || "?"}`),
+        ].join("");
+        nodes.contractShards.textContent = String(runJobs.length || 1);
+        nodes.contractQueued.textContent = String(queued);
+        nodes.contractIters.textContent = String(config.iters || 0);
+        nodes.contractLayers.textContent = String(config.num_layers || 0);
+      }
+
+      function selectContractJob(jobs) {
+        const trainJobs = jobs.filter((entry) => (entry.job || {}).job_type === "train_adapter");
+        return trainJobs.find((entry) => ["running", "claimed"].includes((entry.job || {}).status))
+          || trainJobs.find((entry) => ((entry.job || {}).status || "queued") === "queued")
+          || trainJobs.at(-1)
+          || null;
+      }
+
+      function metaPill(value, className = "") {
+        return `<span class="pill ${className}">${html(value)}</span>`;
       }
 
       function renderWorkers(workers) {
