@@ -145,6 +145,15 @@ func (server *Server) dashboardSnapshot(ctx context.Context) (DashboardSnapshot,
 		if activity.Busy {
 			summary.WorkersBusy += 1
 		}
+		if activity.Busy && activity.Worker.ThroughputUnitsPerSecond != nil {
+			summary.ClusterThroughputUnitsPerSecond += *activity.Worker.ThroughputUnitsPerSecond
+			summary.ActiveThroughputWorkers += 1
+			if summary.ClusterThroughputLabel == "" {
+				summary.ClusterThroughputLabel = activity.Worker.ThroughputLabel
+			} else if summary.ClusterThroughputLabel != activity.Worker.ThroughputLabel {
+				summary.ClusterThroughputLabel = "mixed units/s"
+			}
+		}
 		activities = append(activities, *activity)
 	}
 	summary.WorkersRegistered = len(activities)

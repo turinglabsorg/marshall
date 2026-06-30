@@ -227,6 +227,11 @@ export class ControlPeer {
       ) {
         continue;
       }
+      const participationError = await this.participationError(job, claim);
+      if (participationError != null) {
+        lastRejection = participationError;
+        continue;
+      }
 
       this.state.assignedJobs.set(job.job_id, claim.worker_id);
       if (this.coordinator == null) {
@@ -258,6 +263,56 @@ export class ControlPeer {
       accepted: false,
       job: null,
       reason: lastRejection ?? "no compatible job available",
+    };
+  }
+
+  private async participationError(job: MarshallJob, claim: JobClaim): Promise<string | undefined> {
+    if (job.job_type !== "evaluate_adapter") {
+      return undefined;
+    }
+    const sourceJobID = job.adapter.source_job_id;
+    if (sourceJobID == null || sourceJobID === "") {
+      return "evaluation job has no adapter source job";
+    }
+
+    const producer = await this.artifactProducer(sourceJobID);
+    if (producer == null) {
+      return `adapter producer unavailable for ${sourceJobID}`;
+    }
+    if (producer.worker_id === claim.worker_id) {
+      return "adapter producer cannot evaluate its own artifact";
+    }
+    if (producer.peer_id !== "" && producer.peer_id === claim.peer_id) {
+      return "adapter producer peer cannot evaluate its own artifact";
+    }
+    if (workerAlternationKey(producer.worker_id) === workerAlternationKey(claim.worker_id)) {
+      return "adapter evaluation must alternate worker slots";
+    }
+    return undefined;
+  }
+
+  private async artifactProducer(jobID: string): Promise<{ worker_id: string; peer_id: string } | undefined> {
+    for (const serveDir of this.artifactServeDirs) {
+      try {
+        const manifest = ArtifactManifestSchema.parse(JSON.parse(await readFile(artifactStoreManifestPath(serveDir, jobID), "utf8")));
+        return {
+          worker_id: manifest.worker_id,
+          peer_id: manifest.peer_id,
+        };
+      } catch (error) {
+        if (isMissingFile(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    if (this.coordinator == null) {
+      return undefined;
+    }
+    const artifact = await this.coordinator.getArtifact(jobID);
+    return {
+      worker_id: artifact.worker_id,
+      peer_id: artifact.peer_id,
     };
   }
 
@@ -458,6 +513,14 @@ function splitListEnv(key: string): string[] {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function workerAlternationKey(workerID: string): string {
+  const match = workerID.match(/^(.*?)-marshall-[^-]+-(\d+)$/);
+  if (match != null) {
+    return `${match[1]}:${Number(match[2])}`;
+  }
+  return workerID;
 }
 
 function isMissingFile(error: unknown): boolean {

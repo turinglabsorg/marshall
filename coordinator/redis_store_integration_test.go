@@ -107,14 +107,41 @@ func TestRedisStoreLifecycle(t *testing.T) {
 		t.Fatalf("expected first claim to be accepted: %+v", claim)
 	}
 	if _, err := store.WorkerHeartbeat(ctx, WorkerHeartbeat{
-		WorkerID:     "worker_mlx_001",
-		PeerID:       "12D3KooWTest",
-		Status:       "working",
-		CurrentJobID: "job_test_001",
-		LeaseSeconds: 60,
-		Timestamp:    nowUTC(),
+		WorkerID:                 "worker_mlx_001",
+		PeerID:                   "12D3KooWTest",
+		Status:                   "working",
+		CurrentJobID:             "job_test_001",
+		LeaseSeconds:             60,
+		Timestamp:                nowUTC(),
+		ProgressPercent:          floatPointer(42.5),
+		ProgressLabel:            "executing runner",
+		WorkUnitsDone:            floatPointer(42.5),
+		WorkUnitsTotal:           floatPointer(100),
+		ThroughputUnitsPerSecond: floatPointer(3.25),
+		ThroughputLabel:          "job%/s",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	workers, err = store.Workers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workers[0].ProgressPercent == nil || *workers[0].ProgressPercent != 42.5 || workers[0].ProgressLabel != "executing runner" {
+		t.Fatalf("worker heartbeat telemetry was not persisted: %+v", workers[0])
+	}
+	jobs, err = store.Jobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var activeJob Job
+	for _, job := range jobs {
+		if job.JobID == "job_test_001" {
+			activeJob = job
+			break
+		}
+	}
+	if activeJob.ProgressPercent == nil || *activeJob.ProgressPercent != 42.5 || activeJob.ThroughputUnitsPerSecond == nil || *activeJob.ThroughputUnitsPerSecond != 3.25 {
+		t.Fatalf("job heartbeat telemetry was not persisted: %+v", activeJob)
 	}
 
 	secondClaim, err := store.ClaimJob(ctx, JobClaim{
@@ -331,6 +358,10 @@ func TestRedisStoreLifecycle(t *testing.T) {
 			t.Fatalf("missing event type %s in %#v", eventType, events)
 		}
 	}
+}
+
+func floatPointer(value float64) *float64 {
+	return &value
 }
 
 func TestRedisStoreRequeueExpiredJobsIsIdempotentAndClaimable(t *testing.T) {

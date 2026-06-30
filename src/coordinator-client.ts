@@ -158,6 +158,12 @@ export class CoordinatorClient {
       job_id: heartbeat.job_id,
       timestamp: heartbeat.timestamp,
       lease_seconds: heartbeat.lease_seconds,
+      progress_percent: heartbeat.progress_percent,
+      progress_label: heartbeat.progress_label,
+      work_units_done: heartbeat.work_units_done,
+      work_units_total: heartbeat.work_units_total,
+      throughput_units_per_second: heartbeat.throughput_units_per_second,
+      throughput_label: heartbeat.throughput_label,
     }, EventSchema);
   }
 

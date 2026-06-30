@@ -25,6 +25,7 @@ import {
   type JobClaimResponse,
   type JobType,
   type JobStatus,
+  type WorkerHeartbeat,
   type WorkerRegistration,
 } from "./schemas.js";
 import { readJson, requestJson, writeJson } from "./wire.js";
@@ -98,7 +99,15 @@ export class WorkerPeer {
     return registration;
   }
 
-  async heartbeat(status: "idle" | "working" = "idle", jobId?: string, leaseSeconds?: number): Promise<void> {
+  async heartbeat(
+    status: "idle" | "working" = "idle",
+    jobId?: string,
+    leaseSeconds?: number,
+    telemetry: Partial<Pick<
+      WorkerHeartbeat,
+      "progress_percent" | "progress_label" | "work_units_done" | "work_units_total" | "throughput_units_per_second" | "throughput_label"
+    >> = {},
+  ): Promise<void> {
     const response = AckSchema.parse(
       await this.requestControlJson(PROTOCOLS.workerHeartbeat, {
         ...this.authPayload(),
@@ -108,6 +117,7 @@ export class WorkerPeer {
         job_id: jobId,
         timestamp: new Date().toISOString(),
         lease_seconds: leaseSeconds,
+        ...telemetry,
       }),
     );
 

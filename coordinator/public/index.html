@@ -124,6 +124,35 @@
         white-space: nowrap;
       }
 
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .sync-control {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 32px;
+        padding: 0 9px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .sync-control select {
+        border: 1px solid var(--line);
+        background: #020403;
+        color: var(--green);
+        font: inherit;
+        min-height: 22px;
+      }
+
       .dot {
         width: 9px;
         height: 9px;
@@ -322,7 +351,7 @@
 
       .summary-grid {
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(6, minmax(0, 1fr));
         gap: 10px;
         margin-bottom: 14px;
       }
@@ -399,7 +428,13 @@
         font-size: clamp(30px, 4vw, 46px);
         font-weight: 700;
         line-height: 0.9;
+        overflow-wrap: anywhere;
         text-shadow: 0 0 20px rgba(51, 255, 136, 0.18);
+      }
+
+      #clusterThroughput {
+        font-size: clamp(18px, 2.2vw, 30px);
+        line-height: 1.05;
       }
 
       .metric span {
@@ -729,6 +764,10 @@
           flex-direction: column;
         }
 
+        .topbar-actions {
+          justify-content: flex-start;
+        }
+
         main {
           padding: 12px;
         }
@@ -761,7 +800,17 @@
             <span>coordinator tty / live swarm</span>
           </div>
         </div>
-        <div class="status"><span class="dot" id="healthDot"></span><span id="healthText">connecting</span></div>
+        <div class="topbar-actions">
+          <label class="sync-control">auto sync
+            <select id="syncInterval">
+              <option value="5000">5s</option>
+              <option value="10000">10s</option>
+              <option value="30000">30s</option>
+              <option value="0">off</option>
+            </select>
+          </label>
+          <div class="status"><span class="dot" id="healthDot"></span><span id="healthText">connecting</span></div>
+        </div>
       </header>
 
       <main>
@@ -813,6 +862,7 @@
           <div class="metric"><span>jobs.running</span><strong id="jobsRunning">0</strong></div>
           <div class="metric"><span>jobs.completed</span><strong id="jobsCompleted">0</strong></div>
           <div class="metric"><span>artifacts.published</span><strong id="artifactsPublished">0</strong></div>
+          <div class="metric"><span>cluster.speed</span><strong id="clusterThroughput">0</strong></div>
         </section>
 
         <section class="progress-panel" aria-label="End-to-end work completion">
@@ -900,12 +950,15 @@
       const state = {
         dashboard: null,
         events: new Map(),
-        refreshTimer: null
+        refreshTimer: null,
+        pollTimer: null,
+        syncIntervalMs: 5000
       };
 
       const nodes = {
         healthDot: document.getElementById("healthDot"),
         healthText: document.getElementById("healthText"),
+        syncInterval: document.getElementById("syncInterval"),
         streamText: document.getElementById("streamText"),
         workersUpdated: document.getElementById("workersUpdated"),
         workersRegistered: document.getElementById("workersRegistered"),
@@ -913,6 +966,7 @@
         jobsRunning: document.getElementById("jobsRunning"),
         jobsCompleted: document.getElementById("jobsCompleted"),
         artifactsPublished: document.getElementById("artifactsPublished"),
+        clusterThroughput: document.getElementById("clusterThroughput"),
         jobContractLabel: document.getElementById("jobContractLabel"),
         jobContractTitle: document.getElementById("jobContractTitle"),
         jobContractMeta: document.getElementById("jobContractMeta"),
@@ -934,8 +988,23 @@
 
       function start() {
         refreshDashboard();
-        setInterval(refreshDashboard, 5000);
+        nodes.syncInterval.addEventListener("change", () => {
+          state.syncIntervalMs = Number(nodes.syncInterval.value);
+          startPolling();
+          refreshDashboard();
+        });
+        startPolling();
         openEventStream();
+      }
+
+      function startPolling() {
+        if (state.pollTimer) {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+        if (state.syncIntervalMs > 0) {
+          state.pollTimer = setInterval(refreshDashboard, state.syncIntervalMs);
+        }
       }
 
       async function refreshDashboard() {
@@ -1005,10 +1074,11 @@
         nodes.jobsRunning.textContent = summary.jobs_running ?? 0;
         nodes.jobsCompleted.textContent = summary.jobs_completed ?? 0;
         nodes.artifactsPublished.textContent = summary.artifacts_published ?? 0;
+        nodes.clusterThroughput.textContent = throughputSummary(summary);
         nodes.workersUpdated.textContent = `updated ${timeLabel(dashboard.generated_at)}`;
         renderTrainingContract(dashboard.jobs || []);
         renderProgress(dashboard.jobs || []);
-        renderWorkers(dashboard.workers || []);
+        renderWorkers(dashboard.workers || [], summary);
         renderJobs(dashboard.jobs || []);
         renderArtifacts(dashboard.artifacts || []);
         renderEvents();
@@ -1122,11 +1192,12 @@
         return `<span class="pill ${className}">${html(value)}</span>`;
       }
 
-      function renderWorkers(workers) {
+      function renderWorkers(workers, summary) {
         if (workers.length === 0) {
           nodes.workersTable.innerHTML = `<tr><td colspan="4" class="empty">No recent workers.</td></tr>`;
           return;
         }
+        const clusterThroughput = Number(summary.cluster_throughput_units_per_second || 0);
         nodes.workersTable.innerHTML = workers.map((activity) => {
           const worker = activity.worker || {};
           const status = activity.busy ? "running" : (activity.last_status || "registered");
@@ -1134,11 +1205,13 @@
             ? `${activity.last_artifact_type || "artifact"} ${shortHash(activity.last_artifact_hash)}`
             : activity.last_event_type || "registered";
           const peerLabel = worker.peer_id ? shortPeerId(worker.peer_id) : shortHash(worker.worker_id || "");
+          const progress = progressMarkup(worker);
+          const speed = throughputMarkup(worker, clusterThroughput);
           return `<tr>
             <td><strong title="${html(worker.peer_id || worker.worker_id || "")}">${html(peerLabel)}</strong><br><span title="${html(worker.worker_id || "")}">${html(shortWorkerLabel(worker.worker_id || ""))}</span></td>
             <td>${html(worker.backend || "unknown")}<br><span>${html(worker.device_family || "")}</span></td>
             <td><span class="pill ${statusClass(status)}">${html(status)}</span>${reputationLabel(worker)}<br><span>${html(timeLabel(activity.last_seen_at))}</span></td>
-            <td>${html(output)}${activity.current_job_id ? `<br><span>${html(activity.current_job_id)}</span>` : ""}</td>
+            <td>${html(output)}${activity.current_job_id ? `<br><span>${html(activity.current_job_id)}</span>` : ""}${progress}${speed}</td>
           </tr>`;
         }).join("");
       }
@@ -1159,9 +1232,50 @@
             <td><strong>${html(job.job_id)}</strong><br><span>${html(job.run_id || "")}</span></td>
             <td>${html(job.job_type || "")}<br><span>${html(job.backend || "")}</span></td>
             <td><span class="pill ${statusClass(job.status)}">${html(job.status || "unknown")}</span></td>
-            <td>${html(detail)}</td>
+            <td>${html(detail)}${progressMarkup(job)}${throughputMarkup(job, 0)}</td>
           </tr>`;
         }).join("");
+      }
+
+      function throughputSummary(summary) {
+        const value = Number(summary.cluster_throughput_units_per_second || 0);
+        if (!value) {
+          return "0";
+        }
+        const label = summary.cluster_throughput_label || "units/s";
+        return `${formatNumber(value)} ${label}`;
+      }
+
+      function progressMarkup(source) {
+        if (source.progress_percent == null) {
+          return "";
+        }
+        const percent = Math.round(Number(source.progress_percent));
+        const label = source.progress_label ? ` ${source.progress_label}` : "";
+        return `<br><span>${html(percent)}%${html(label)}</span>`;
+      }
+
+      function throughputMarkup(source, clusterThroughput) {
+        if (source.throughput_units_per_second == null) {
+          return "";
+        }
+        const value = Number(source.throughput_units_per_second);
+        const label = source.throughput_label || "units/s";
+        const share = clusterThroughput > 0 ? ` · ${Math.round((value / clusterThroughput) * 100)}% cluster` : "";
+        return `<br><span>${html(formatNumber(value))} ${html(label)}${html(share)}</span>`;
+      }
+
+      function formatNumber(value) {
+        if (!Number.isFinite(value)) {
+          return "0";
+        }
+        if (value >= 100) {
+          return String(Math.round(value));
+        }
+        if (value >= 10) {
+          return value.toFixed(1);
+        }
+        return value.toFixed(2);
       }
 
       function shortPeerId(value) {
@@ -1202,14 +1316,32 @@
           return;
         }
         nodes.eventLog.innerHTML = events.map((event) => {
-          const fields = event.fields || {};
-          const subject = fields.job_id || fields.worker_id || fields.run_id || event.id;
-          const detail = fields.message || fields.artifact_type || fields.status || fields.backend || "";
+          const display = eventDisplay(event);
           return `<div class="event">
-            <time>${html(timeLabel(fields.created_at))}</time>
-            <div><strong>${html(event.type)}</strong><span>${html(subject)} ${html(detail)}</span></div>
+            <time>${html(timeLabel(display.createdAt))}</time>
+            <div><strong>${html(display.type)}</strong><span>${html(display.detail)}</span></div>
           </div>`;
         }).join("");
+      }
+
+      function eventDisplay(event) {
+        const fields = event.fields || {};
+        const job = fields.job_id ? shortJobLabel(fields.job_id) : "";
+        const worker = fields.peer_id ? shortPeerId(fields.peer_id) : shortWorkerLabel(fields.worker_id || "");
+        const status = fields.status || fields.verdict || fields.artifact_type || fields.job_type || "";
+        const detail = [job, worker, status].filter(Boolean).join(" ");
+        return {
+          type: event.type || "event",
+          createdAt: fields.created_at,
+          detail: detail || shortHash(event.id || "event"),
+        };
+      }
+
+      function shortJobLabel(value) {
+        if (!value) return "";
+        const match = value.match(/_(\d{3,6})$/);
+        if (match) return `job:${match[1]}`;
+        return shortHash(value);
       }
 
       function statusClass(status) {

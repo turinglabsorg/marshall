@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { multiaddr } from "@multiformats/multiaddr";
 import { defaultBackendForJob } from "./jobs.js";
-import type { Backend, JobType, MarshallJob } from "./schemas.js";
+import type { Backend, JobType, MarshallJob, WorkerHeartbeat } from "./schemas.js";
 import { runAdapterEvaluation, runArtifactValidation, runMlxLoraTraining, runMlxSmokeTraining, runToyTraining } from "./training-runner.js";
 import { WorkerPeer } from "./worker-peer.js";
 
@@ -34,6 +34,7 @@ const worker = await WorkerPeer.create({
 let claimedJob: MarshallJob | undefined;
 let stopHeartbeat = () => {};
 let artifactPublished = false;
+const heartbeatTelemetry = createHeartbeatTelemetry();
 
 try {
   await worker.register();
@@ -44,8 +45,9 @@ try {
     throw new Error(`no job assigned: ${claim.reason ?? "unknown reason"}`);
   }
   claimedJob = claim.job;
-  await worker.heartbeat("working", claim.job.job_id, jobLeaseSeconds);
-  stopHeartbeat = startHeartbeat(() => worker.heartbeat("working", claim.job!.job_id, jobLeaseSeconds), heartbeatIntervalMs);
+  heartbeatTelemetry.update(5, "claimed");
+  await worker.heartbeat("working", claim.job.job_id, jobLeaseSeconds, heartbeatTelemetry.snapshot());
+  stopHeartbeat = startHeartbeat(() => worker.heartbeat("working", claim.job!.job_id, jobLeaseSeconds, heartbeatTelemetry.snapshot()), heartbeatIntervalMs);
 
   await worker.reportJobStatus({
     job_id: claim.job.job_id,
@@ -53,10 +55,14 @@ try {
     message: `${claim.job.job_type} runner started`,
   });
 
+  heartbeatTelemetry.update(12, "materializing inputs");
   const runnableJob = await materializeJobInputs(claim.job);
+  heartbeatTelemetry.update(20, "executing runner");
   const training = await runClaimedJob(runnableJob);
+  heartbeatTelemetry.update(92, "publishing artifact");
   await worker.publishArtifactManifest(training.manifest);
   artifactPublished = true;
+  heartbeatTelemetry.update(98, "reporting completion");
   await reportJobStatusWithRetry({
     job_id: claim.job.job_id,
     status: "completed",
@@ -64,7 +70,8 @@ try {
   });
   stopHeartbeat();
   stopHeartbeat = () => {};
-  await worker.heartbeat("idle");
+  heartbeatTelemetry.update(100, "completed");
+  await worker.heartbeat("idle", undefined, undefined, heartbeatTelemetry.snapshot());
 
   console.log(JSON.stringify({
     type: "marshall_worker_completed",
@@ -93,6 +100,32 @@ try {
 } finally {
   stopHeartbeat();
   await worker.stop();
+}
+
+function createHeartbeatTelemetry() {
+  const startedAt = Date.now();
+  let progressPercent = 0;
+  let progressLabel = "starting";
+  return {
+    update(nextPercent: number, nextLabel: string): void {
+      progressPercent = Math.max(progressPercent, Math.min(100, nextPercent));
+      progressLabel = nextLabel;
+    },
+    snapshot(): Partial<Pick<
+      WorkerHeartbeat,
+      "progress_percent" | "progress_label" | "work_units_done" | "work_units_total" | "throughput_units_per_second" | "throughput_label"
+    >> {
+      const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
+      return {
+        progress_percent: progressPercent,
+        progress_label: progressLabel,
+        work_units_done: progressPercent,
+        work_units_total: 100,
+        throughput_units_per_second: progressPercent / elapsedSeconds,
+        throughput_label: "job%/s",
+      };
+    },
+  };
 }
 
 async function reportJobStatusWithRetry(status: Parameters<typeof worker.reportJobStatus>[0]): Promise<void> {

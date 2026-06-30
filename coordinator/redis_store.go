@@ -135,6 +135,9 @@ func (store *RedisStore) WorkerHeartbeat(ctx context.Context, heartbeat WorkerHe
 	if heartbeat.LeaseSeconds <= 0 {
 		heartbeat.LeaseSeconds = defaultLeaseSeconds
 	}
+	if err := validateHeartbeatTelemetry(heartbeat); err != nil {
+		return Event{}, err
+	}
 
 	workerFields, err := store.hash(ctx, store.key("worker", heartbeat.WorkerID))
 	if err != nil {
@@ -165,20 +168,38 @@ func (store *RedisStore) WorkerHeartbeat(ctx context.Context, heartbeat WorkerHe
 		}
 	}
 
-	if _, err := store.client.command(ctx, "HSET", store.key("worker", heartbeat.WorkerID),
-		"status", heartbeat.Status,
-		"current_job_id", heartbeat.CurrentJobID,
-		"last_seen_at", heartbeat.Timestamp,
-	); err != nil {
+	workerUpdates := map[string]string{
+		"status":         heartbeat.Status,
+		"current_job_id": heartbeat.CurrentJobID,
+		"last_seen_at":   heartbeat.Timestamp,
+	}
+	addHeartbeatTelemetryFields(workerUpdates, heartbeat)
+	if _, err := store.client.command(ctx, append([]string{"HSET", store.key("worker", heartbeat.WorkerID)}, mapArgs(workerUpdates)...)...); err != nil {
 		return Event{}, err
 	}
-	return store.appendEvent(ctx, "worker_heartbeat", map[string]string{
+	if heartbeat.CurrentJobID == "" {
+		if _, err := store.client.command(ctx, append([]string{"HDEL", store.key("worker", heartbeat.WorkerID)}, heartbeatTelemetryFieldNames()...)...); err != nil {
+			return Event{}, err
+		}
+	} else {
+		jobUpdates := map[string]string{}
+		addHeartbeatTelemetryFields(jobUpdates, heartbeat)
+		if len(jobUpdates) > 0 {
+			if _, err := store.client.command(ctx, append([]string{"HSET", store.key("job", heartbeat.CurrentJobID)}, mapArgs(jobUpdates)...)...); err != nil {
+				return Event{}, err
+			}
+		}
+	}
+
+	eventFields := map[string]string{
 		"worker_id":      heartbeat.WorkerID,
 		"peer_id":        heartbeat.PeerID,
 		"status":         heartbeat.Status,
 		"current_job_id": heartbeat.CurrentJobID,
 		"created_at":     heartbeat.Timestamp,
-	})
+	}
+	addHeartbeatTelemetryFields(eventFields, heartbeat)
+	return store.appendEvent(ctx, "worker_heartbeat", eventFields)
 }
 
 func (store *RedisStore) Workers(ctx context.Context) ([]Worker, error) {
@@ -431,10 +452,23 @@ func (store *RedisStore) UpdateJobStatus(ctx context.Context, status JobStatus) 
 		return Event{}, err
 	}
 	if status.Status == "completed" || status.Status == "failed" {
+		if status.Status == "completed" {
+			if _, err := store.client.command(ctx, "HSET", store.key("job", status.JobID),
+				"progress_percent", "100",
+				"progress_label", "completed",
+				"work_units_done", "100",
+				"work_units_total", "100",
+			); err != nil {
+				return Event{}, err
+			}
+		}
 		if _, err := store.client.command(ctx, "DEL", store.key("job", status.JobID, "lease")); err != nil {
 			return Event{}, err
 		}
 		if _, err := store.client.command(ctx, "HSET", store.key("worker", status.WorkerID), "status", "idle", "current_job_id", "", "last_seen_at", now); err != nil {
+			return Event{}, err
+		}
+		if _, err := store.client.command(ctx, append([]string{"HDEL", store.key("worker", status.WorkerID)}, heartbeatTelemetryFieldNames()...)...); err != nil {
 			return Event{}, err
 		}
 	}
@@ -955,6 +989,65 @@ func mapArgs(values map[string]string) []string {
 	return args
 }
 
+func heartbeatTelemetryFieldNames() []string {
+	return []string{
+		"progress_percent",
+		"progress_label",
+		"work_units_done",
+		"work_units_total",
+		"throughput_units_per_second",
+		"throughput_label",
+	}
+}
+
+func validateHeartbeatTelemetry(heartbeat WorkerHeartbeat) error {
+	if heartbeat.ProgressPercent != nil && (*heartbeat.ProgressPercent < 0 || *heartbeat.ProgressPercent > 100) {
+		return fmt.Errorf("progress_percent must be between 0 and 100")
+	}
+	if heartbeat.WorkUnitsDone != nil && *heartbeat.WorkUnitsDone < 0 {
+		return fmt.Errorf("work_units_done must be non-negative")
+	}
+	if heartbeat.WorkUnitsTotal != nil && *heartbeat.WorkUnitsTotal <= 0 {
+		return fmt.Errorf("work_units_total must be positive")
+	}
+	if heartbeat.ThroughputUnitsPerSecond != nil && *heartbeat.ThroughputUnitsPerSecond < 0 {
+		return fmt.Errorf("throughput_units_per_second must be non-negative")
+	}
+	return nil
+}
+
+func addHeartbeatTelemetryFields(fields map[string]string, heartbeat WorkerHeartbeat) {
+	if heartbeat.ProgressPercent != nil {
+		fields["progress_percent"] = strconv.FormatFloat(*heartbeat.ProgressPercent, 'f', -1, 64)
+	}
+	if heartbeat.ProgressLabel != "" {
+		fields["progress_label"] = heartbeat.ProgressLabel
+	}
+	if heartbeat.WorkUnitsDone != nil {
+		fields["work_units_done"] = strconv.FormatFloat(*heartbeat.WorkUnitsDone, 'f', -1, 64)
+	}
+	if heartbeat.WorkUnitsTotal != nil {
+		fields["work_units_total"] = strconv.FormatFloat(*heartbeat.WorkUnitsTotal, 'f', -1, 64)
+	}
+	if heartbeat.ThroughputUnitsPerSecond != nil {
+		fields["throughput_units_per_second"] = strconv.FormatFloat(*heartbeat.ThroughputUnitsPerSecond, 'f', -1, 64)
+	}
+	if heartbeat.ThroughputLabel != "" {
+		fields["throughput_label"] = heartbeat.ThroughputLabel
+	}
+}
+
+func optionalFloatField(fields map[string]string, key string) *float64 {
+	if fields[key] == "" {
+		return nil
+	}
+	value, err := strconv.ParseFloat(fields[key], 64)
+	if err != nil {
+		return nil
+	}
+	return &value
+}
+
 func arrayFields(value redisValue) map[string]string {
 	fields := map[string]string{}
 	for index := 0; index+1 < len(value.items); index += 2 {
@@ -1137,16 +1230,22 @@ func clampInt(value int, min int, max int) int {
 
 func jobFromFields(fields map[string]string) Job {
 	return Job{
-		JobID:      fields["job_id"],
-		RunID:      fields["run_id"],
-		JobType:    fields["job_type"],
-		Backend:    fields["backend"],
-		DatasetURI: fields["dataset_uri"],
-		Status:     fields["status"],
-		WorkerID:   fields["worker_id"],
-		PeerID:     fields["peer_id"],
-		JobSpec:    json.RawMessage(fields["job_spec"]),
-		CreatedAt:  fields["created_at"],
+		JobID:                    fields["job_id"],
+		RunID:                    fields["run_id"],
+		JobType:                  fields["job_type"],
+		Backend:                  fields["backend"],
+		DatasetURI:               fields["dataset_uri"],
+		Status:                   fields["status"],
+		WorkerID:                 fields["worker_id"],
+		PeerID:                   fields["peer_id"],
+		JobSpec:                  json.RawMessage(fields["job_spec"]),
+		CreatedAt:                fields["created_at"],
+		ProgressPercent:          optionalFloatField(fields, "progress_percent"),
+		ProgressLabel:            fields["progress_label"],
+		WorkUnitsDone:            optionalFloatField(fields, "work_units_done"),
+		WorkUnitsTotal:           optionalFloatField(fields, "work_units_total"),
+		ThroughputUnitsPerSecond: optionalFloatField(fields, "throughput_units_per_second"),
+		ThroughputLabel:          fields["throughput_label"],
 	}
 }
 
@@ -1157,18 +1256,24 @@ func workerFromFields(fields map[string]string) Worker {
 		supportedJobs = strings.Split(fields["supported_jobs"], ",")
 	}
 	return Worker{
-		WorkerID:      fields["worker_id"],
-		PeerID:        fields["peer_id"],
-		PublicKey:     fields["public_key"],
-		Backend:       fields["backend"],
-		DeviceFamily:  fields["device_family"],
-		MemoryGB:      memoryGB,
-		SupportedJobs: supportedJobs,
-		CreatedAt:     fields["created_at"],
-		Status:        fields["status"],
-		CurrentJobID:  fields["current_job_id"],
-		LastSeenAt:    fields["last_seen_at"],
-		Reputation:    reputationFromFields(fields["worker_id"], fields),
+		WorkerID:                 fields["worker_id"],
+		PeerID:                   fields["peer_id"],
+		PublicKey:                fields["public_key"],
+		Backend:                  fields["backend"],
+		DeviceFamily:             fields["device_family"],
+		MemoryGB:                 memoryGB,
+		SupportedJobs:            supportedJobs,
+		CreatedAt:                fields["created_at"],
+		Status:                   fields["status"],
+		CurrentJobID:             fields["current_job_id"],
+		LastSeenAt:               fields["last_seen_at"],
+		ProgressPercent:          optionalFloatField(fields, "progress_percent"),
+		ProgressLabel:            fields["progress_label"],
+		WorkUnitsDone:            optionalFloatField(fields, "work_units_done"),
+		WorkUnitsTotal:           optionalFloatField(fields, "work_units_total"),
+		ThroughputUnitsPerSecond: optionalFloatField(fields, "throughput_units_per_second"),
+		ThroughputLabel:          fields["throughput_label"],
+		Reputation:               reputationFromFields(fields["worker_id"], fields),
 	}
 }
 

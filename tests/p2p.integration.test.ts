@@ -1,13 +1,14 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { sha256Path } from "../src/artifact-transfer.js";
+import { artifactStoreManifestPath, sha256Path } from "../src/artifact-transfer.js";
 import { ControlPeer } from "../src/control-peer.js";
 import { createTrainingJobs } from "../src/jobs.js";
 import { runToyTraining } from "../src/training-runner.js";
 import { WorkerPeer } from "../src/worker-peer.js";
+import type { AdapterEvaluationJob } from "../src/schemas.js";
 
 describe("Marshall p2p substrate", () => {
   let tempDir: string;
@@ -206,6 +207,77 @@ describe("Marshall p2p substrate", () => {
       { chunkBytes: 16, maxChunkRetries: 2 },
     );
     expect(await sha256Path(fileURLToPath(materializedInput.artifact_uri))).toBe(storedManifest.artifact_hash);
+  }, 15_000);
+
+  it("prevents workers from evaluating adapters produced by the same worker slot", async () => {
+    const controlArtifactStore = join(tempDir, "control-artifacts");
+    const sourceJobId = "job_dolly_15k_public_shard_001";
+    const evalJob: AdapterEvaluationJob = {
+      job_id: "job_eval_dolly_adapter_000001",
+      run_id: "run_eval_slot_test",
+      round_id: "round_001",
+      job_type: "evaluate_adapter",
+      backend: "mlx",
+      eval_kind: "instruction_terms",
+      model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      adapter: {
+        adapter_id: sourceJobId,
+        artifact_uri: `marshall-artifact://${sourceJobId}`,
+        artifact_hash: "sha256:adapter-slot-test",
+        source_job_id: sourceJobId,
+      },
+      eval_shard: {
+        id: "instruction_terms_jsonl",
+        uri: "file://datasets/instruction_terms.jsonl",
+        token_estimate: 1,
+        hash: "sha256:eval-slot-test",
+      },
+      max_examples: 3,
+      max_tokens: 80,
+    };
+    const manifestPath = artifactStoreManifestPath(controlArtifactStore, sourceJobId);
+    await mkdir(join(controlArtifactStore, sourceJobId), { recursive: true });
+    await writeFile(manifestPath, JSON.stringify({
+      job_id: sourceJobId,
+      worker_id: "MacBookPro.homenet.telecomitalia.it-marshall-train-0001",
+      peer_id: "12D3KooWProducerPeer",
+      artifact_type: "lora_adapter",
+      artifact_uri: "file:///tmp/marshall-test-adapter",
+      artifact_hash: "sha256:adapter-slot-test",
+      config_hash: "sha256:config-slot-test",
+      created_at: new Date().toISOString(),
+    }, null, 2) + "\n", "utf8");
+
+    control = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "control.key"),
+      jobs: [evalJob],
+      artifactServeDirs: [controlArtifactStore],
+    });
+    const sameSlotWorker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "same-slot-worker.key"),
+      workerId: "MacBookPro.homenet.telecomitalia.it-marshall-eval-0001",
+      controlAddr: control.multiaddrs[0],
+      backend: "mlx",
+      supportedJobs: ["evaluate_adapter"],
+    });
+    const alternateSlotWorker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "alternate-slot-worker.key"),
+      workerId: "MacBookPro.homenet.telecomitalia.it-marshall-eval-0002",
+      controlAddr: control.multiaddrs[0],
+      backend: "mlx",
+      supportedJobs: ["evaluate_adapter"],
+    });
+    workers.push(sameSlotWorker, alternateSlotWorker);
+
+    await sameSlotWorker.register();
+    await alternateSlotWorker.register();
+    const rejectedClaim = await sameSlotWorker.claimJob("evaluate_adapter", 2_000);
+    expect(rejectedClaim.accepted).toBe(false);
+    expect(rejectedClaim.reason).toContain("alternate worker slots");
+
+    const acceptedClaim = await alternateSlotWorker.claimJob("evaluate_adapter", 2_000);
+    expect(acceptedClaim.accepted).toBe(true);
+    expect(acceptedClaim.job?.job_id).toBe(evalJob.job_id);
   }, 15_000);
 
   it("rejects workers that do not present the configured swarm token", async () => {

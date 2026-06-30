@@ -42,6 +42,12 @@ export const WorkerHeartbeatSchema = z.object({
   job_id: z.string().min(1).optional(),
   timestamp: z.string().min(1),
   lease_seconds: z.number().int().positive().optional(),
+  progress_percent: z.number().min(0).max(100).optional(),
+  progress_label: z.string().min(1).optional(),
+  work_units_done: z.number().nonnegative().optional(),
+  work_units_total: z.number().positive().optional(),
+  throughput_units_per_second: z.number().nonnegative().optional(),
+  throughput_label: z.string().min(1).optional(),
 });
 
 export const JobClaimSchema = z.object({

@@ -12,40 +12,58 @@ type Run struct {
 }
 
 type Worker struct {
-	WorkerID      string           `json:"worker_id"`
-	PeerID        string           `json:"peer_id"`
-	PublicKey     string           `json:"public_key,omitempty"`
-	Backend       string           `json:"backend"`
-	DeviceFamily  string           `json:"device_family"`
-	MemoryGB      float64          `json:"memory_gb"`
-	SupportedJobs []string         `json:"supported_jobs"`
-	CreatedAt     string           `json:"created_at,omitempty"`
-	Status        string           `json:"status,omitempty"`
-	CurrentJobID  string           `json:"current_job_id,omitempty"`
-	LastSeenAt    string           `json:"last_seen_at,omitempty"`
-	Reputation    WorkerReputation `json:"reputation"`
+	WorkerID                 string           `json:"worker_id"`
+	PeerID                   string           `json:"peer_id"`
+	PublicKey                string           `json:"public_key,omitempty"`
+	Backend                  string           `json:"backend"`
+	DeviceFamily             string           `json:"device_family"`
+	MemoryGB                 float64          `json:"memory_gb"`
+	SupportedJobs            []string         `json:"supported_jobs"`
+	CreatedAt                string           `json:"created_at,omitempty"`
+	Status                   string           `json:"status,omitempty"`
+	CurrentJobID             string           `json:"current_job_id,omitempty"`
+	LastSeenAt               string           `json:"last_seen_at,omitempty"`
+	ProgressPercent          *float64         `json:"progress_percent,omitempty"`
+	ProgressLabel            string           `json:"progress_label,omitempty"`
+	WorkUnitsDone            *float64         `json:"work_units_done,omitempty"`
+	WorkUnitsTotal           *float64         `json:"work_units_total,omitempty"`
+	ThroughputUnitsPerSecond *float64         `json:"throughput_units_per_second,omitempty"`
+	ThroughputLabel          string           `json:"throughput_label,omitempty"`
+	Reputation               WorkerReputation `json:"reputation"`
 }
 
 type WorkerHeartbeat struct {
-	WorkerID     string `json:"worker_id"`
-	PeerID       string `json:"peer_id"`
-	Status       string `json:"status"`
-	CurrentJobID string `json:"job_id,omitempty"`
-	Timestamp    string `json:"timestamp,omitempty"`
-	LeaseSeconds int    `json:"lease_seconds,omitempty"`
+	WorkerID                 string   `json:"worker_id"`
+	PeerID                   string   `json:"peer_id"`
+	Status                   string   `json:"status"`
+	CurrentJobID             string   `json:"job_id,omitempty"`
+	Timestamp                string   `json:"timestamp,omitempty"`
+	LeaseSeconds             int      `json:"lease_seconds,omitempty"`
+	ProgressPercent          *float64 `json:"progress_percent,omitempty"`
+	ProgressLabel            string   `json:"progress_label,omitempty"`
+	WorkUnitsDone            *float64 `json:"work_units_done,omitempty"`
+	WorkUnitsTotal           *float64 `json:"work_units_total,omitempty"`
+	ThroughputUnitsPerSecond *float64 `json:"throughput_units_per_second,omitempty"`
+	ThroughputLabel          string   `json:"throughput_label,omitempty"`
 }
 
 type Job struct {
-	JobID      string          `json:"job_id"`
-	RunID      string          `json:"run_id"`
-	JobType    string          `json:"job_type"`
-	Backend    string          `json:"backend"`
-	DatasetURI string          `json:"dataset_uri"`
-	Status     string          `json:"status,omitempty"`
-	WorkerID   string          `json:"worker_id,omitempty"`
-	PeerID     string          `json:"peer_id,omitempty"`
-	JobSpec    json.RawMessage `json:"job_spec,omitempty"`
-	CreatedAt  string          `json:"created_at,omitempty"`
+	JobID                    string          `json:"job_id"`
+	RunID                    string          `json:"run_id"`
+	JobType                  string          `json:"job_type"`
+	Backend                  string          `json:"backend"`
+	DatasetURI               string          `json:"dataset_uri"`
+	Status                   string          `json:"status,omitempty"`
+	WorkerID                 string          `json:"worker_id,omitempty"`
+	PeerID                   string          `json:"peer_id,omitempty"`
+	JobSpec                  json.RawMessage `json:"job_spec,omitempty"`
+	CreatedAt                string          `json:"created_at,omitempty"`
+	ProgressPercent          *float64        `json:"progress_percent,omitempty"`
+	ProgressLabel            string          `json:"progress_label,omitempty"`
+	WorkUnitsDone            *float64        `json:"work_units_done,omitempty"`
+	WorkUnitsTotal           *float64        `json:"work_units_total,omitempty"`
+	ThroughputUnitsPerSecond *float64        `json:"throughput_units_per_second,omitempty"`
+	ThroughputLabel          string          `json:"throughput_label,omitempty"`
 }
 
 type JobClaim struct {
@@ -151,13 +169,16 @@ type DashboardSnapshot struct {
 }
 
 type DashboardSummary struct {
-	WorkersRegistered  int `json:"workers_registered"`
-	WorkersBusy        int `json:"workers_busy"`
-	JobsQueued         int `json:"jobs_queued"`
-	JobsRunning        int `json:"jobs_running"`
-	JobsCompleted      int `json:"jobs_completed"`
-	JobsFailed         int `json:"jobs_failed"`
-	ArtifactsPublished int `json:"artifacts_published"`
+	WorkersRegistered               int     `json:"workers_registered"`
+	WorkersBusy                     int     `json:"workers_busy"`
+	JobsQueued                      int     `json:"jobs_queued"`
+	JobsRunning                     int     `json:"jobs_running"`
+	JobsCompleted                   int     `json:"jobs_completed"`
+	JobsFailed                      int     `json:"jobs_failed"`
+	ArtifactsPublished              int     `json:"artifacts_published"`
+	ClusterThroughputUnitsPerSecond float64 `json:"cluster_throughput_units_per_second,omitempty"`
+	ClusterThroughputLabel          string  `json:"cluster_throughput_label,omitempty"`
+	ActiveThroughputWorkers         int     `json:"active_throughput_workers,omitempty"`
 }
 
 type WorkerActivity struct {
