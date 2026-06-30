@@ -21,8 +21,14 @@ const artifactVerdicts = coordinatorUrl == null || coordinatorUrl === ""
 
 const metricsPaths = await findMetrics(evalArtifactsDir);
 const candidates: AdapterEvaluationCandidate[] = [];
+let skippedMetrics = 0;
 for (const path of metricsPaths) {
-  const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(path, "utf8")));
+  const parsed = AdapterEvaluationMetricsSchema.safeParse(JSON.parse(await readFile(path, "utf8")));
+  if (!parsed.success) {
+    skippedMetrics += 1;
+    continue;
+  }
+  const metrics = parsed.data;
   const verdict = artifactVerdicts.get(metrics.job_id);
   candidates.push({
     metrics,
@@ -59,6 +65,7 @@ console.log(JSON.stringify({
   eval_artifacts_dir: evalArtifactsDir,
   output_dir: outputDir,
   evaluated_adapters: selection.entries.length,
+  skipped_metrics: skippedMetrics,
   top_k: topK,
   require_verdict: requireVerdict ?? null,
   best: selection.selected,
