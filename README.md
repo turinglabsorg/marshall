@@ -76,11 +76,12 @@ Implemented:
 - quorum-based validator verdicts;
 - worker reputation and suspension policy;
 - accepted-only adapter leaderboard and model package path;
+- round advancement CLI for evaluation scheduling, validation scheduling, accepted-only leaderboard selection, and verified model packaging;
 - GCP small-VM deployment with Caddy HTTPS, local Redis, coordinator, and control peer services.
 
 Not implemented yet:
 
-- full automatic round orchestration from training to validation to next run;
+- always-on round orchestration daemon from training to validation to next run;
 - public `marshall.chat` inference gateway;
 - CUDA worker backend;
 - model cache capability reporting;
@@ -206,6 +207,33 @@ npm run eval:jobs -- \
 ```
 
 Use `eval_kind ag_news` for exact-label AG News scoring and `eval_kind instruction_terms` for held-out instruction generation checks. The worker records the evaluation kind in the produced metrics artifact so leaderboard and validator stages can reason about what was measured.
+
+## Round Advancement
+
+`round:advance` is the product path for moving a run forward without hand-writing downstream job files. It reads coordinator artifacts or an artifact snapshot, then performs the next eligible phase:
+
+- schedules `evaluate_adapter` jobs from published `lora_adapter` artifacts;
+- schedules quorum `validate_artifact` jobs from unvalidated `adapter_evaluation` artifacts;
+- writes accepted-only leaderboard files and an optional verified model package after validation is finalized.
+
+Example:
+
+```bash
+npm run round:advance -- \
+  --coordinator-url https://marshall.training \
+  --phase auto \
+  --jobs-dir .marshall/runs/<run-id>/jobs \
+  --artifact-store-dir <control-artifact-store> \
+  --eval-file <eval.jsonl> \
+  --eval-uri https://marshall.training/datasets/<dataset-id>/eval/instruction_terms.jsonl \
+  --eval-kind instruction_terms \
+  --model mlx-community/Qwen2.5-0.5B-Instruct-4bit \
+  --max-examples 3 \
+  --max-tokens 80 \
+  --package-dir <package-dir>
+```
+
+The returned `control.job_type` and `control.jobs_file` indicate which job file the control peer should serve next.
 
 ## Public Deployment
 

@@ -17,6 +17,7 @@
     "dataset:run:prepare": "tsx src/dataset-run-cli.ts",
     "eval:jobs": "tsx src/evaluation-jobs-cli.ts",
     "validation:jobs": "tsx src/validation-jobs-cli.ts",
+    "round:advance": "tsx src/round-orchestrator-cli.ts",
     "leaderboard:adapters": "tsx src/leaderboard-cli.ts",
     "model:package": "tsx src/model-package-cli.ts",
     "model:query": "tsx src/model-query-cli.ts",
@@ -35,6 +36,7 @@
     "control:start:compiled": "npm run build && node dist/src/control-cli.js",
     "worker:start:compiled": "npm run build && node dist/src/worker-cli.js",
     "worker:pool:compiled": "npm run build && node dist/src/worker-pool-cli.js",
+    "round:advance:compiled": "npm run build && node dist/src/round-orchestrator-cli.js",
     "demo": "tsx src/demo.ts",
     "demo:compiled": "npm run build && node dist/src/demo.js"
   },
