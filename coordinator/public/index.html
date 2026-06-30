@@ -409,6 +409,127 @@
         overflow-wrap: anywhere;
       }
 
+      .progress-panel {
+        display: grid;
+        grid-template-columns: minmax(240px, 0.36fr) minmax(0, 1fr);
+        gap: 1px;
+        margin-bottom: 14px;
+        border: 1px solid var(--line);
+        background: var(--line);
+        box-shadow: inset 0 0 30px rgba(51, 255, 136, 0.035);
+      }
+
+      .progress-total,
+      .progress-phases {
+        min-width: 0;
+        background: var(--panel);
+      }
+
+      .progress-total {
+        padding: 14px;
+      }
+
+      .progress-label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .progress-value {
+        margin-top: 8px;
+        color: var(--green);
+        font-size: clamp(46px, 8vw, 76px);
+        font-weight: 700;
+        line-height: 0.9;
+        text-shadow: 0 0 24px rgba(51, 255, 136, 0.2);
+      }
+
+      .progress-detail {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .progress-track {
+        position: relative;
+        height: 9px;
+        margin-top: 13px;
+        border: 1px solid var(--line);
+        background: #020403;
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        width: 0%;
+        height: 100%;
+        background: linear-gradient(90deg, rgba(51, 255, 136, 0.4), var(--green));
+        box-shadow: 0 0 18px rgba(51, 255, 136, 0.35);
+        transition: width 320ms ease;
+      }
+
+      .progress-phases {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .phase {
+        display: grid;
+        align-content: start;
+        min-height: 112px;
+        padding: 13px;
+        border-left: 1px solid var(--line);
+      }
+
+      .phase:first-child {
+        border-left: 0;
+      }
+
+      .phase-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .phase-percent {
+        color: var(--text);
+      }
+
+      .phase-counts {
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .phase-track {
+        height: 6px;
+        margin-top: 11px;
+        border: 1px solid var(--line);
+        background: #020403;
+        overflow: hidden;
+      }
+
+      .phase-fill {
+        width: 0%;
+        height: 100%;
+        background: var(--green);
+        transition: width 320ms ease;
+      }
+
+      .phase.empty .phase-head,
+      .phase.empty .phase-counts {
+        color: var(--dim);
+      }
+
+      .phase.empty .phase-fill {
+        background: var(--dim);
+      }
+
       .grid {
         display: grid;
         grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
@@ -579,6 +700,7 @@
       @media (max-width: 1080px) {
         .boot-grid,
         .contract-panel,
+        .progress-panel,
         .grid {
           grid-template-columns: 1fr;
         }
@@ -589,6 +711,15 @@
 
         .summary-grid {
           grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .progress-phases {
+          grid-template-columns: 1fr;
+        }
+
+        .phase {
+          border-top: 1px solid var(--line);
+          border-left: 0;
         }
       }
 
@@ -682,6 +813,16 @@
           <div class="metric"><span>jobs.running</span><strong id="jobsRunning">0</strong></div>
           <div class="metric"><span>jobs.completed</span><strong id="jobsCompleted">0</strong></div>
           <div class="metric"><span>artifacts.published</span><strong id="artifactsPublished">0</strong></div>
+        </section>
+
+        <section class="progress-panel" aria-label="End-to-end work completion">
+          <div class="progress-total">
+            <div class="progress-label">published work completion</div>
+            <div class="progress-value" id="overallProgress">0%</div>
+            <div class="progress-detail" id="overallProgressDetail">0 / 0 terminal jobs</div>
+            <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="overallProgressFill"></div></div>
+          </div>
+          <div class="progress-phases" id="phaseProgress"></div>
         </section>
 
         <section class="grid vertical">
@@ -779,6 +920,10 @@
         contractQueued: document.getElementById("contractQueued"),
         contractIters: document.getElementById("contractIters"),
         contractLayers: document.getElementById("contractLayers"),
+        overallProgress: document.getElementById("overallProgress"),
+        overallProgressDetail: document.getElementById("overallProgressDetail"),
+        overallProgressFill: document.getElementById("overallProgressFill"),
+        phaseProgress: document.getElementById("phaseProgress"),
         workersTable: document.getElementById("workersTable"),
         jobsTable: document.getElementById("jobsTable"),
         artifactsTable: document.getElementById("artifactsTable"),
@@ -862,10 +1007,72 @@
         nodes.artifactsPublished.textContent = summary.artifacts_published ?? 0;
         nodes.workersUpdated.textContent = `updated ${timeLabel(dashboard.generated_at)}`;
         renderTrainingContract(dashboard.jobs || []);
+        renderProgress(dashboard.jobs || []);
         renderWorkers(dashboard.workers || []);
         renderJobs(dashboard.jobs || []);
         renderArtifacts(dashboard.artifacts || []);
         renderEvents();
+      }
+
+      function renderProgress(jobs) {
+        const phases = [
+          phaseProgress(jobs, "train_adapter", "training"),
+          phaseProgress(jobs, "evaluate_adapter", "evaluation"),
+          phaseProgress(jobs, "validate_artifact", "validation")
+        ];
+        const totals = phases.reduce((total, phase) => ({
+          total: total.total + phase.total,
+          terminal: total.terminal + phase.terminal,
+          remaining: total.remaining + phase.remaining
+        }), { total: 0, terminal: 0, remaining: 0 });
+        const percent = percentValue(totals.terminal, totals.total);
+
+        nodes.overallProgress.textContent = totals.total === 0 ? "0%" : `${percent}%`;
+        nodes.overallProgressDetail.textContent = totals.total === 0
+          ? "no published jobs"
+          : `${totals.terminal} / ${totals.total} terminal jobs · ${totals.remaining} remaining`;
+        nodes.overallProgressFill.style.width = `${percent}%`;
+        nodes.phaseProgress.innerHTML = phases.map(renderPhaseProgress).join("");
+      }
+
+      function phaseProgress(jobs, jobType, label) {
+        const phaseJobs = jobs.filter((entry) => (entry.job || {}).job_type === jobType);
+        const terminal = phaseJobs.filter((entry) => isTerminalStatus((entry.job || {}).status)).length;
+        return {
+          label,
+          total: phaseJobs.length,
+          terminal,
+          remaining: phaseJobs.length - terminal,
+          running: phaseJobs.filter((entry) => ["running", "claimed"].includes((entry.job || {}).status)).length,
+          failed: phaseJobs.filter((entry) => (entry.job || {}).status === "failed").length
+        };
+      }
+
+      function renderPhaseProgress(phase) {
+        const percent = percentValue(phase.terminal, phase.total);
+        const emptyClass = phase.total === 0 ? " empty" : "";
+        const countText = phase.total === 0
+          ? "not scheduled"
+          : `${phase.terminal}/${phase.total} terminal · ${phase.remaining} left`;
+        const activeText = phase.total === 0
+          ? ""
+          : `<br><span>${phase.running} active · ${phase.failed} failed</span>`;
+        return `<div class="phase${emptyClass}">
+          <div class="phase-head"><span>${html(phase.label)}</span><span class="phase-percent">${phase.total === 0 ? "--" : `${percent}%`}</span></div>
+          <div class="phase-counts">${html(countText)}${activeText}</div>
+          <div class="phase-track" aria-hidden="true"><div class="phase-fill" style="width: ${percent}%"></div></div>
+        </div>`;
+      }
+
+      function isTerminalStatus(status) {
+        return status === "completed" || status === "failed";
+      }
+
+      function percentValue(part, total) {
+        if (!total) {
+          return 0;
+        }
+        return Math.round((part / total) * 100);
       }
 
       function renderTrainingContract(jobs) {
