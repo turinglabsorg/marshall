@@ -47,6 +47,9 @@ const CoordinatorArtifactSchema = z.object({
   created_at: z.string().optional(),
   verdict: z.string().optional(),
   verdict_at: z.string().optional(),
+  verdict_status: z.string().optional(),
+  verdict_votes: z.number().optional(),
+  verdict_quorum: z.number().optional(),
 });
 
 const RequeueResultSchema = z.object({
@@ -70,10 +73,15 @@ const ArtifactVerdictResultSchema = z.object({
   job_id: z.string(),
   worker_id: z.string(),
   verdict: z.string(),
+  final_verdict: z.string().optional(),
   score_delta: z.number(),
   reputation: WorkerReputationSchema,
   event_id: z.string().optional(),
   participation_ok: z.boolean(),
+  finalized: z.boolean(),
+  quorum: z.number(),
+  votes: z.number(),
+  tally: z.record(z.string(), z.number()).optional(),
 });
 
 export type CoordinatorEvent = z.infer<typeof EventSchema>;
@@ -183,6 +191,7 @@ export class CoordinatorClient {
     validator_id?: string;
     reason?: string;
     created_at?: string;
+    quorum?: number;
   }): Promise<CoordinatorArtifactVerdictResult> {
     return this.post(`/artifacts/${encodeURIComponent(jobId)}/verdict`, verdict, ArtifactVerdictResultSchema);
   }

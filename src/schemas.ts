@@ -112,6 +112,7 @@ export const ArtifactValidationPolicySchema = z.object({
   min_accuracy: z.number().min(0).max(1).optional(),
   max_invalid_rate: z.number().min(0).max(1).optional(),
   min_examples: z.number().int().positive().optional(),
+  quorum: z.number().int().positive().optional(),
 });
 
 export const ArtifactValidationJobSchema = z.object({
@@ -187,6 +188,7 @@ export const ArtifactManifestSchema = z.object({
     target_worker_id: z.string().min(1),
     verdict: ArtifactValidationVerdictSchema,
     reason: z.string().optional(),
+    quorum: z.number().int().positive().optional(),
   }).optional(),
 });
 

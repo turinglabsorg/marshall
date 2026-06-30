@@ -823,10 +823,13 @@
           return;
         }
         nodes.artifactsTable.innerHTML = latest.map((artifact) => {
-          const verdict = artifact.verdict || "pending";
+          const verdict = artifact.verdict || artifact.verdict_status || "pending";
+          const votes = artifact.verdict_quorum
+            ? `<br><span>${html(String(artifact.verdict_votes || 0))}/${html(String(artifact.verdict_quorum))} votes</span>`
+            : "";
           return `<tr>
             <td><strong>${html(artifact.job_id)}</strong><br><span>${html(timeLabel(artifact.created_at))}</span></td>
-            <td>${html(artifact.artifact_type || "")}<br><span class="pill ${statusClass(verdict)}">${html(verdict)}</span></td>
+            <td>${html(artifact.artifact_type || "")}<br><span class="pill ${statusClass(verdict)}">${html(verdict)}</span>${votes}</td>
             <td>${html(artifact.artifact_hash || "")}</td>
           </tr>`;
         }).join("");

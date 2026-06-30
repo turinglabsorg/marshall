@@ -512,6 +512,7 @@ export async function runArtifactValidation(
       target_worker_id: job.target.worker_id,
       verdict,
       reason,
+      quorum: policy.quorum,
     },
   });
   await writeFile(join(outputDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
@@ -530,6 +531,7 @@ function validationPolicy(policy?: ArtifactValidationPolicy): Required<ArtifactV
     min_accuracy: policy?.min_accuracy ?? 0.3,
     max_invalid_rate: policy?.max_invalid_rate ?? 0.2,
     min_examples: policy?.min_examples ?? 1,
+    quorum: policy?.quorum ?? 1,
   };
 }
 

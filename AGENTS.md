@@ -46,15 +46,15 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured, sends the full `MarshallJob` as `job_spec`, and can read persisted jobs/artifacts back from the coordinator.
 - `src/coordinator-client.ts` supports coordinator write authentication with `MARSHALL_COORDINATOR_TOKEN` / `--coordinator-token` and worker heartbeat forwarding for live coordinator leases.
 - `src/coordinator-client.ts` can record artifact verdicts and read worker reputation through the coordinator API.
-- `src/coordinator-client.ts` can list coordinator artifacts; `src/validation-jobs-cli.ts` turns unvalidated target artifacts into distributed `validate_artifact` jobs and can scope targets with `--target-job-prefix`.
+- `src/coordinator-client.ts` can list coordinator artifacts; `src/validation-jobs-cli.ts` turns unvalidated target artifacts into distributed `validate_artifact` jobs, scopes targets with `--target-job-prefix`, and defaults to quorum 2 with two validator jobs per artifact.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/worker-peer.ts` supports optional swarm authentication with `MARSHALL_SWARM_TOKEN` / `--swarm-token` so untrusted peers cannot register or claim jobs from permissioned control peers.
 - `src/training-runner.ts` runs the local toy trainer for `train_toy_model` jobs and validates the emitted manifest and metrics.
 - `src/training-runner.ts` also wraps `training/mlx_linear_smoke.py` for `train_mlx_smoke` jobs and emits an `mlx_smoke_result` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_lora_smoke.py` for `train_adapter` jobs and emits a `lora_adapter` artifact manifest.
 - `src/training-runner.ts` wraps `training/mlx_ag_news_eval.py` for `evaluate_adapter` jobs and emits an `adapter_evaluation` artifact manifest.
-- `src/training-runner.ts` runs `validate_artifact` jobs for validator workers. The current validator checks target artifact hash and adapter-evaluation metrics, then emits an `artifact_validation` manifest with `accepted`, `poor`, `rejected`, or `malicious`.
-- `src/control-peer.ts` forwards `artifact_validation` manifests into coordinator verdicts, so validator workers update target worker reputation through the same p2p artifact protocol.
+- `src/training-runner.ts` runs `validate_artifact` jobs for validator workers. The current validator checks target artifact hash and adapter-evaluation metrics, then emits an `artifact_validation` manifest with `accepted`, `poor`, `rejected`, or `malicious` plus the requested quorum.
+- `src/control-peer.ts` forwards `artifact_validation` manifests into coordinator validator votes, so target worker reputation is updated only after a verdict reaches coordinator quorum.
 - `src/evaluation-jobs-cli.ts` scans `lora_adapter` manifests and creates `evaluate_adapter` jobs for a held-out eval shard.
 - `src/leaderboard-cli.ts` scans `adapter_evaluation` metrics and writes `leaderboard.json`, `top_k.json`, and `optimized_model.json`. With `--coordinator-url --require-verdict accepted`, it filters model selection to coordinator-accepted artifacts only.
 - `src/model-package-cli.ts` packages the selected optimized model as base model + LoRA adapter metadata and emits an `optimized_model_package` manifest.
@@ -71,7 +71,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training or evaluation. Single JSONL eval shards remain addressable as files after caching.
 - `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
 - `examples/datasets/marshall-instructions/manifest.json`, `{train,valid,test,eval}.jsonl`, and `shards/shard-*/{train,valid}.jsonl` are the private synthetic MIT dataset artifacts for Marshall coordinator-event summaries and multi-worker adapter claims.
-- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, `AdapterEvaluationJob`, `ArtifactValidationJob`, `MarshallJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, adapter evaluation metrics, artifact validation metrics, and ACK payloads. `TrainingJob.dataset_shard`, `AdapterEvaluationJob.eval_shard`, and `ArtifactValidationJob.target` must include hashes verified by workers before producing artifacts or verdicts.
+- `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, `AdapterEvaluationJob`, `ArtifactValidationJob`, `MarshallJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, adapter evaluation metrics, artifact validation metrics, and ACK payloads. `ArtifactValidationPolicy.quorum` controls how many matching validator votes are required. `TrainingJob.dataset_shard`, `AdapterEvaluationJob.eval_shard`, and `ArtifactValidationJob.target` must include hashes verified by workers before producing artifacts or verdicts.
 - `src/jobs.ts` supports `adapterDataset: "ag_news"` through a local manifest. The control CLI exposes this as `--adapter-dataset ag_news` or `MARSHALL_ADAPTER_DATASET=ag_news`, with `--adapter-dataset-dir` / `MARSHALL_ADAPTER_DATASET_DIR` pointing at the local dataset directory.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
 - `tests/p2p.integration.test.ts` starts real libp2p peers on localhost, runs the toy trainer, checks loss improvement, verifies artifact manifest publication, and covers four workers claiming independent jobs concurrently.
@@ -80,7 +80,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, full job specs, job claims, statuses, artifacts, and append-only events in Redis.
 - `coordinator/redis_store.go` maintains job leases and can requeue expired running jobs so abandoned work is visible and recoverable.
-- `coordinator/redis_store.go` tracks worker reputation and blocks suspended workers from claiming more jobs. Verdict policy is currently `accepted +2`, `poor -10`, `rejected -25`, `timeout -15`, and `malicious -100`, capped to the `0..100` score range.
+- `coordinator/redis_store.go` tracks worker reputation and blocks suspended workers from claiming more jobs. Artifact verdicts with `quorum > 1` are stored as per-validator votes first and finalize only when one verdict reaches quorum. Verdict policy is currently `accepted +2`, `poor -10`, `rejected -25`, `timeout -15`, and `malicious -100`, capped to the `0..100` score range.
 - `coordinator/http.go` exposes the coordinator HTTP admin API, including `GET /jobs/{job_id}`, `GET /artifacts`, `GET /artifacts/{job_id}`, `POST /artifacts/{job_id}/verdict`, `GET /workers/{worker_id}/reputation`, `POST /jobs/requeue-expired`, `GET /dashboard`, `GET /events/stream`, and the embedded public console at `/`.
 - `coordinator/http.go` enforces optional bearer-token write authentication when `MARSHALL_COORDINATOR_TOKEN` is set; read endpoints remain available for the public console.
 - `coordinator/public/index.html` is the embedded terminal-style swarm console for worker status, job status, artifact verdicts, and live coordinator events.
@@ -113,7 +113,7 @@ npm run worker:pool -- --control <control-multiaddr> --job-type train_adapter --
 npm run eval:jobs -- --artifacts-dir <adapter-artifacts> --eval-file <eval.jsonl> --output <eval-jobs.json>
 npm run control:start -- --job-type evaluate_adapter --jobs-file <eval-jobs.json>
 npm run worker:pool -- --control <control-multiaddr> --job-type evaluate_adapter --concurrency 4 --max-jobs 4
-npm run validation:jobs -- --coordinator-url <coordinator-url> --target-artifact-type adapter_evaluation --output <validation-jobs.json>
+npm run validation:jobs -- --coordinator-url <coordinator-url> --target-artifact-type adapter_evaluation --quorum 2 --validators-per-artifact 2 --output <validation-jobs.json>
 npm run control:start -- --job-type validate_artifact --jobs-file <validation-jobs.json>
 npm run worker:pool -- --control <control-multiaddr> --job-type validate_artifact --backend cpu --concurrency 4 --max-jobs 4
 npm run leaderboard:adapters -- --eval-artifacts-dir <eval-artifacts> --coordinator-url <coordinator-url> --require-verdict accepted --output-dir <leaderboard-dir>

@@ -55,7 +55,7 @@ npm run worker:pool:compiled -- \
 
 ## Join Validation Work
 
-Validation workers are CPU-friendly. They verify assigned artifact hashes and metrics, then publish an `artifact_validation` manifest. The coordinator turns that manifest into a verdict for the target worker.
+Validation workers are CPU-friendly. They verify assigned artifact hashes and metrics, then publish an `artifact_validation` manifest. The coordinator records that manifest as a validator vote and finalizes the target artifact only after the configured quorum is reached.
 
 ```sh
 npm run worker:pool:compiled -- \

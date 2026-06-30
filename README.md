@@ -62,9 +62,10 @@ Only the coordinator writes Redis. Workers do not receive Redis credentials and 
 Validation is modeled as ordinary p2p work, not as an operator-side manual step:
 
 - evaluation artifacts are published to the coordinator by the worker that produced them;
-- `npm run validation:jobs` reads unvalidated coordinator artifacts and creates `validate_artifact` jobs;
+- `npm run validation:jobs` reads unvalidated coordinator artifacts and creates multiple `validate_artifact` jobs per target artifact;
 - validator workers claim those jobs through libp2p and emit `artifact_validation` manifests;
-- the control peer converts `artifact_validation` manifests into coordinator verdicts for the target artifact;
+- the control peer converts `artifact_validation` manifests into coordinator validator votes;
+- the coordinator finalizes a target artifact only after a verdict reaches quorum, then updates target worker reputation once;
 - leaderboard/model selection can require `verdict=accepted` before an adapter enters the selected set.
 
 ## First Concrete Target
@@ -216,6 +217,8 @@ Create and run validation work after evaluation artifacts have been published to
 npm run validation:jobs -- \
   --coordinator-url http://127.0.0.1:8080 \
   --target-artifact-type adapter_evaluation \
+  --quorum 2 \
+  --validators-per-artifact 2 \
   --output .marshall/jobs/validate-artifacts.json
 
 MARSHALL_JOBS_FILE=.marshall/jobs/validate-artifacts.json \
@@ -226,8 +229,8 @@ npm run worker:pool -- \
   --control /ip4/127.0.0.1/tcp/4001/p2p/<control-peer-id> \
   --job-type validate_artifact \
   --backend cpu \
-  --concurrency 4 \
-  --max-jobs 4
+  --concurrency 2 \
+  --max-jobs 2
 ```
 
 Build a leaderboard from only accepted evaluation artifacts:

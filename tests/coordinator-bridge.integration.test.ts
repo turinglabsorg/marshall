@@ -182,7 +182,8 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
   it("records target worker verdicts from distributed artifact validation manifests", async () => {
     const suffix = Date.now().toString(36);
     const evalWorkerId = `mac-worker-eval-target-${suffix}`;
-    const validatorWorkerId = `mac-worker-validator-${suffix}`;
+    const firstValidatorWorkerId = `mac-worker-validator-a-${suffix}`;
+    const secondValidatorWorkerId = `mac-worker-validator-b-${suffix}`;
     const evalMetricsPath = join(tempDir, `target-eval-${suffix}.json`);
     const evalJob: AdapterEvaluationJob = {
       job_id: `job_eval_target_${suffix}`,
@@ -210,8 +211,8 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
     await writeFile(evalMetricsPath, JSON.stringify(adapterEvaluationMetrics(evalJob), null, 2) + "\n", "utf8");
     const evalMetricsUri = pathToFileURL(evalMetricsPath).toString();
     const evalMetricsHash = await sha256File(evalMetricsPath);
-    const validationJob: ArtifactValidationJob = {
-      job_id: `job_validate_eval_${suffix}`,
+    const validationJobBase: ArtifactValidationJob = {
+      job_id: `job_validate_eval_${suffix}_vote_001`,
       run_id: `run_validation_bridge_${suffix}`,
       round_id: "round_001",
       job_type: "validate_artifact",
@@ -229,15 +230,23 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
         min_accuracy: 0.5,
         max_invalid_rate: 0.1,
         min_examples: 10,
+        quorum: 2,
       },
     };
+    const validationJobs: ArtifactValidationJob[] = [
+      validationJobBase,
+      {
+        ...validationJobBase,
+        job_id: `job_validate_eval_${suffix}_vote_002`,
+      },
+    ];
     const peers: WorkerPeer[] = [];
 
     try {
       control = await ControlPeer.create({
         privateKeyPath: join(tempDir, "control.key"),
         coordinatorUrl,
-        jobs: [evalJob, validationJob],
+        jobs: [evalJob, ...validationJobs],
       });
       const evalWorker = await WorkerPeer.create({
         privateKeyPath: join(tempDir, "eval-worker.key"),
@@ -246,14 +255,21 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
         backend: "mlx",
         supportedJobs: ["evaluate_adapter"],
       });
-      const validatorWorker = await WorkerPeer.create({
-        privateKeyPath: join(tempDir, "validator-worker.key"),
-        workerId: validatorWorkerId,
+      const firstValidatorWorker = await WorkerPeer.create({
+        privateKeyPath: join(tempDir, "validator-worker-a.key"),
+        workerId: firstValidatorWorkerId,
         controlAddr: control.multiaddrs[0],
         backend: "cpu",
         supportedJobs: ["validate_artifact"],
       });
-      peers.push(evalWorker, validatorWorker);
+      const secondValidatorWorker = await WorkerPeer.create({
+        privateKeyPath: join(tempDir, "validator-worker-b.key"),
+        workerId: secondValidatorWorkerId,
+        controlAddr: control.multiaddrs[0],
+        backend: "cpu",
+        supportedJobs: ["validate_artifact"],
+      });
+      peers.push(evalWorker, firstValidatorWorker, secondValidatorWorker);
 
       await evalWorker.register();
       const evalClaim = await evalWorker.claimJob("evaluate_adapter", 8_000);
@@ -261,25 +277,42 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
       await evalWorker.publishArtifactManifest({
         job_id: evalJob.job_id,
         artifact_type: "adapter_evaluation",
-        artifact_uri: validationJob.target.artifact_uri,
-        artifact_hash: validationJob.target.artifact_hash,
-        config_hash: validationJob.target.config_hash!,
+        artifact_uri: validationJobs[0].target.artifact_uri,
+        artifact_hash: validationJobs[0].target.artifact_hash,
+        config_hash: validationJobs[0].target.config_hash!,
         created_at: new Date().toISOString(),
-        metrics_uri: validationJob.target.metrics_uri,
+        metrics_uri: validationJobs[0].target.metrics_uri,
       });
-
-      await validatorWorker.register();
-      const validationClaim = await validatorWorker.claimJob("validate_artifact", 2_000);
-      expect(validationClaim.accepted).toBe(true);
-      const validation = await runArtifactValidation(validationJob, {
-        outputRoot: join(tempDir, "validation-artifacts"),
-      });
-      expect(validation.metrics.verdict).toBe("accepted");
-      await validatorWorker.publishArtifactManifest(validation.manifest);
 
       const coordinator = new CoordinatorClient(coordinatorUrl!);
+
+      await firstValidatorWorker.register();
+      const firstValidationClaim = await firstValidatorWorker.claimJob("validate_artifact", 2_000);
+      expect(firstValidationClaim.accepted).toBe(true);
+      const firstValidation = await runArtifactValidation(validationJobs[0], {
+        outputRoot: join(tempDir, "validation-artifacts"),
+      });
+      expect(firstValidation.metrics.verdict).toBe("accepted");
+      await firstValidatorWorker.publishArtifactManifest(firstValidation.manifest);
+
+      const pendingTargetArtifact = await coordinator.getArtifact(evalJob.job_id);
+      expect(pendingTargetArtifact.verdict).toBeUndefined();
+      expect(pendingTargetArtifact.verdict_status).toBe("pending");
+      expect(pendingTargetArtifact.verdict_votes).toBe(1);
+
+      await secondValidatorWorker.register();
+      const secondValidationClaim = await secondValidatorWorker.claimJob("validate_artifact", 2_000);
+      expect(secondValidationClaim.accepted).toBe(true);
+      const secondValidation = await runArtifactValidation(validationJobs[1], {
+        outputRoot: join(tempDir, "validation-artifacts"),
+      });
+      expect(secondValidation.metrics.verdict).toBe("accepted");
+      await secondValidatorWorker.publishArtifactManifest(secondValidation.manifest);
+
       const targetArtifact = await coordinator.getArtifact(evalJob.job_id);
       expect(targetArtifact.verdict).toBe("accepted");
+      expect(targetArtifact.verdict_status).toBe("finalized");
+      expect(targetArtifact.verdict_votes).toBe(2);
 
       const targetReputation = await coordinator.workerReputation(evalWorkerId);
       expect(targetReputation.accepted_artifacts).toBe(1);

@@ -282,6 +282,7 @@ export class ControlPeer {
           validator_id: manifest.worker_id,
           reason: manifest.validation.reason,
           created_at: manifest.created_at,
+          quorum: manifest.validation.quorum,
         });
       }
     } catch (error) {

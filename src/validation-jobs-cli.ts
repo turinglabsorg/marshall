@@ -14,6 +14,11 @@ if (coordinatorUrl == null || coordinatorUrl === "") {
 const coordinator = new CoordinatorClient(coordinatorUrl, {
   token: args["coordinator-token"] ?? process.env.MARSHALL_COORDINATOR_TOKEN,
 });
+const quorum = integerArg(args.quorum ?? process.env.MARSHALL_VALIDATION_QUORUM, 2);
+const validatorsPerArtifact = integerArg(args["validators-per-artifact"] ?? process.env.MARSHALL_VALIDATORS_PER_ARTIFACT, quorum);
+if (validatorsPerArtifact < quorum) {
+  throw new Error("--validators-per-artifact must be greater than or equal to --quorum");
+}
 const jobs = await createArtifactValidationJobs({
   coordinator,
   runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID ?? "run_artifact_validation_001",
@@ -21,12 +26,14 @@ const jobs = await createArtifactValidationJobs({
   jobPrefix: args["job-prefix"] ?? process.env.MARSHALL_JOB_ID ?? "job_validate_artifact",
   targetArtifactType: args["target-artifact-type"] ?? process.env.MARSHALL_VALIDATION_TARGET_ARTIFACT_TYPE ?? "adapter_evaluation",
   targetJobPrefix: args["target-job-prefix"] ?? process.env.MARSHALL_VALIDATION_TARGET_JOB_PREFIX,
+  validatorsPerArtifact,
   includeValidated: booleanArg(args["include-validated"] ?? process.env.MARSHALL_INCLUDE_VALIDATED_ARTIFACTS, false),
   limit: optionalNumberArg(args.limit ?? process.env.MARSHALL_VALIDATION_JOB_LIMIT),
   policy: {
     min_accuracy: numberArg(args["min-accuracy"] ?? process.env.MARSHALL_VALIDATION_MIN_ACCURACY, 0.3),
     max_invalid_rate: numberArg(args["max-invalid-rate"] ?? process.env.MARSHALL_VALIDATION_MAX_INVALID_RATE, 0.2),
     min_examples: integerArg(args["min-examples"] ?? process.env.MARSHALL_VALIDATION_MIN_EXAMPLES, 1),
+    quorum,
   },
 });
 
@@ -46,6 +53,7 @@ interface CreateArtifactValidationJobsOptions {
   jobPrefix: string;
   targetArtifactType: string;
   targetJobPrefix?: string;
+  validatorsPerArtifact: number;
   includeValidated: boolean;
   limit?: number;
   policy: Required<ArtifactValidationPolicy>;
@@ -60,27 +68,30 @@ async function createArtifactValidationJobs(options: CreateArtifactValidationJob
     .sort((left, right) => left.job_id.localeCompare(right.job_id));
   const selected = options.limit == null ? targets : targets.slice(0, options.limit);
 
-  return selected.map((artifact, index) => {
-    const suffix = String(index + 1).padStart(6, "0");
-    return ArtifactValidationJobSchema.parse({
-      job_id: `${options.jobPrefix}_${suffix}`,
-      run_id: options.runId,
-      round_id: options.roundId,
-      job_type: "validate_artifact",
-      backend: "cpu",
-      target: {
-        job_id: artifact.job_id,
-        worker_id: artifact.worker_id,
-        peer_id: artifact.peer_id,
-        artifact_type: artifact.artifact_type,
-        artifact_uri: artifact.artifact_uri,
-        artifact_hash: artifact.artifact_hash,
-        config_hash: artifact.config_hash,
-        metrics_uri: artifact.metrics_uri,
-      },
-      policy: options.policy,
-    });
-  });
+  return selected.flatMap((artifact, targetIndex) => (
+    Array.from({ length: options.validatorsPerArtifact }, (_, validatorIndex) => {
+      const targetSuffix = String(targetIndex + 1).padStart(6, "0");
+      const validatorSuffix = String(validatorIndex + 1).padStart(3, "0");
+      return ArtifactValidationJobSchema.parse({
+        job_id: `${options.jobPrefix}_${targetSuffix}_vote_${validatorSuffix}`,
+        run_id: options.runId,
+        round_id: options.roundId,
+        job_type: "validate_artifact",
+        backend: "cpu",
+        target: {
+          job_id: artifact.job_id,
+          worker_id: artifact.worker_id,
+          peer_id: artifact.peer_id,
+          artifact_type: artifact.artifact_type,
+          artifact_uri: artifact.artifact_uri,
+          artifact_hash: artifact.artifact_hash,
+          config_hash: artifact.config_hash,
+          metrics_uri: artifact.metrics_uri,
+        },
+        policy: options.policy,
+      });
+    })
+  ));
 }
 
 function parseArgs(values: string[]): Record<string, string> {

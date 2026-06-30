@@ -301,3 +301,147 @@ func TestRedisStoreLifecycle(t *testing.T) {
 		}
 	}
 }
+
+func TestRedisStoreArtifactVerdictQuorum(t *testing.T) {
+	addr := os.Getenv("MARSHALL_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("MARSHALL_REDIS_ADDR is required for Redis integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	prefix := "marshall:quorum-test:" + strings.ReplaceAll(time.Now().UTC().Format(time.RFC3339Nano), ":", "-")
+	store := NewRedisStore(addr, prefix)
+
+	if _, err := store.CreateRun(ctx, Run{
+		RunID:     "run_quorum_001",
+		Objective: "prove validator quorum before artifact finalization",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RegisterWorker(ctx, Worker{
+		WorkerID:      "worker_quorum_target_001",
+		PeerID:        "12D3KooWQuorumTarget",
+		Backend:       "mlx",
+		DeviceFamily:  "apple_silicon",
+		MemoryGB:      32,
+		SupportedJobs: []string{"evaluate_adapter"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateJob(ctx, Job{
+		JobID:      "job_quorum_eval_001",
+		RunID:      "run_quorum_001",
+		JobType:    "evaluate_adapter",
+		Backend:    "mlx",
+		DatasetURI: "file://datasets/eval.jsonl",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_quorum_eval_001",
+		WorkerID:     "worker_quorum_target_001",
+		PeerID:       "12D3KooWQuorumTarget",
+		LeaseSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claim.Accepted {
+		t.Fatalf("expected target job claim accepted: %+v", claim)
+	}
+	if _, err := store.PublishArtifact(ctx, Artifact{
+		JobID:        "job_quorum_eval_001",
+		WorkerID:     "worker_quorum_target_001",
+		PeerID:       "12D3KooWQuorumTarget",
+		ArtifactType: "adapter_evaluation",
+		ArtifactURI:  "file://eval-artifacts/job_quorum_eval_001/metrics.json",
+		ArtifactHash: "sha256:quorum-eval",
+		ConfigHash:   "sha256:quorum-config",
+		MetricsURI:   "file://eval-artifacts/job_quorum_eval_001/metrics.json",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_quorum_eval_001",
+		WorkerID:    "worker_quorum_target_001",
+		ValidatorID: "validator_quorum_001",
+		Verdict:     "accepted",
+		Reason:      "first validator accepted",
+		Quorum:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Finalized || first.ScoreDelta != 0 || first.Votes != 1 || first.Quorum != 2 || first.Tally["accepted"] != 1 {
+		t.Fatalf("expected first vote to remain pending, got %+v", first)
+	}
+	artifact, err := store.GetArtifact(ctx, "job_quorum_eval_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact.Verdict != "" || artifact.VerdictStatus != "pending" || artifact.VerdictVotes != 1 || artifact.VerdictQuorum != 2 {
+		t.Fatalf("expected pending artifact after first vote, got %+v", artifact)
+	}
+	reputation, err := store.WorkerReputation(ctx, "worker_quorum_target_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reputation.AcceptedArtifacts != 0 || reputation.RejectedArtifacts != 0 || reputation.Score != 100 {
+		t.Fatalf("expected pending vote not to affect reputation, got %+v", reputation)
+	}
+
+	second, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_quorum_eval_001",
+		WorkerID:    "worker_quorum_target_001",
+		ValidatorID: "validator_quorum_002",
+		Verdict:     "rejected",
+		Reason:      "second validator rejected",
+		Quorum:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Finalized || second.Votes != 2 || second.Tally["accepted"] != 1 || second.Tally["rejected"] != 1 {
+		t.Fatalf("expected split vote to remain pending, got %+v", second)
+	}
+
+	third, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_quorum_eval_001",
+		WorkerID:    "worker_quorum_target_001",
+		ValidatorID: "validator_quorum_003",
+		Verdict:     "rejected",
+		Reason:      "third validator rejected",
+		Quorum:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !third.Finalized || third.FinalVerdict != "rejected" || third.ScoreDelta != -25 || third.Reputation.Score != 75 || third.Reputation.RejectedArtifacts != 1 {
+		t.Fatalf("expected rejected quorum to finalize once, got %+v", third)
+	}
+	artifact, err = store.GetArtifact(ctx, "job_quorum_eval_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact.Verdict != "rejected" || artifact.VerdictStatus != "finalized" || artifact.VerdictVotes != 3 || artifact.VerdictQuorum != 2 {
+		t.Fatalf("expected finalized rejected artifact, got %+v", artifact)
+	}
+
+	duplicate, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_quorum_eval_001",
+		WorkerID:    "worker_quorum_target_001",
+		ValidatorID: "validator_quorum_003",
+		Verdict:     "rejected",
+		Reason:      "duplicate vote",
+		Quorum:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !duplicate.Finalized || duplicate.Reputation.RejectedArtifacts != 1 {
+		t.Fatalf("expected duplicate finalized response without extra reputation change, got %+v", duplicate)
+	}
+}

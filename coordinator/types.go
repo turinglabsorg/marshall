@@ -71,17 +71,20 @@ type JobStatus struct {
 }
 
 type Artifact struct {
-	JobID        string `json:"job_id"`
-	WorkerID     string `json:"worker_id"`
-	PeerID       string `json:"peer_id"`
-	ArtifactType string `json:"artifact_type"`
-	ArtifactURI  string `json:"artifact_uri"`
-	ArtifactHash string `json:"artifact_hash"`
-	ConfigHash   string `json:"config_hash"`
-	MetricsURI   string `json:"metrics_uri,omitempty"`
-	CreatedAt    string `json:"created_at,omitempty"`
-	Verdict      string `json:"verdict,omitempty"`
-	VerdictAt    string `json:"verdict_at,omitempty"`
+	JobID         string `json:"job_id"`
+	WorkerID      string `json:"worker_id"`
+	PeerID        string `json:"peer_id"`
+	ArtifactType  string `json:"artifact_type"`
+	ArtifactURI   string `json:"artifact_uri"`
+	ArtifactHash  string `json:"artifact_hash"`
+	ConfigHash    string `json:"config_hash"`
+	MetricsURI    string `json:"metrics_uri,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	Verdict       string `json:"verdict,omitempty"`
+	VerdictAt     string `json:"verdict_at,omitempty"`
+	VerdictStatus string `json:"verdict_status,omitempty"`
+	VerdictVotes  int    `json:"verdict_votes,omitempty"`
+	VerdictQuorum int    `json:"verdict_quorum,omitempty"`
 }
 
 type WorkerReputation struct {
@@ -104,16 +107,22 @@ type ArtifactVerdict struct {
 	Verdict     string `json:"verdict"`
 	Reason      string `json:"reason,omitempty"`
 	CreatedAt   string `json:"created_at,omitempty"`
+	Quorum      int    `json:"quorum,omitempty"`
 }
 
 type ArtifactVerdictResult struct {
 	JobID           string           `json:"job_id"`
 	WorkerID        string           `json:"worker_id"`
 	Verdict         string           `json:"verdict"`
+	FinalVerdict    string           `json:"final_verdict,omitempty"`
 	ScoreDelta      int              `json:"score_delta"`
 	Reputation      WorkerReputation `json:"reputation"`
 	EventID         string           `json:"event_id,omitempty"`
 	ParticipationOK bool             `json:"participation_ok"`
+	Finalized       bool             `json:"finalized"`
+	Quorum          int              `json:"quorum"`
+	Votes           int              `json:"votes"`
+	Tally           map[string]int   `json:"tally,omitempty"`
 }
 
 type Event struct {
