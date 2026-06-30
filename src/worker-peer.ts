@@ -28,6 +28,7 @@ export interface WorkerPeerOptions {
   supportedJobs?: JobType[];
   memoryGb?: number;
   tokensPerSecond?: number;
+  swarmToken?: string;
 }
 
 export class WorkerPeer {
@@ -55,6 +56,7 @@ export class WorkerPeer {
 
   async register(): Promise<WorkerRegistration> {
     const registration: WorkerRegistration = {
+      ...this.authPayload(),
       peer_id: this.peerId,
       worker_id: this.options.workerId,
       public_key: await this.publicKey(),
@@ -78,13 +80,16 @@ export class WorkerPeer {
     return registration;
   }
 
-  async heartbeat(status: "idle" | "working" = "idle"): Promise<void> {
+  async heartbeat(status: "idle" | "working" = "idle", jobId?: string, leaseSeconds?: number): Promise<void> {
     const response = AckSchema.parse(
       await requestJson(this.node, this.options.controlAddr, PROTOCOLS.workerHeartbeat, {
+        ...this.authPayload(),
         peer_id: this.peerId,
         worker_id: this.options.workerId,
         status,
+        job_id: jobId,
         timestamp: new Date().toISOString(),
+        lease_seconds: leaseSeconds,
       }),
     );
 
@@ -96,6 +101,7 @@ export class WorkerPeer {
   async claimJob(jobType: JobType, maxTokens = 2_000): Promise<JobClaimResponse> {
     return JobClaimResponseSchema.parse(
       await requestJson(this.node, this.options.controlAddr, PROTOCOLS.jobClaim, {
+        ...this.authPayload(),
         peer_id: this.peerId,
         worker_id: this.options.workerId,
         job_type: jobType,
@@ -116,6 +122,7 @@ export class WorkerPeer {
   async reportJobStatus(status: Omit<JobStatus, "peer_id" | "worker_id">): Promise<void> {
     const response = AckSchema.parse(
       await requestJson(this.node, this.options.controlAddr, PROTOCOLS.jobStatus, {
+        ...this.authPayload(),
         peer_id: this.peerId,
         worker_id: this.options.workerId,
         ...status,
@@ -130,6 +137,7 @@ export class WorkerPeer {
   async publishArtifactManifest(manifest: Omit<ArtifactManifest, "peer_id" | "worker_id">): Promise<void> {
     const response = AckSchema.parse(
       await requestJson(this.node, this.options.controlAddr, PROTOCOLS.artifactManifest, ArtifactManifestSchema.parse({
+        ...this.authPayload(),
         peer_id: this.peerId,
         worker_id: this.options.workerId,
         ...manifest,
@@ -144,5 +152,10 @@ export class WorkerPeer {
   private async publicKey(): Promise<string> {
     const encoded = await readFile(this.options.privateKeyPath, "utf8");
     return publicKeyBase64(privateKeyFromProtobuf(Buffer.from(encoded, "base64")));
+  }
+
+  private authPayload(): { auth_token?: string } {
+    const token = this.options.swarmToken ?? process.env.MARSHALL_SWARM_TOKEN;
+    return token == null || token === "" ? {} : { auth_token: token };
   }
 }

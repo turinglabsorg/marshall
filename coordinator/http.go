@@ -8,14 +8,26 @@ import (
 )
 
 type Server struct {
-	store Store
-	mux   *http.ServeMux
+	store     Store
+	mux       *http.ServeMux
+	authToken string
 }
 
-func NewServer(store Store) *Server {
+type ServerOption func(*Server)
+
+func WithAuthToken(token string) ServerOption {
+	return func(server *Server) {
+		server.authToken = token
+	}
+}
+
+func NewServer(store Store, options ...ServerOption) *Server {
 	server := &Server{
 		store: store,
 		mux:   http.NewServeMux(),
+	}
+	for _, option := range options {
+		option(server)
 	}
 	server.routes()
 	return server
@@ -30,16 +42,43 @@ func (server *Server) routes() {
 	server.mux.HandleFunc("GET /AGENTS.md", server.participantAgents)
 	server.mux.HandleFunc("GET /health", server.health)
 	server.mux.HandleFunc("GET /dashboard", server.dashboard)
-	server.mux.HandleFunc("POST /runs", server.createRun)
-	server.mux.HandleFunc("POST /workers", server.registerWorker)
-	server.mux.HandleFunc("POST /jobs", server.createJob)
+	server.mux.HandleFunc("POST /runs", server.requireAuth(server.createRun))
+	server.mux.HandleFunc("POST /workers", server.requireAuth(server.registerWorker))
+	server.mux.HandleFunc("POST /workers/{worker_id}/heartbeat", server.requireAuth(server.workerHeartbeat))
+	server.mux.HandleFunc("POST /jobs", server.requireAuth(server.createJob))
+	server.mux.HandleFunc("POST /jobs/requeue-expired", server.requireAuth(server.requeueExpiredJobs))
 	server.mux.HandleFunc("GET /jobs/{job_id}", server.getJob)
-	server.mux.HandleFunc("POST /jobs/{job_id}/claim", server.claimJob)
-	server.mux.HandleFunc("POST /jobs/{job_id}/status", server.updateJobStatus)
-	server.mux.HandleFunc("POST /artifacts", server.publishArtifact)
+	server.mux.HandleFunc("POST /jobs/{job_id}/claim", server.requireAuth(server.claimJob))
+	server.mux.HandleFunc("POST /jobs/{job_id}/status", server.requireAuth(server.updateJobStatus))
+	server.mux.HandleFunc("POST /artifacts", server.requireAuth(server.publishArtifact))
 	server.mux.HandleFunc("GET /artifacts/{job_id}", server.getArtifact)
 	server.mux.HandleFunc("GET /events", server.events)
 	server.mux.HandleFunc("GET /events/stream", server.eventStream)
+}
+
+func (server *Server) requireAuth(handler http.HandlerFunc) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		if server.authToken == "" {
+			handler(response, request)
+			return
+		}
+		if requestBearerToken(request) != server.authToken {
+			writeJSON(response, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		handler(response, request)
+	}
+}
+
+func requestBearerToken(request *http.Request) string {
+	if token := request.Header.Get("X-Marshall-Token"); token != "" {
+		return token
+	}
+	auth := request.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 }
 
 func (server *Server) health(response http.ResponseWriter, _ *http.Request) {
@@ -64,6 +103,16 @@ func (server *Server) registerWorker(response http.ResponseWriter, request *http
 	writeResult(response, event, err)
 }
 
+func (server *Server) workerHeartbeat(response http.ResponseWriter, request *http.Request) {
+	var heartbeat WorkerHeartbeat
+	if !decodeJSON(response, request, &heartbeat) {
+		return
+	}
+	heartbeat.WorkerID = request.PathValue("worker_id")
+	event, err := server.store.WorkerHeartbeat(request.Context(), heartbeat)
+	writeResult(response, event, err)
+}
+
 func (server *Server) createJob(response http.ResponseWriter, request *http.Request) {
 	var job Job
 	if !decodeJSON(response, request, &job) {
@@ -85,6 +134,11 @@ func (server *Server) claimJob(response http.ResponseWriter, request *http.Reque
 	}
 	claim.JobID = request.PathValue("job_id")
 	result, err := server.store.ClaimJob(request.Context(), claim)
+	writeResult(response, result, err)
+}
+
+func (server *Server) requeueExpiredJobs(response http.ResponseWriter, request *http.Request) {
+	result, err := server.store.RequeueExpiredJobs(request.Context())
 	writeResult(response, result, err)
 }
 

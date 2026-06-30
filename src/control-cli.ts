@@ -19,6 +19,9 @@ const control = await ControlPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_CONTROL_KEY ?? ".marshall/control.key",
   listen: splitList(args.listen ?? process.env.MARSHALL_CONTROL_LISTEN ?? "/ip4/0.0.0.0/tcp/4001"),
   coordinatorUrl: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL,
+  coordinatorToken: args["coordinator-token"] ?? process.env.MARSHALL_COORDINATOR_TOKEN,
+  swarmToken: args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN,
+  jobLeaseSeconds: numberArg(args["job-lease-seconds"] ?? process.env.MARSHALL_JOB_LEASE_SECONDS, 300),
   jobs,
 });
 

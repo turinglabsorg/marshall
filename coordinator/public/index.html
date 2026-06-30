@@ -420,11 +420,12 @@
           </div>
           <aside class="join-panel">
             <h3>Participate</h3>
-            <p>Give another agent the public instructions file and the coordinator URL. The worker only needs to run the repo, connect to the control peer, and claim compatible jobs.</p>
+            <p>Give another agent the public instructions file, the control peer address, and a swarm token. The worker connects to the control peer, keeps a live heartbeat, and claims compatible jobs.</p>
             <code class="command">npm run worker:pool:compiled -- \
   --control /ip4/&lt;host&gt;/tcp/&lt;port&gt;/p2p/&lt;peer&gt; \
   --job-type evaluate_adapter \
   --backend mlx \
+  --swarm-token &lt;token&gt; \
   --concurrency 1 \
   --max-jobs 1</code>
             <div class="actions">

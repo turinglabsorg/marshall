@@ -52,6 +52,12 @@ func TestHTTPServerLifecycle(t *testing.T) {
 		MemoryGB:      32,
 		SupportedJobs: []string{"train_mlx_smoke"},
 	}, http.StatusOK)
+	postJSON(t, server.URL+"/workers/worker_http_001/heartbeat", WorkerHeartbeat{
+		WorkerID:  "worker_http_001",
+		PeerID:    "12D3KooWHTTP",
+		Status:    "idle",
+		Timestamp: nowUTC(),
+	}, http.StatusOK)
 	postJSON(t, server.URL+"/jobs", Job{
 		JobID:      "job_http_001",
 		RunID:      "run_http_001",
@@ -126,6 +132,31 @@ func TestHTTPServerLifecycle(t *testing.T) {
 	}
 }
 
+func TestHTTPServerAuthProtectsWrites(t *testing.T) {
+	addr := os.Getenv("MARSHALL_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("MARSHALL_REDIS_ADDR is required for Redis integration tests")
+	}
+
+	prefix := "marshall:http-auth-test:" + strings.ReplaceAll(time.Now().UTC().Format(time.RFC3339Nano), ":", "-")
+	server := httptest.NewServer(NewServer(NewRedisStore(addr, prefix), WithAuthToken("secret-token")))
+	defer server.Close()
+
+	getJSONInto(t, server.URL+"/health", http.StatusOK, &map[string]string{})
+	postJSON(t, server.URL+"/runs", Run{
+		RunID:     "run_auth_001",
+		Objective: "unauthorized write",
+	}, http.StatusUnauthorized)
+	postJSONWithToken(t, server.URL+"/runs", "wrong-token", Run{
+		RunID:     "run_auth_001",
+		Objective: "wrong token write",
+	}, http.StatusUnauthorized)
+	postJSONWithToken(t, server.URL+"/runs", "secret-token", Run{
+		RunID:     "run_auth_001",
+		Objective: "authorized write",
+	}, http.StatusOK)
+}
+
 func getJSONInto(t *testing.T, url string, status int, output any) {
 	t.Helper()
 	response, err := http.Get(url)
@@ -147,13 +178,32 @@ func postJSON(t *testing.T, url string, payload any, status int) {
 	postJSONInto(t, url, payload, status, &output)
 }
 
+func postJSONWithToken(t *testing.T, url string, token string, payload any, status int) {
+	t.Helper()
+	var output map[string]any
+	postJSONIntoWithToken(t, url, token, payload, status, &output)
+}
+
 func postJSONInto(t *testing.T, url string, payload any, status int, output any) {
+	t.Helper()
+	postJSONIntoWithToken(t, url, "", payload, status, output)
+}
+
+func postJSONIntoWithToken(t *testing.T, url string, token string, payload any, status int, output any) {
 	t.Helper()
 	body, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := http.Post(url, "application/json", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}

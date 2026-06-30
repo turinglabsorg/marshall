@@ -14,6 +14,7 @@ export const JobTypeSchema = z.enum([
 export const BackendSchema = z.enum(["mlx", "cuda", "cpu"]);
 
 export const WorkerRegistrationSchema = z.object({
+  auth_token: z.string().min(1).optional(),
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   public_key: z.string().min(1),
@@ -33,13 +34,17 @@ export const WorkerRegistrationResponseSchema = z.object({
 });
 
 export const WorkerHeartbeatSchema = z.object({
+  auth_token: z.string().min(1).optional(),
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   status: z.enum(["idle", "working"]),
+  job_id: z.string().min(1).optional(),
   timestamp: z.string().min(1),
+  lease_seconds: z.number().int().positive().optional(),
 });
 
 export const JobClaimSchema = z.object({
+  auth_token: z.string().min(1).optional(),
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   job_type: JobTypeSchema,
@@ -127,6 +132,7 @@ export const JobClaimResponseSchema = z.object({
 });
 
 export const JobStatusSchema = z.object({
+  auth_token: z.string().min(1).optional(),
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   job_id: z.string().min(1),
@@ -135,6 +141,7 @@ export const JobStatusSchema = z.object({
 });
 
 export const ArtifactManifestSchema = z.object({
+  auth_token: z.string().min(1).optional(),
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   job_id: z.string().min(1),

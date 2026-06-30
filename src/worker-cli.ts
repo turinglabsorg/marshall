@@ -14,6 +14,8 @@ if (controlAddr == null) {
 
 const jobType = jobTypeArg(args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? "train_toy_model");
 const backend = backendArg(args.backend ?? process.env.MARSHALL_BACKEND ?? defaultBackendForJob(jobType));
+const jobLeaseSeconds = positiveIntegerArg(args["job-lease-seconds"] ?? process.env.MARSHALL_JOB_LEASE_SECONDS, 300);
+const heartbeatIntervalMs = positiveIntegerArg(args["heartbeat-interval-ms"] ?? process.env.MARSHALL_HEARTBEAT_INTERVAL_MS, 15_000);
 const worker = await WorkerPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_WORKER_KEY ?? ".marshall/worker.key",
   workerId: args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostname()}-${backend}`,
@@ -23,9 +25,11 @@ const worker = await WorkerPeer.create({
   supportedJobs: [jobType],
   memoryGb: numberArg(args["memory-gb"] ?? process.env.MARSHALL_MEMORY_GB, 32),
   tokensPerSecond: numberArg(args["tokens-per-second"] ?? process.env.MARSHALL_TOKENS_PER_SECOND, 1000),
+  swarmToken: args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN,
 });
 
 let claimedJob: MarshallJob | undefined;
+let stopHeartbeat = () => {};
 
 try {
   await worker.register();
@@ -36,6 +40,8 @@ try {
     throw new Error(`no job assigned: ${claim.reason ?? "unknown reason"}`);
   }
   claimedJob = claim.job;
+  await worker.heartbeat("working", claim.job.job_id, jobLeaseSeconds);
+  stopHeartbeat = startHeartbeat(() => worker.heartbeat("working", claim.job!.job_id, jobLeaseSeconds), heartbeatIntervalMs);
 
   await worker.reportJobStatus({
     job_id: claim.job.job_id,
@@ -50,6 +56,9 @@ try {
     status: "completed",
     message: `${claim.job.job_type} runner completed`,
   });
+  stopHeartbeat();
+  stopHeartbeat = () => {};
+  await worker.heartbeat("idle");
 
   console.log(JSON.stringify({
     type: "marshall_worker_completed",
@@ -76,6 +85,7 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 } finally {
+  stopHeartbeat();
   await worker.stop();
 }
 
@@ -187,6 +197,14 @@ function numberArg(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
+function positiveIntegerArg(value: string | undefined, fallback: number): number {
+  const parsed = numberArg(value, fallback);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`invalid positive integer: ${value ?? fallback}`);
+  }
+  return parsed;
+}
+
 function booleanArg(value: string | undefined, fallback: boolean): boolean {
   if (value == null) {
     return fallback;
@@ -198,4 +216,13 @@ function booleanArg(value: string | undefined, fallback: boolean): boolean {
     return false;
   }
   throw new Error(`invalid boolean: ${value}`);
+}
+
+function startHeartbeat(send: () => Promise<void>, intervalMs: number): () => void {
+  const timer = setInterval(() => {
+    void send().catch(() => {
+      // The main job path will report failures; heartbeat retries should not crash the worker.
+    });
+  }, intervalMs);
+  return () => clearInterval(timer);
 }

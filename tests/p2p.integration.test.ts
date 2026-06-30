@@ -161,4 +161,34 @@ describe("Marshall p2p substrate", () => {
     expect(new Set(control.state.manifests.map((manifest) => manifest.job_id)).size).toBe(4);
     expect(control.state.statuses.filter((status) => status.status === "completed")).toHaveLength(4);
   }, 20_000);
+
+  it("rejects workers that do not present the configured swarm token", async () => {
+    control = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "control.key"),
+      swarmToken: "swarm-secret",
+    });
+    const rejectedWorker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "rejected-worker.key"),
+      workerId: "mac-worker-rejected",
+      controlAddr: control.multiaddrs[0],
+      swarmToken: "wrong-secret",
+    });
+    workers.push(rejectedWorker);
+
+    await expect(rejectedWorker.register()).rejects.toThrow("worker registration rejected");
+    expect(control.state.registrations).toHaveLength(0);
+
+    worker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "accepted-worker.key"),
+      workerId: "mac-worker-accepted",
+      controlAddr: control.multiaddrs[0],
+      swarmToken: "swarm-secret",
+    });
+    const registration = await worker.register();
+    expect(registration.worker_id).toBe("mac-worker-accepted");
+
+    const claim = await worker.claimToyTrainingJob(2_000);
+    expect(claim.accepted).toBe(true);
+    expect(claim.job?.job_type).toBe("train_toy_model");
+  }, 15_000);
 });

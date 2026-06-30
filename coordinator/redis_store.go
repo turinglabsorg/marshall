@@ -57,6 +57,12 @@ func (store *RedisStore) RegisterWorker(ctx context.Context, worker Worker) (Eve
 	if worker.CreatedAt == "" {
 		worker.CreatedAt = nowUTC()
 	}
+	if worker.LastSeenAt == "" {
+		worker.LastSeenAt = worker.CreatedAt
+	}
+	if worker.Status == "" {
+		worker.Status = "registered"
+	}
 
 	if _, err := store.client.command(ctx, append([]string{"HSET", store.key("worker", worker.WorkerID)}, mapArgs(map[string]string{
 		"worker_id":      worker.WorkerID,
@@ -66,6 +72,9 @@ func (store *RedisStore) RegisterWorker(ctx context.Context, worker Worker) (Eve
 		"memory_gb":      strconv.FormatFloat(worker.MemoryGB, 'f', -1, 64),
 		"supported_jobs": strings.Join(worker.SupportedJobs, ","),
 		"created_at":     worker.CreatedAt,
+		"status":         worker.Status,
+		"current_job_id": worker.CurrentJobID,
+		"last_seen_at":   worker.LastSeenAt,
 	})...)...); err != nil {
 		return Event{}, err
 	}
@@ -80,6 +89,64 @@ func (store *RedisStore) RegisterWorker(ctx context.Context, worker Worker) (Eve
 		"memory_gb":      strconv.FormatFloat(worker.MemoryGB, 'f', -1, 64),
 		"supported_jobs": strings.Join(worker.SupportedJobs, ","),
 		"created_at":     worker.CreatedAt,
+		"status":         worker.Status,
+		"last_seen_at":   worker.LastSeenAt,
+	})
+}
+
+func (store *RedisStore) WorkerHeartbeat(ctx context.Context, heartbeat WorkerHeartbeat) (Event, error) {
+	if heartbeat.WorkerID == "" || heartbeat.PeerID == "" || heartbeat.Status == "" {
+		return Event{}, fmt.Errorf("worker_id, peer_id, and status are required")
+	}
+	if heartbeat.Timestamp == "" {
+		heartbeat.Timestamp = nowUTC()
+	}
+	if heartbeat.LeaseSeconds <= 0 {
+		heartbeat.LeaseSeconds = defaultLeaseSeconds
+	}
+
+	workerFields, err := store.hash(ctx, store.key("worker", heartbeat.WorkerID))
+	if err != nil {
+		return Event{}, err
+	}
+	if workerFields["worker_id"] == "" {
+		return Event{}, fmt.Errorf("worker not found")
+	}
+	if workerFields["peer_id"] != heartbeat.PeerID {
+		return Event{}, fmt.Errorf("heartbeat peer does not match worker")
+	}
+
+	if heartbeat.CurrentJobID != "" {
+		jobFields, err := store.hash(ctx, store.key("job", heartbeat.CurrentJobID))
+		if err != nil {
+			return Event{}, err
+		}
+		if jobFields["job_id"] == "" {
+			return Event{}, fmt.Errorf("heartbeat job not found")
+		}
+		if jobFields["worker_id"] != heartbeat.WorkerID {
+			return Event{}, fmt.Errorf("heartbeat worker does not match job")
+		}
+		if jobFields["status"] == "claimed" || jobFields["status"] == "running" {
+			if _, err := store.client.command(ctx, "SET", store.key("job", heartbeat.CurrentJobID, "lease"), heartbeat.WorkerID, "EX", strconv.Itoa(heartbeat.LeaseSeconds)); err != nil {
+				return Event{}, err
+			}
+		}
+	}
+
+	if _, err := store.client.command(ctx, "HSET", store.key("worker", heartbeat.WorkerID),
+		"status", heartbeat.Status,
+		"current_job_id", heartbeat.CurrentJobID,
+		"last_seen_at", heartbeat.Timestamp,
+	); err != nil {
+		return Event{}, err
+	}
+	return store.appendEvent(ctx, "worker_heartbeat", map[string]string{
+		"worker_id":      heartbeat.WorkerID,
+		"peer_id":        heartbeat.PeerID,
+		"status":         heartbeat.Status,
+		"current_job_id": heartbeat.CurrentJobID,
+		"created_at":     heartbeat.Timestamp,
 	})
 }
 
@@ -232,6 +299,64 @@ return {1, event}
 	}
 }
 
+func (store *RedisStore) RequeueExpiredJobs(ctx context.Context) (RequeueResult, error) {
+	ids, err := store.members(ctx, store.key("jobs"))
+	if err != nil {
+		return RequeueResult{}, err
+	}
+
+	requeued := []string{}
+	for _, id := range ids {
+		fields, err := store.hash(ctx, store.key("job", id))
+		if err != nil {
+			return RequeueResult{}, err
+		}
+		if fields["job_id"] == "" || (fields["status"] != "claimed" && fields["status"] != "running") {
+			continue
+		}
+		exists, err := store.client.command(ctx, "EXISTS", store.key("job", id, "lease"))
+		if err != nil {
+			return RequeueResult{}, err
+		}
+		if exists.num != 0 {
+			continue
+		}
+
+		now := nowUTC()
+		if _, err := store.client.command(ctx, "HSET", store.key("job", id),
+			"status", "queued",
+			"worker_id", "",
+			"peer_id", "",
+			"claimed_at", "",
+			"status_message", "lease expired; requeued",
+			"status_at", now,
+		); err != nil {
+			return RequeueResult{}, err
+		}
+		if fields["worker_id"] != "" {
+			if _, err := store.client.command(ctx, "HSET", store.key("worker", fields["worker_id"]),
+				"status", "idle",
+				"current_job_id", "",
+				"last_seen_at", now,
+			); err != nil {
+				return RequeueResult{}, err
+			}
+		}
+		eventFields := map[string]string{
+			"job_id":     id,
+			"run_id":     fields["run_id"],
+			"worker_id":  fields["worker_id"],
+			"peer_id":    fields["peer_id"],
+			"created_at": now,
+		}
+		if _, err := store.appendEvent(ctx, "job_requeued", eventFields); err != nil {
+			return RequeueResult{}, err
+		}
+		requeued = append(requeued, id)
+	}
+	return RequeueResult{Requeued: requeued}, nil
+}
+
 func (store *RedisStore) UpdateJobStatus(ctx context.Context, status JobStatus) (Event, error) {
 	if status.JobID == "" || status.WorkerID == "" || status.Status == "" {
 		return Event{}, fmt.Errorf("job_id, worker_id, and status are required")
@@ -239,6 +364,14 @@ func (store *RedisStore) UpdateJobStatus(ctx context.Context, status JobStatus) 
 	now := nowUTC()
 	if _, err := store.client.command(ctx, "HSET", store.key("job", status.JobID), "status", status.Status, "status_message", status.Message, "status_at", now); err != nil {
 		return Event{}, err
+	}
+	if status.Status == "completed" || status.Status == "failed" {
+		if _, err := store.client.command(ctx, "DEL", store.key("job", status.JobID, "lease")); err != nil {
+			return Event{}, err
+		}
+		if _, err := store.client.command(ctx, "HSET", store.key("worker", status.WorkerID), "status", "idle", "current_job_id", "", "last_seen_at", now); err != nil {
+			return Event{}, err
+		}
 	}
 	return store.appendEvent(ctx, "job_status_updated", map[string]string{
 		"job_id":     status.JobID,
@@ -429,6 +562,9 @@ func workerFromFields(fields map[string]string) Worker {
 		MemoryGB:      memoryGB,
 		SupportedJobs: supportedJobs,
 		CreatedAt:     fields["created_at"],
+		Status:        fields["status"],
+		CurrentJobID:  fields["current_job_id"],
+		LastSeenAt:    fields["last_seen_at"],
 	}
 }
 

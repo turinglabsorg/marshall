@@ -14,6 +14,10 @@ const runRoot = args["run-root"] ?? process.env.MARSHALL_RUN_ROOT ?? join(".mars
 const datasetDir = args["dataset-dir"] ?? process.env.MARSHALL_ADAPTER_DATASET_DIR ?? ".marshall/datasets/ag-news";
 const evalFile = args["eval-file"] ?? process.env.MARSHALL_EVAL_FILE ?? join(datasetDir, "eval.jsonl");
 const coordinatorUrl = args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL;
+const coordinatorToken = args["coordinator-token"] ?? process.env.MARSHALL_COORDINATOR_TOKEN;
+const swarmToken = args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN;
+const jobLeaseSeconds = args["job-lease-seconds"] ?? process.env.MARSHALL_JOB_LEASE_SECONDS;
+const heartbeatIntervalMs = args["heartbeat-interval-ms"] ?? process.env.MARSHALL_HEARTBEAT_INTERVAL_MS;
 const pythonBin = args.python ?? process.env.MARSHALL_PYTHON;
 const jobCount = numberArg(args["job-count"] ?? process.env.MARSHALL_JOB_COUNT, 4);
 const concurrency = numberArg(args.concurrency ?? process.env.MARSHALL_WORKER_POOL_CONCURRENCY, jobCount);
@@ -48,6 +52,9 @@ const trainControl = await startControl([
   "--adapter-dataset-dir", datasetDir,
   "--key", join(runRoot, "control-train.key"),
   ...optionalArg("--coordinator-url", coordinatorUrl),
+  ...optionalArg("--coordinator-token", coordinatorToken),
+  ...optionalArg("--swarm-token", swarmToken),
+  ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
 ]);
 try {
   assertWorkerPoolResult("training", parseWorkerPoolResult(await runScript(workerPoolScript, [
@@ -61,6 +68,9 @@ try {
     "--worker-script", workerScript,
     "--artifacts-dir", artifactsDir,
     "--dataset-cache-dir", datasetCacheDir,
+    ...optionalArg("--swarm-token", swarmToken),
+    ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
+    ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
     "--iters", args.iters ?? process.env.MARSHALL_ITERS ?? "20",
     "--batch-size", args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE ?? "1",
     "--num-layers", args["num-layers"] ?? process.env.MARSHALL_NUM_LAYERS ?? "2",
@@ -96,6 +106,9 @@ const evalControl = await startControl([
   "--jobs-file", evalJobsFile,
   "--key", join(runRoot, "control-eval.key"),
   ...optionalArg("--coordinator-url", coordinatorUrl),
+  ...optionalArg("--coordinator-token", coordinatorToken),
+  ...optionalArg("--swarm-token", swarmToken),
+  ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
 ]);
 try {
   assertWorkerPoolResult("evaluation", parseWorkerPoolResult(await runScript(workerPoolScript, [
@@ -109,6 +122,9 @@ try {
     "--worker-script", workerScript,
     "--artifacts-dir", evalArtifactsDir,
     "--dataset-cache-dir", evalDatasetCacheDir,
+    ...optionalArg("--swarm-token", swarmToken),
+    ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
+    ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
     ...optionalArg("--python", pythonBin),
   ])), jobCount);
 } finally {
@@ -179,7 +195,7 @@ interface CoordinatorVerificationOptions {
 }
 
 async function verifyCoordinator(options: CoordinatorVerificationOptions) {
-  const client = new CoordinatorClient(options.coordinatorUrl);
+  const client = new CoordinatorClient(options.coordinatorUrl, { token: coordinatorToken });
   const trainJobIds = await trainingJobIds(options.artifactsDir);
   const evalJobs = parseEvalJobs(JSON.parse(await readFile(options.evalJobsFile, "utf8")));
   if (trainJobIds.length !== options.expectedTrainJobs) {

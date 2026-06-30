@@ -19,6 +19,18 @@ type Worker struct {
 	MemoryGB      float64  `json:"memory_gb"`
 	SupportedJobs []string `json:"supported_jobs"`
 	CreatedAt     string   `json:"created_at,omitempty"`
+	Status        string   `json:"status,omitempty"`
+	CurrentJobID  string   `json:"current_job_id,omitempty"`
+	LastSeenAt    string   `json:"last_seen_at,omitempty"`
+}
+
+type WorkerHeartbeat struct {
+	WorkerID     string `json:"worker_id"`
+	PeerID       string `json:"peer_id"`
+	Status       string `json:"status"`
+	CurrentJobID string `json:"job_id,omitempty"`
+	Timestamp    string `json:"timestamp,omitempty"`
+	LeaseSeconds int    `json:"lease_seconds,omitempty"`
 }
 
 type Job struct {
@@ -108,6 +120,10 @@ type WorkerActivity struct {
 type JobActivity struct {
 	Job      Job       `json:"job"`
 	Artifact *Artifact `json:"artifact,omitempty"`
+}
+
+type RequeueResult struct {
+	Requeued []string `json:"requeued"`
 }
 
 func nowUTC() string {

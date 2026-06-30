@@ -108,6 +108,9 @@ function passThroughArgs(values: Record<string, string>): string[] {
     "grad-checkpoint",
     "memory-gb",
     "tokens-per-second",
+    "swarm-token",
+    "job-lease-seconds",
+    "heartbeat-interval-ms",
   ];
   const output: string[] = [];
   for (const key of keys) {

@@ -4,6 +4,7 @@ import type {
   JobClaim,
   JobStatus,
   MarshallJob,
+  WorkerHeartbeat,
   WorkerRegistration,
 } from "./schemas.js";
 
@@ -46,16 +47,27 @@ const CoordinatorArtifactSchema = z.object({
   created_at: z.string().optional(),
 });
 
+const RequeueResultSchema = z.object({
+  requeued: z.array(z.string()),
+});
+
 export type CoordinatorEvent = z.infer<typeof EventSchema>;
 export type CoordinatorJobClaimResult = z.infer<typeof JobClaimResultSchema>;
 export type CoordinatorJob = z.infer<typeof CoordinatorJobSchema>;
 export type CoordinatorArtifact = z.infer<typeof CoordinatorArtifactSchema>;
+export type CoordinatorRequeueResult = z.infer<typeof RequeueResultSchema>;
+
+export interface CoordinatorClientOptions {
+  token?: string;
+}
 
 export class CoordinatorClient {
   private readonly baseUrl: string;
+  private readonly token?: string;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, options: CoordinatorClientOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.token = options.token ?? process.env.MARSHALL_COORDINATOR_TOKEN;
   }
 
   async initializeJobs(jobs: MarshallJob[]): Promise<void> {
@@ -92,12 +104,27 @@ export class CoordinatorClient {
     }, EventSchema);
   }
 
+  async workerHeartbeat(heartbeat: WorkerHeartbeat): Promise<void> {
+    await this.post(`/workers/${encodeURIComponent(heartbeat.worker_id)}/heartbeat`, {
+      worker_id: heartbeat.worker_id,
+      peer_id: heartbeat.peer_id,
+      status: heartbeat.status,
+      job_id: heartbeat.job_id,
+      timestamp: heartbeat.timestamp,
+      lease_seconds: heartbeat.lease_seconds,
+    }, EventSchema);
+  }
+
   async claimJob(jobId: string, claim: JobClaim, leaseSeconds = 300): Promise<CoordinatorJobClaimResult> {
     return this.post(`/jobs/${encodeURIComponent(jobId)}/claim`, {
       worker_id: claim.worker_id,
       peer_id: claim.peer_id,
       lease_seconds: leaseSeconds,
     }, JobClaimResultSchema);
+  }
+
+  async requeueExpiredJobs(): Promise<CoordinatorRequeueResult> {
+    return this.post("/jobs/requeue-expired", {}, RequeueResultSchema);
   }
 
   async updateJobStatus(status: JobStatus): Promise<void> {
@@ -135,7 +162,9 @@ export class CoordinatorClient {
   }
 
   private async get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`);
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      headers: this.headers(),
+    });
     const body = await response.text();
     const json = body.length > 0 ? JSON.parse(body) : null;
 
@@ -150,9 +179,9 @@ export class CoordinatorClient {
   private async post<T>(path: string, payload: unknown, schema: z.ZodType<T>): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: "POST",
-      headers: {
+      headers: this.headers({
         "content-type": "application/json",
-      },
+      }),
       body: JSON.stringify(payload),
     });
 
@@ -165,5 +194,15 @@ export class CoordinatorClient {
     }
 
     return schema.parse(json);
+  }
+
+  private headers(values: Record<string, string> = {}): Record<string, string> {
+    if (this.token == null || this.token === "") {
+      return values;
+    }
+    return {
+      ...values,
+      authorization: `Bearer ${this.token}`,
+    };
   }
 }

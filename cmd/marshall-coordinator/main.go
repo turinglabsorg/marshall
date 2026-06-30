@@ -12,9 +12,10 @@ func main() {
 	redisAddr := env("MARSHALL_REDIS_ADDR", "127.0.0.1:6379")
 	httpAddr := env("MARSHALL_HTTP_ADDR", "127.0.0.1:8080")
 	prefix := env("MARSHALL_REDIS_PREFIX", "marshall")
+	token := env("MARSHALL_COORDINATOR_TOKEN", "")
 
 	store := coordinator.NewRedisStore(redisAddr, prefix)
-	server := coordinator.NewServer(store)
+	server := coordinator.NewServer(store, coordinator.WithAuthToken(token))
 
 	log.Printf("marshall coordinator listening on %s with redis %s", httpAddr, redisAddr)
 	if err := http.ListenAndServe(httpAddr, server); err != nil {

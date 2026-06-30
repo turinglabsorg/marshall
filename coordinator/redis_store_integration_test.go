@@ -49,6 +49,14 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	if len(workers) != 1 || workers[0].WorkerID != "worker_mlx_001" || workers[0].MemoryGB != 32 {
 		t.Fatalf("unexpected workers listing: %+v", workers)
 	}
+	if _, err := store.WorkerHeartbeat(ctx, WorkerHeartbeat{
+		WorkerID:  "worker_mlx_001",
+		PeerID:    "12D3KooWTest",
+		Status:    "idle",
+		Timestamp: nowUTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := store.CreateJob(ctx, Job{
 		JobID:      "job_test_001",
@@ -96,6 +104,16 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	}
 	if !claim.Accepted {
 		t.Fatalf("expected first claim to be accepted: %+v", claim)
+	}
+	if _, err := store.WorkerHeartbeat(ctx, WorkerHeartbeat{
+		WorkerID:     "worker_mlx_001",
+		PeerID:       "12D3KooWTest",
+		Status:       "working",
+		CurrentJobID: "job_test_001",
+		LeaseSeconds: 60,
+		Timestamp:    nowUTC(),
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	secondClaim, err := store.ClaimJob(ctx, JobClaim{
@@ -170,6 +188,43 @@ func TestRedisStoreLifecycle(t *testing.T) {
 		t.Fatalf("expected two persisted artifacts, got %+v", artifacts)
 	}
 
+	if _, err := store.CreateJob(ctx, Job{
+		JobID:      "job_expiring_001",
+		RunID:      "run_test_001",
+		JobType:    "train_mlx_smoke",
+		Backend:    "mlx",
+		DatasetURI: "file://examples/datasets/tiny-italian.jsonl",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expiringClaim, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_expiring_001",
+		WorkerID:     "worker_mlx_001",
+		PeerID:       "12D3KooWTest",
+		LeaseSeconds: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !expiringClaim.Accepted {
+		t.Fatalf("expected expiring claim to be accepted: %+v", expiringClaim)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	requeued, err := store.RequeueExpiredJobs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeued.Requeued) != 1 || requeued.Requeued[0] != "job_expiring_001" {
+		t.Fatalf("unexpected requeue result: %+v", requeued)
+	}
+	requeuedJob, err := store.GetJob(ctx, "job_expiring_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requeuedJob.Status != "queued" || requeuedJob.WorkerID != "" {
+		t.Fatalf("expected expired job to return to queue, got %+v", requeuedJob)
+	}
+
 	events, err := store.Events(ctx, 20)
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +233,7 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	for _, event := range events {
 		seen[event.Type] = true
 	}
-	for _, eventType := range []string{"run_created", "worker_registered", "job_created", "job_claimed", "job_status_updated", "artifact_published"} {
+	for _, eventType := range []string{"run_created", "worker_registered", "worker_heartbeat", "job_created", "job_claimed", "job_status_updated", "artifact_published", "job_requeued"} {
 		if !seen[eventType] {
 			t.Fatalf("missing event type %s in %#v", eventType, events)
 		}

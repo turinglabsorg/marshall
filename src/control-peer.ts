@@ -29,6 +29,9 @@ export interface ControlPeerOptions {
   listen?: string[];
   jobs?: MarshallJob[];
   coordinatorUrl?: string;
+  coordinatorToken?: string;
+  swarmToken?: string;
+  jobLeaseSeconds?: number;
 }
 
 export interface ControlPeerState {
@@ -52,6 +55,8 @@ export class ControlPeer {
     readonly node: Libp2p,
     private readonly jobs: MarshallJob[],
     private readonly coordinator?: CoordinatorClient,
+    private readonly swarmToken?: string,
+    private readonly jobLeaseSeconds = 300,
   ) {}
 
   static async create(options: ControlPeerOptions): Promise<ControlPeer> {
@@ -60,8 +65,16 @@ export class ControlPeer {
       listen: options.listen ?? ["/ip4/127.0.0.1/tcp/0"],
     });
     const jobs = options.jobs ?? [defaultToyTrainingJob()];
-    const coordinator = options.coordinatorUrl == null ? undefined : new CoordinatorClient(options.coordinatorUrl);
-    const peer = new ControlPeer(node, jobs, coordinator);
+    const coordinator = options.coordinatorUrl == null
+      ? undefined
+      : new CoordinatorClient(options.coordinatorUrl, { token: options.coordinatorToken ?? process.env.MARSHALL_COORDINATOR_TOKEN });
+    const peer = new ControlPeer(
+      node,
+      jobs,
+      coordinator,
+      options.swarmToken ?? process.env.MARSHALL_SWARM_TOKEN,
+      options.jobLeaseSeconds ?? numberEnv("MARSHALL_JOB_LEASE_SECONDS", 300),
+    );
     await coordinator?.initializeJobs(jobs);
     await peer.registerHandlers();
     return peer;
@@ -88,7 +101,16 @@ export class ControlPeer {
   }
 
   private async handleWorkerRegister(stream: Stream): Promise<void> {
-    const registration = WorkerRegistrationSchema.parse(await readJson(stream));
+    const payload = WorkerRegistrationSchema.parse(await readJson(stream));
+    if (!this.hasValidToken(payload)) {
+      await writeJson(stream, {
+        accepted: false,
+        worker_id: payload.worker_id,
+        peer_id: payload.peer_id,
+      });
+      return;
+    }
+    const registration = withoutAuthToken(payload);
     try {
       await this.coordinator?.registerWorker(registration);
     } catch (error) {
@@ -110,19 +132,60 @@ export class ControlPeer {
   }
 
   private async handleWorkerHeartbeat(stream: Stream): Promise<void> {
-    const heartbeat = WorkerHeartbeatSchema.parse(await readJson(stream));
+    const payload = WorkerHeartbeatSchema.parse(await readJson(stream));
+    if (!this.hasValidToken(payload)) {
+      await writeJson(stream, AckSchema.parse({
+        accepted: false,
+        reason: "invalid swarm token",
+      }));
+      return;
+    }
+    const heartbeat = withoutAuthToken(payload);
+    try {
+      await this.coordinator?.workerHeartbeat(heartbeat);
+    } catch (error) {
+      await writeJson(stream, AckSchema.parse({
+        accepted: false,
+        reason: error instanceof Error ? error.message : "coordinator rejected heartbeat",
+      }));
+      return;
+    }
     this.state.heartbeats.push(heartbeat);
     const response: Ack = { accepted: true };
     await writeJson(stream, AckSchema.parse(response));
   }
 
   private async handleJobClaim(stream: Stream): Promise<void> {
-    const claim = JobClaimSchema.parse(await readJson(stream));
+    const payload = JobClaimSchema.parse(await readJson(stream));
+    if (!this.hasValidToken(payload)) {
+      await writeJson(stream, JobClaimResponseSchema.parse({
+        accepted: false,
+        job: null,
+        reason: "invalid swarm token",
+      }));
+      return;
+    }
+    const claim = withoutAuthToken(payload);
     const response = await this.claimCompatibleJob(claim);
     await writeJson(stream, JobClaimResponseSchema.parse(response));
   }
 
   private async claimCompatibleJob(claim: JobClaim): Promise<JobClaimResponse> {
+    if (this.coordinator != null) {
+      try {
+        const result = await this.coordinator.requeueExpiredJobs();
+        for (const jobID of result.requeued) {
+          this.state.assignedJobs.delete(jobID);
+        }
+      } catch (error) {
+        return {
+          accepted: false,
+          job: null,
+          reason: error instanceof Error ? error.message : "coordinator rejected requeue scan",
+        };
+      }
+    }
+
     let lastRejection: string | undefined;
     for (const job of this.jobs) {
       if (
@@ -143,7 +206,7 @@ export class ControlPeer {
           ...claim,
           job_type: job.job_type,
           backend: job.backend,
-        });
+        }, this.jobLeaseSeconds);
         if (coordinatorClaim.accepted) {
           return { accepted: true, job };
         }
@@ -167,7 +230,15 @@ export class ControlPeer {
   }
 
   private async handleJobStatus(stream: Stream): Promise<void> {
-    const status = JobStatusSchema.parse(await readJson(stream));
+    const payload = JobStatusSchema.parse(await readJson(stream));
+    if (!this.hasValidToken(payload)) {
+      await writeJson(stream, AckSchema.parse({
+        accepted: false,
+        reason: "invalid swarm token",
+      }));
+      return;
+    }
+    const status = withoutAuthToken(payload);
     try {
       await this.coordinator?.updateJobStatus(status);
     } catch (error) {
@@ -183,7 +254,15 @@ export class ControlPeer {
   }
 
   private async handleArtifactManifest(stream: Stream): Promise<void> {
-    const manifest = ArtifactManifestSchema.parse(await readJson(stream));
+    const payload = ArtifactManifestSchema.parse(await readJson(stream));
+    if (!this.hasValidToken(payload)) {
+      await writeJson(stream, AckSchema.parse({
+        accepted: false,
+        reason: "invalid swarm token",
+      }));
+      return;
+    }
+    const manifest = withoutAuthToken(payload);
     const assignedWorker = this.state.assignedJobs.get(manifest.job_id);
 
     if (assignedWorker !== manifest.worker_id) {
@@ -207,8 +286,29 @@ export class ControlPeer {
     this.state.manifests.push(manifest);
     await writeJson(stream, AckSchema.parse({ accepted: true }));
   }
+
+  private hasValidToken(payload: { auth_token?: string }): boolean {
+    return this.swarmToken == null || this.swarmToken === "" || payload.auth_token === this.swarmToken;
+  }
 }
 
 function defaultToyTrainingJob(): MarshallJob {
   return createToyTrainingJob();
+}
+
+function withoutAuthToken<T extends { auth_token?: string }>(payload: T): Omit<T, "auth_token"> {
+  const { auth_token: _authToken, ...rest } = payload;
+  return rest;
+}
+
+function numberEnv(key: string, fallback: number): number {
+  const value = process.env[key];
+  if (value == null || value === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid ${key}: ${value}`);
+  }
+  return parsed;
 }

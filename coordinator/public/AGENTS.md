@@ -12,15 +12,16 @@ Connect to the Marshall control peer, claim compatible jobs from the coordinator
 - A local checkout of the Marshall repository
 - `npm ci` completed in the repository
 - For Apple Silicon MLX jobs: an MLX-capable Python environment and `MARSHALL_PYTHON` pointing to it
-- A coordinator URL and a libp2p control multiaddr from the swarm operator
+- A libp2p control multiaddr from the swarm operator
+- A swarm token from the swarm operator
 
 ## Environment
 
 Set these values before starting a worker:
 
 ```sh
-export MARSHALL_COORDINATOR_URL="https://coordinator.example.com"
 export MARSHALL_CONTROL_ADDR="/ip4/<host>/tcp/<port>/p2p/<peer-id>"
+export MARSHALL_SWARM_TOKEN="<worker-join-token>"
 export MARSHALL_PYTHON="$HOME/.marshall/mlx-venv/bin/python"
 ```
 
@@ -40,8 +41,11 @@ npm run worker:pool:compiled -- \
   --control "$MARSHALL_CONTROL_ADDR" \
   --job-type evaluate_adapter \
   --backend mlx \
+  --swarm-token "$MARSHALL_SWARM_TOKEN" \
   --concurrency 1 \
   --max-jobs 1 \
+  --job-lease-seconds 300 \
+  --heartbeat-interval-ms 15000 \
   --worker-id-prefix "$(hostname)-marshall-eval" \
   --key-dir .marshall/worker-keys/eval \
   --artifacts-dir .marshall/worker-artifacts/eval \
@@ -58,8 +62,11 @@ npm run worker:pool:compiled -- \
   --control "$MARSHALL_CONTROL_ADDR" \
   --job-type train_adapter \
   --backend mlx \
+  --swarm-token "$MARSHALL_SWARM_TOKEN" \
   --concurrency 1 \
   --max-jobs 1 \
+  --job-lease-seconds 300 \
+  --heartbeat-interval-ms 15000 \
   --worker-id-prefix "$(hostname)-marshall-train" \
   --key-dir .marshall/worker-keys/train \
   --artifacts-dir .marshall/worker-artifacts/train \
@@ -71,6 +78,7 @@ npm run worker:pool:compiled -- \
 
 - Claim jobs through the worker command only.
 - Publish artifacts through the worker protocol only.
+- Keep heartbeat enabled while working; the coordinator can requeue jobs whose lease expires.
 - Keep generated data under `.marshall/`; do not commit local run artifacts.
 - Do not change job specs, labels, metrics, hashes, or leaderboard files by hand.
 - If a job fails, let the worker report the failure instead of fabricating output.

@@ -53,9 +53,16 @@ func (server *Server) dashboardSnapshot(ctx context.Context) (DashboardSnapshot,
 	workerActivities := map[string]*WorkerActivity{}
 	for _, worker := range workers {
 		worker := worker
+		lastSeenAt := worker.LastSeenAt
+		if lastSeenAt == "" {
+			lastSeenAt = worker.CreatedAt
+		}
 		workerActivities[worker.WorkerID] = &WorkerActivity{
-			Worker:     worker,
-			LastSeenAt: worker.CreatedAt,
+			Worker:       worker,
+			Busy:         worker.Status == "working",
+			CurrentJobID: worker.CurrentJobID,
+			LastStatus:   worker.Status,
+			LastSeenAt:   lastSeenAt,
 		}
 	}
 
