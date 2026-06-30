@@ -155,6 +155,7 @@ npm run worker:pool -- \
 ```
 
 `worker:pool` is long-running by default: each stable worker slot claims another compatible job after completing the previous one. Use `--max-jobs <n>` and `--exit-when-idle` only for bounded local tests or maintenance runs.
+Keep `--key-dir` stable when reusing the same `--worker-id-prefix`; the coordinator binds worker identity to the libp2p peer key and rejects mismatches.
 
 ## Dataset Runs
 

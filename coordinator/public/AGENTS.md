@@ -58,6 +58,7 @@ npm run build
 ```
 
 Keep all generated worker state under `.marshall/`. Do not commit worker keys, datasets, adapters, logs, or artifacts.
+Do not change `--key-dir` while reusing the same `--worker-id-prefix`: the coordinator binds each worker id to its libp2p peer key and rejects mismatches to prevent identity takeover.
 
 ## Install MLX for Apple Silicon Training
 
@@ -110,6 +111,7 @@ npm run worker:pool:compiled -- \
 ```
 
 Keep this process running. When one job finishes, the same slot immediately asks for another compatible job. Keep `--concurrency 1` until you know the machine has enough memory for parallel MLX runs; then increase `--concurrency` to run multiple slots on the same Mac.
+For later restarts, keep the same `--worker-id-prefix` and `--key-dir` if you want to preserve the same worker identity and reputation.
 
 ## Monitor Progress
 
