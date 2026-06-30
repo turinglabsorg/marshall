@@ -4,9 +4,7 @@ export const JobTypeSchema = z.enum([
   "train_toy_model",
   "train_mlx_smoke",
   "train_adapter",
-  "train_text_classifier",
   "evaluate_adapter",
-  "evaluate_text_classifier",
   "validate_artifact",
   "evaluate_model",
   "tokenize_dataset",
@@ -70,7 +68,7 @@ export const TrainingJobSchema = z.object({
   job_id: z.string().min(1),
   run_id: z.string().min(1),
   round_id: z.string().min(1),
-  job_type: z.enum(["train_toy_model", "train_mlx_smoke", "train_adapter", "train_text_classifier"]),
+  job_type: z.enum(["train_toy_model", "train_mlx_smoke", "train_adapter"]),
   backend: BackendSchema,
   dataset_shard: DatasetShardSchema,
 });
@@ -97,26 +95,13 @@ export const AdapterEvaluationJobSchema = z.object({
   max_tokens: z.number().int().positive().optional(),
 });
 
-export const TextClassifierEvaluationJobSchema = z.object({
-  job_id: z.string().min(1),
-  run_id: z.string().min(1),
-  round_id: z.string().min(1),
-  job_type: z.literal("evaluate_text_classifier"),
-  backend: BackendSchema,
-  model: z.string().min(1),
-  classifier: AdapterReferenceSchema,
-  eval_shard: DatasetShardSchema,
-  labels: z.array(z.string().min(1)).min(1).optional(),
-  max_examples: z.number().int().positive().optional(),
-});
-
 export const ArtifactValidationVerdictSchema = z.enum(["accepted", "poor", "rejected", "malicious"]);
 
 export const ArtifactValidationTargetSchema = z.object({
   job_id: z.string().min(1),
   worker_id: z.string().min(1),
   peer_id: z.string().min(1).optional(),
-  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation", "text_classifier_model", "text_classifier_evaluation", "optimized_model_package"]),
+  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation", "optimized_model_package"]),
   artifact_uri: z.string().min(1),
   artifact_hash: z.string().min(1),
   config_hash: z.string().min(1).optional(),
@@ -143,7 +128,6 @@ export const ArtifactValidationJobSchema = z.object({
 export const MarshallJobSchema = z.union([
   TrainingJobSchema,
   AdapterEvaluationJobSchema,
-  TextClassifierEvaluationJobSchema,
   ArtifactValidationJobSchema,
 ]);
 
@@ -193,7 +177,7 @@ export const ArtifactManifestSchema = z.object({
   peer_id: z.string().min(1),
   worker_id: z.string().min(1),
   job_id: z.string().min(1),
-  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation", "text_classifier_model", "text_classifier_evaluation", "artifact_validation", "optimized_model_package"]),
+  artifact_type: z.enum(["toy_language_model", "mlx_smoke_result", "lora_adapter", "adapter_evaluation", "artifact_validation", "optimized_model_package"]),
   artifact_uri: z.string().min(1),
   artifact_hash: z.string().min(1),
   config_hash: z.string().min(1),
@@ -272,45 +256,6 @@ export const MlxLoraMetricsSchema = z.object({
   stderr_log: z.string().min(1),
 });
 
-export const TextClassifierTrainingMetricsSchema = z.object({
-  job_id: z.string().min(1),
-  run_id: z.string().min(1),
-  round_id: z.string().min(1),
-  model: z.literal("ag_news_naive_bayes"),
-  dataset: z.string().min(1),
-  examples: z.number().int().positive(),
-  labels: z.array(z.string().min(1)).min(1),
-  vocab_size: z.number().int().positive(),
-  alpha: z.number().positive(),
-  model_path: z.string().min(1),
-});
-
-export const TextClassifierEvaluationMetricsSchema = z.object({
-  job_id: z.string().min(1),
-  run_id: z.string().min(1),
-  round_id: z.string().min(1),
-  classifier_id: z.string().min(1),
-  classifier_artifact_hash: z.string().min(1),
-  eval_shard_id: z.string().min(1),
-  eval_shard_hash: z.string().min(1),
-  model: z.literal("ag_news_naive_bayes"),
-  model_path: z.string().min(1),
-  eval_file: z.string().min(1),
-  examples: z.number().int().positive(),
-  correct: z.number().int().nonnegative(),
-  accuracy: z.number().nonnegative(),
-  invalid: z.number().int().nonnegative(),
-  invalid_rate: z.number().nonnegative(),
-  labels: z.array(z.string().min(1)).min(1),
-  results: z.array(z.object({
-    id: z.string().min(1),
-    expected_label: z.string().min(1),
-    predicted_label: z.string().min(1).nullable(),
-    correct: z.boolean(),
-    output: z.string(),
-  })),
-});
-
 export const ArtifactValidationMetricsSchema = z.object({
   job_id: z.string().min(1),
   run_id: z.string().min(1),
@@ -349,7 +294,6 @@ export type DatasetShard = z.infer<typeof DatasetShardSchema>;
 export type TrainingJob = z.infer<typeof TrainingJobSchema>;
 export type AdapterReference = z.infer<typeof AdapterReferenceSchema>;
 export type AdapterEvaluationJob = z.infer<typeof AdapterEvaluationJobSchema>;
-export type TextClassifierEvaluationJob = z.infer<typeof TextClassifierEvaluationJobSchema>;
 export type ArtifactValidationVerdict = z.infer<typeof ArtifactValidationVerdictSchema>;
 export type ArtifactValidationTarget = z.infer<typeof ArtifactValidationTargetSchema>;
 export type ArtifactValidationPolicy = z.infer<typeof ArtifactValidationPolicySchema>;
@@ -363,7 +307,5 @@ export type ToyTrainingMetrics = z.infer<typeof ToyTrainingMetricsSchema>;
 export type MlxSmokeMetrics = z.infer<typeof MlxSmokeMetricsSchema>;
 export type MlxLoraMetrics = z.infer<typeof MlxLoraMetricsSchema>;
 export type AdapterEvaluationMetrics = z.infer<typeof AdapterEvaluationMetricsSchema>;
-export type TextClassifierTrainingMetrics = z.infer<typeof TextClassifierTrainingMetricsSchema>;
-export type TextClassifierEvaluationMetrics = z.infer<typeof TextClassifierEvaluationMetricsSchema>;
 export type ArtifactValidationMetrics = z.infer<typeof ArtifactValidationMetricsSchema>;
 export type Ack = z.infer<typeof AckSchema>;

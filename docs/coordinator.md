@@ -102,23 +102,7 @@ npm run e2e:ag-news:compiled -- \
   --python ~/.marshall/mlx-venv/bin/python
 ```
 
-CPU-only AG News product E2E, for environments without MLX:
-
-```bash
-MARSHALL_REDIS_ADDR=127.0.0.1:6379 MARSHALL_HTTP_ADDR=127.0.0.1:8080 go run ./cmd/marshall-coordinator
-npm run e2e:ag-news:compiled -- \
-  --model-backend text_classifier \
-  --coordinator-url http://127.0.0.1:8080 \
-  --job-count 2 \
-  --concurrency 2 \
-  --eval-examples 40 \
-  --validation-quorum 2 \
-  --validators-per-artifact 2 \
-  --require-validation true \
-  --python python3
-```
-
-The runner performs train, evaluate, validation quorum, leaderboard/package, and query validation. When `--coordinator-url` is set it also verifies that train, eval, and validation artifacts are readable from the coordinator API and that eval artifacts reached the required accepted verdict quorum before model selection.
+The runner performs train, evaluate, leaderboard/package, and query validation. When `--coordinator-url` is set it also verifies that train and eval jobs reached `completed` state and that their artifacts are readable from the coordinator API.
 
 ## Control And Worker CLI
 

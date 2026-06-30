@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { CoordinatorClient } from "./coordinator-client.js";
-import { AdapterEvaluationMetricsSchema, TextClassifierEvaluationMetricsSchema } from "./schemas.js";
+import { AdapterEvaluationMetricsSchema } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
 const evalArtifactsDir = args["eval-artifacts-dir"] ?? process.env.MARSHALL_EVAL_ARTIFACTS_DIR ?? ".marshall/eval-artifacts";
@@ -21,7 +21,7 @@ const artifactVerdicts = coordinatorUrl == null || coordinatorUrl === ""
 const metricsPaths = await findMetrics(evalArtifactsDir);
 const rows = [];
 for (const path of metricsPaths) {
-  const metrics = parseEvaluationMetrics(JSON.parse(await readFile(path, "utf8")));
+  const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(path, "utf8")));
   const verdict = artifactVerdicts.get(metrics.job_id);
   if (requireVerdict != null && verdict !== requireVerdict) {
     continue;
@@ -29,13 +29,9 @@ for (const path of metricsPaths) {
   const score = metrics.accuracy - metrics.invalid_rate;
   rows.push({
     rank: 0,
-    model_kind: metrics.model_kind,
-    adapter_id: metrics.model_id,
-    adapter_path: metrics.model_path,
-    adapter_artifact_hash: metrics.model_artifact_hash,
-    model_id: metrics.model_id,
-    model_path: metrics.model_path,
-    model_artifact_hash: metrics.model_artifact_hash,
+    adapter_id: metrics.adapter_id,
+    adapter_path: metrics.adapter_path,
+    adapter_artifact_hash: metrics.adapter_artifact_hash,
     job_id: metrics.job_id,
     eval_shard_id: metrics.eval_shard_id,
     examples: metrics.examples,
@@ -94,30 +90,6 @@ async function artifactVerdictsByJob(coordinatorUrlValue: string, coordinatorTok
       .filter((artifact) => artifact.verdict != null && artifact.verdict !== "")
       .map((artifact) => [artifact.job_id, artifact.verdict!]),
   );
-}
-
-function parseEvaluationMetrics(value: unknown) {
-  const adapter = AdapterEvaluationMetricsSchema.safeParse(value);
-  if (adapter.success) {
-    return {
-      model_kind: "adapter",
-      model_id: adapter.data.adapter_id,
-      model_path: adapter.data.adapter_path ?? "",
-      model_artifact_hash: adapter.data.adapter_artifact_hash,
-      ...adapter.data,
-    };
-  }
-  const classifier = TextClassifierEvaluationMetricsSchema.parse(value);
-  return {
-    ...classifier,
-    model_kind: "text_classifier",
-    model_id: classifier.classifier_id,
-    model_path: classifier.model_path,
-    model_artifact_hash: classifier.classifier_artifact_hash,
-    adapter_id: classifier.classifier_id,
-    adapter_path: classifier.model_path,
-    adapter_artifact_hash: classifier.classifier_artifact_hash,
-  };
 }
 
 async function findMetrics(root: string): Promise<string[]> {

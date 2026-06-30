@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runArtifactValidation } from "../src/training-runner.js";
-import type { AdapterEvaluationMetrics, ArtifactValidationJob, TextClassifierEvaluationMetrics } from "../src/schemas.js";
+import type { AdapterEvaluationMetrics, ArtifactValidationJob } from "../src/schemas.js";
 
 describe("artifact validation runner", () => {
   let tempDir: string;
@@ -80,38 +80,6 @@ describe("artifact validation runner", () => {
       verdict: "malicious",
     });
   });
-
-  it("accepts text classifier evaluation metrics", async () => {
-    const metricsPath = await writeTextClassifierEvaluationMetrics(tempDir, {
-      examples: 12,
-      correct: 10,
-      accuracy: 0.8333333333333334,
-      invalid: 0,
-      invalid_rate: 0,
-    });
-    const job = validationJob(metricsPath, await sha256File(metricsPath), {
-      min_accuracy: 0.5,
-      max_invalid_rate: 0.1,
-      min_examples: 5,
-    }, "text_classifier_evaluation");
-
-    const result = await runArtifactValidation(job, {
-      outputRoot: join(tempDir, "artifacts"),
-    });
-
-    expect(result.metrics.verdict).toBe("accepted");
-    expect(result.metrics.target_artifact_type).toBe("text_classifier_evaluation");
-    expect(result.metrics.checks).toContainEqual(expect.objectContaining({
-      name: "schema",
-      passed: true,
-      detail: "text_classifier_evaluation metrics parsed",
-    }));
-    expect(result.metrics.observed).toEqual({
-      accuracy: 0.8333333333333334,
-      invalid_rate: 0,
-      examples: 12,
-    });
-  });
 });
 
 async function writeAdapterEvaluationMetrics(
@@ -146,43 +114,10 @@ async function writeAdapterEvaluationMetrics(
   return path;
 }
 
-async function writeTextClassifierEvaluationMetrics(
-  root: string,
-  overrides: Pick<TextClassifierEvaluationMetrics, "examples" | "correct" | "accuracy" | "invalid" | "invalid_rate">,
-): Promise<string> {
-  const path = join(root, "text-classifier-evaluation-metrics.json");
-  const metrics: TextClassifierEvaluationMetrics = {
-    job_id: "job_eval_test",
-    run_id: "run_validation_test",
-    round_id: "round_001",
-    classifier_id: "job_classifier_test",
-    classifier_artifact_hash: "sha256:classifier-test",
-    eval_shard_id: "eval_test",
-    eval_shard_hash: "sha256:eval-test",
-    model: "ag_news_naive_bayes",
-    model_path: "model.json",
-    eval_file: "eval.jsonl",
-    labels: ["World", "Sports"],
-    results: [
-      {
-        id: "example-001",
-        expected_label: "World",
-        predicted_label: "World",
-        correct: true,
-        output: "World",
-      },
-    ],
-    ...overrides,
-  };
-  await writeFile(path, JSON.stringify(metrics, null, 2) + "\n", "utf8");
-  return path;
-}
-
 function validationJob(
   metricsPath: string,
   artifactHash: string,
   policy: ArtifactValidationJob["policy"] = {},
-  artifactType: ArtifactValidationJob["target"]["artifact_type"] = "adapter_evaluation",
 ): ArtifactValidationJob {
   return {
     job_id: "job_validate_test",
@@ -194,7 +129,7 @@ function validationJob(
       job_id: "job_eval_test",
       worker_id: "worker_eval_test",
       peer_id: "12D3KooWValidatorTarget",
-      artifact_type: artifactType,
+      artifact_type: "adapter_evaluation",
       artifact_uri: pathToFileURL(metricsPath).toString(),
       artifact_hash: artifactHash,
       config_hash: "sha256:eval-config-test",

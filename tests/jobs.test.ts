@@ -24,29 +24,7 @@ describe("training job builders", () => {
       },
     });
     expect(defaultBackendForJob("train_adapter")).toBe("mlx");
-    expect(defaultBackendForJob("train_text_classifier")).toBe("cpu");
-    expect(defaultBackendForJob("evaluate_text_classifier")).toBe("cpu");
     expect(defaultBackendForJob("validate_artifact")).toBe("cpu");
-  });
-
-  it("creates a CPU text classifier training job", () => {
-    const job = createTrainingJob("train_text_classifier", {
-      jobId: "job_text_classifier_test",
-      runId: "run_text_classifier_test",
-      roundId: "round_test",
-    });
-
-    expect(job).toMatchObject({
-      job_id: "job_text_classifier_test",
-      run_id: "run_text_classifier_test",
-      round_id: "round_test",
-      job_type: "train_text_classifier",
-      backend: "cpu",
-      dataset_shard: {
-        id: "marshall_instructions_local",
-        uri: "file://examples/datasets/marshall-instructions",
-      },
-    });
   });
 
   it("creates sharded MLX adapter jobs for multi-worker runs", () => {
@@ -114,24 +92,6 @@ describe("training job builders", () => {
         "ag-news-classification-v1",
       ]);
       expect(jobs.map((job) => job.dataset_shard.hash)).toEqual(["sha256:one", "sha256:two"]);
-
-      const classifierJobs = createTrainingJobs("train_text_classifier", 2, {
-        jobId: "job_ag_news_classifier",
-        runId: "run_ag_news_classifier",
-        adapterDataset: "ag_news",
-        adapterDatasetDir: tempDir,
-      });
-
-      expect(classifierJobs.map((job) => job.job_id)).toEqual([
-        "job_ag_news_classifier_shard_001",
-        "job_ag_news_classifier_shard_002",
-      ]);
-      expect(classifierJobs.map((job) => job.job_type)).toEqual([
-        "train_text_classifier",
-        "train_text_classifier",
-      ]);
-      expect(classifierJobs.every((job) => job.backend === "cpu")).toBe(true);
-      expect(classifierJobs.map((job) => job.dataset_shard.id)).toEqual(["ag_news_shard_001", "ag_news_shard_002"]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

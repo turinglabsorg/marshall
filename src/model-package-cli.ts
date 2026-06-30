@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { AdapterEvaluationMetricsSchema, TextClassifierEvaluationMetricsSchema, TrainingArtifactManifestSchema } from "./schemas.js";
+import { AdapterEvaluationMetricsSchema, TrainingArtifactManifestSchema } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
 const optimizedModelPath = args["optimized-model"] ?? process.env.MARSHALL_OPTIMIZED_MODEL ?? ".marshall/leaderboard/optimized_model.json";
@@ -13,7 +13,7 @@ if (optimized.selected == null) {
   throw new Error(`${optimizedModelPath} does not contain a selected adapter`);
 }
 
-const metrics = parseEvaluationMetrics(JSON.parse(await readFile(optimized.selected.metrics_path, "utf8")));
+const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(optimized.selected.metrics_path, "utf8")));
 const packagePath = join(outputDir, "model_package.json");
 const manifestPath = join(outputDir, "manifest.json");
 const createdAt = new Date().toISOString();
@@ -24,14 +24,10 @@ const modelPackage = {
   type: "marshall_optimized_model_package",
   strategy: optimized.strategy,
   created_at: createdAt,
-  model_kind: metrics.model_kind,
   base_model: metrics.model,
   adapter_id: optimized.selected.adapter_id,
   adapter_path: optimized.selected.adapter_path,
   adapter_artifact_hash: optimized.selected.adapter_artifact_hash,
-  model_id: optimized.selected.model_id ?? optimized.selected.adapter_id,
-  model_path: optimized.selected.model_path ?? optimized.selected.adapter_path,
-  model_artifact_hash: optimized.selected.model_artifact_hash ?? optimized.selected.adapter_artifact_hash,
   eval: {
     job_id: optimized.selected.job_id,
     eval_shard_id: optimized.selected.eval_shard_id,
@@ -79,13 +75,9 @@ interface OptimizedModel {
 }
 
 interface LeaderboardEntry {
-  model_kind?: string;
   adapter_id: string;
   adapter_path: string;
   adapter_artifact_hash: string;
-  model_id?: string;
-  model_path?: string;
-  model_artifact_hash?: string;
   job_id: string;
   eval_shard_id: string;
   examples: number;
@@ -118,10 +110,6 @@ function parseLeaderboardEntry(value: unknown): LeaderboardEntry {
     adapter_id: stringValue(record.adapter_id, "selected.adapter_id"),
     adapter_path: stringValue(record.adapter_path, "selected.adapter_path"),
     adapter_artifact_hash: stringValue(record.adapter_artifact_hash, "selected.adapter_artifact_hash"),
-    model_kind: optionalStringValue(record.model_kind, "selected.model_kind"),
-    model_id: optionalStringValue(record.model_id, "selected.model_id"),
-    model_path: optionalStringValue(record.model_path, "selected.model_path"),
-    model_artifact_hash: optionalStringValue(record.model_artifact_hash, "selected.model_artifact_hash"),
     job_id: stringValue(record.job_id, "selected.job_id"),
     eval_shard_id: stringValue(record.eval_shard_id, "selected.eval_shard_id"),
     examples: numberValue(record.examples, "selected.examples"),
@@ -134,33 +122,11 @@ function parseLeaderboardEntry(value: unknown): LeaderboardEntry {
   };
 }
 
-function parseEvaluationMetrics(value: unknown) {
-  const adapter = AdapterEvaluationMetricsSchema.safeParse(value);
-  if (adapter.success) {
-    return {
-      model_kind: "adapter",
-      model: adapter.data.model,
-    };
-  }
-  const classifier = TextClassifierEvaluationMetricsSchema.parse(value);
-  return {
-    model_kind: "text_classifier",
-    model: classifier.model,
-  };
-}
-
 function stringValue(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`invalid ${field}`);
   }
   return value;
-}
-
-function optionalStringValue(value: unknown, field: string): string | undefined {
-  if (value == null) {
-    return undefined;
-  }
-  return stringValue(value, field);
 }
 
 function numberValue(value: unknown, field: string): number {

@@ -9,8 +9,6 @@ import {
   ArtifactValidationMetricsSchema,
   MlxLoraMetricsSchema,
   MlxSmokeMetricsSchema,
-  TextClassifierEvaluationMetricsSchema,
-  TextClassifierTrainingMetricsSchema,
   ToyTrainingMetricsSchema,
   TrainingArtifactManifestSchema,
   type AdapterEvaluationJob,
@@ -21,9 +19,6 @@ import {
   type ArtifactValidationVerdict,
   type MlxLoraMetrics,
   type MlxSmokeMetrics,
-  type TextClassifierEvaluationJob,
-  type TextClassifierEvaluationMetrics,
-  type TextClassifierTrainingMetrics,
   type ToyTrainingMetrics,
   type TrainingArtifactManifest,
   type TrainingJob,
@@ -97,37 +92,6 @@ export interface AdapterEvaluationRunnerOptions {
 export interface AdapterEvaluationRun {
   manifest: TrainingArtifactManifest;
   metrics: AdapterEvaluationMetrics;
-  outputDir: string;
-  stdout: string;
-  stderr: string;
-}
-
-export interface TextClassifierTrainingRunnerOptions {
-  outputRoot: string;
-  projectRoot?: string;
-  pythonBin?: string;
-  datasetCacheRoot?: string;
-  alpha?: number;
-}
-
-export interface TextClassifierTrainingRun {
-  manifest: TrainingArtifactManifest;
-  metrics: TextClassifierTrainingMetrics;
-  outputDir: string;
-  stdout: string;
-  stderr: string;
-}
-
-export interface TextClassifierEvaluationRunnerOptions {
-  outputRoot: string;
-  projectRoot?: string;
-  pythonBin?: string;
-  datasetCacheRoot?: string;
-}
-
-export interface TextClassifierEvaluationRun {
-  manifest: TrainingArtifactManifest;
-  metrics: TextClassifierEvaluationMetrics;
   outputDir: string;
   stdout: string;
   stderr: string;
@@ -424,145 +388,6 @@ export async function runAdapterEvaluation(
   };
 }
 
-export async function runTextClassifierTraining(
-  job: TrainingJob,
-  options: TextClassifierTrainingRunnerOptions,
-): Promise<TextClassifierTrainingRun> {
-  if (job.job_type !== "train_text_classifier") {
-    throw new Error(`unsupported text classifier training job type: ${job.job_type}`);
-  }
-
-  const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const preparedDataset = await prepareDatasetShard(job.dataset_shard, {
-    projectRoot,
-    cacheRoot: options.datasetCacheRoot,
-  });
-  const datasetPath = preparedDataset.path;
-  const outputDir = resolve(options.outputRoot, job.job_id);
-  const scriptPath = resolve(projectRoot, "training/ag_news_text_classifier.py");
-  const modelPath = join(outputDir, "model.json");
-  const metricsPath = join(outputDir, "metrics.json");
-  const alpha = options.alpha ?? 1.0;
-
-  await mkdir(outputDir, { recursive: true });
-
-  const result = await runProcess(options.pythonBin ?? "python3", [
-    scriptPath,
-    "train",
-    "--dataset-dir",
-    datasetPath,
-    "--output-dir",
-    outputDir,
-    "--job-id",
-    job.job_id,
-    "--run-id",
-    job.run_id,
-    "--round-id",
-    job.round_id,
-    "--alpha",
-    String(alpha),
-  ]);
-  const metrics = TextClassifierTrainingMetricsSchema.parse(JSON.parse(await readFile(metricsPath, "utf8")));
-  const configHash = sha256Text(JSON.stringify({
-    job_type: job.job_type,
-    backend: job.backend,
-    script: "training/ag_news_text_classifier.py",
-    dataset_hash: job.dataset_shard.hash,
-    alpha,
-  }));
-  const manifest = TrainingArtifactManifestSchema.parse({
-    job_id: job.job_id,
-    artifact_type: "text_classifier_model",
-    artifact_uri: pathToFileURL(modelPath).toString(),
-    artifact_hash: await sha256File(modelPath),
-    config_hash: configHash,
-    created_at: new Date().toISOString(),
-    metrics_uri: pathToFileURL(metricsPath).toString(),
-  });
-  await writeFile(join(outputDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
-
-  return {
-    manifest,
-    metrics,
-    outputDir,
-    stdout: result.stdout,
-    stderr: result.stderr,
-  };
-}
-
-export async function runTextClassifierEvaluation(
-  job: TextClassifierEvaluationJob,
-  options: TextClassifierEvaluationRunnerOptions,
-): Promise<TextClassifierEvaluationRun> {
-  const projectRoot = resolve(options.projectRoot ?? process.cwd());
-  const preparedEval = await prepareDatasetShard(job.eval_shard, {
-    projectRoot,
-    cacheRoot: options.datasetCacheRoot,
-  });
-  const evalPath = preparedEval.path;
-  const modelPath = resolveArtifactUri(job.classifier.artifact_uri, projectRoot);
-  const outputDir = resolve(options.outputRoot, job.job_id);
-  const scriptPath = resolve(projectRoot, "training/ag_news_text_classifier.py");
-  const rawEvalPath = join(outputDir, "eval.json");
-  const metricsPath = join(outputDir, "metrics.json");
-
-  await mkdir(outputDir, { recursive: true });
-
-  const result = await runProcess(options.pythonBin ?? "python3", [
-    scriptPath,
-    "eval",
-    "--model-path",
-    modelPath,
-    "--eval-file",
-    evalPath,
-    "--output-dir",
-    outputDir,
-    "--max-examples",
-    String(job.max_examples ?? 80),
-  ]);
-  const rawMetrics = JSON.parse(await readFile(rawEvalPath, "utf8"));
-  const metrics = TextClassifierEvaluationMetricsSchema.parse({
-    job_id: job.job_id,
-    run_id: job.run_id,
-    round_id: job.round_id,
-    classifier_id: job.classifier.adapter_id,
-    classifier_artifact_hash: job.classifier.artifact_hash,
-    eval_shard_id: job.eval_shard.id,
-    eval_shard_hash: job.eval_shard.hash,
-    ...rawMetrics,
-  });
-  await writeFile(metricsPath, JSON.stringify(metrics, null, 2) + "\n", "utf8");
-
-  const configHash = sha256Text(JSON.stringify({
-    job_type: job.job_type,
-    backend: job.backend,
-    script: "training/ag_news_text_classifier.py",
-    model: job.model,
-    classifier_id: job.classifier.adapter_id,
-    classifier_hash: job.classifier.artifact_hash,
-    eval_hash: job.eval_shard.hash,
-    max_examples: job.max_examples ?? 80,
-  }));
-  const manifest = TrainingArtifactManifestSchema.parse({
-    job_id: job.job_id,
-    artifact_type: "text_classifier_evaluation",
-    artifact_uri: pathToFileURL(metricsPath).toString(),
-    artifact_hash: await sha256File(metricsPath),
-    config_hash: configHash,
-    created_at: new Date().toISOString(),
-    metrics_uri: pathToFileURL(metricsPath).toString(),
-  });
-  await writeFile(join(outputDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
-
-  return {
-    manifest,
-    metrics,
-    outputDir,
-    stdout: result.stdout,
-    stderr: result.stderr,
-  };
-}
-
 export async function runArtifactValidation(
   job: ArtifactValidationJob,
   options: ArtifactValidationRunnerOptions,
@@ -591,7 +416,7 @@ export async function runArtifactValidation(
   if (!hashPassed) {
     verdict = "malicious";
     reason = "artifact hash does not match the coordinator target";
-  } else if (job.target.artifact_type !== "adapter_evaluation" && job.target.artifact_type !== "text_classifier_evaluation") {
+  } else if (job.target.artifact_type !== "adapter_evaluation") {
     verdict = "rejected";
     reason = `unsupported validation target type: ${job.target.artifact_type}`;
     checks.push({
@@ -601,10 +426,7 @@ export async function runArtifactValidation(
     });
   } else {
     try {
-      const rawMetrics = JSON.parse(await readFile(targetPath, "utf8"));
-      const metrics = job.target.artifact_type === "text_classifier_evaluation"
-        ? TextClassifierEvaluationMetricsSchema.parse(rawMetrics)
-        : AdapterEvaluationMetricsSchema.parse(rawMetrics);
+      const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(targetPath, "utf8")));
       observed = {
         accuracy: metrics.accuracy,
         invalid_rate: metrics.invalid_rate,
@@ -617,7 +439,7 @@ export async function runArtifactValidation(
         {
           name: "schema",
           passed: true,
-          detail: `${job.target.artifact_type} metrics parsed`,
+          detail: "adapter evaluation metrics parsed",
         },
         {
           name: "min_examples",

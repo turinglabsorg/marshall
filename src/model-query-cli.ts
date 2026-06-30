@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { AdapterEvaluationMetricsSchema, TextClassifierEvaluationMetricsSchema } from "./schemas.js";
+import { AdapterEvaluationMetricsSchema } from "./schemas.js";
 
 const args = parseArgs(process.argv.slice(2));
 const packagePath = args.package ?? process.env.MARSHALL_MODEL_PACKAGE;
@@ -16,57 +16,38 @@ if (evalFile == null) {
 }
 
 const modelPackage = parseModelPackage(JSON.parse(await readFile(packagePath, "utf8")));
-const sourceMetrics = parseEvaluationMetrics(JSON.parse(await readFile(modelPackage.eval.metrics_path, "utf8")));
+const sourceMetrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(modelPackage.eval.metrics_path, "utf8")));
 const recordId = args["record-id"] ?? firstCorrectRecordId(sourceMetrics);
 const record = await evalRecord(evalFile, recordId);
 const queryEvalFile = join(outputDir, "query.jsonl");
 const pythonBin = args.python ?? process.env.MARSHALL_PYTHON ?? "python3";
-const projectRoot = resolve(args["project-root"] ?? process.cwd());
-const scriptPath = modelPackage.model_kind === "text_classifier"
-  ? resolve(projectRoot, "training/ag_news_text_classifier.py")
-  : resolve(projectRoot, "training/mlx_ag_news_eval.py");
+const scriptPath = resolve(args["project-root"] ?? process.cwd(), "training/mlx_ag_news_eval.py");
 
 await mkdir(outputDir, { recursive: true });
 await writeFile(queryEvalFile, JSON.stringify(record) + "\n", "utf8");
 
-const requireCorrect = booleanArg(args["require-correct"] ?? process.env.MARSHALL_QUERY_REQUIRE_CORRECT, true);
-const result = modelPackage.model_kind === "text_classifier"
-  ? await runProcess(pythonBin, [
-    scriptPath,
-    "eval",
-    "--model-path",
-    modelPackage.model_path ?? modelPackage.adapter_path,
-    "--eval-file",
-    queryEvalFile,
-    "--output-dir",
-    outputDir,
-    "--max-examples",
-    "1",
-    ...(requireCorrect ? ["--fail-under", "1.0"] : []),
-  ])
-  : await runProcess(pythonBin, [
-    scriptPath,
-    "--eval-file",
-    queryEvalFile,
-    "--output-dir",
-    outputDir,
-    "--model",
-    modelPackage.base_model,
-    "--adapter-path",
-    modelPackage.adapter_path,
-    "--max-examples",
-    "1",
-    "--max-tokens",
-    args["max-tokens"] ?? process.env.MARSHALL_QUERY_MAX_TOKENS ?? "8",
-    ...(requireCorrect ? ["--fail-under", "1.0"] : []),
-  ]);
+const result = await runProcess(pythonBin, [
+  scriptPath,
+  "--eval-file",
+  queryEvalFile,
+  "--output-dir",
+  outputDir,
+  "--model",
+  modelPackage.base_model,
+  "--adapter-path",
+  modelPackage.adapter_path,
+  "--max-examples",
+  "1",
+  "--max-tokens",
+  args["max-tokens"] ?? process.env.MARSHALL_QUERY_MAX_TOKENS ?? "8",
+  ...(booleanArg(args["require-correct"] ?? process.env.MARSHALL_QUERY_REQUIRE_CORRECT, true) ? ["--fail-under", "1.0"] : []),
+]);
 const metrics = JSON.parse(await readFile(join(outputDir, "eval.json"), "utf8"));
 
 console.log(JSON.stringify({
   type: "marshall_model_query_completed",
   package: packagePath,
   output_dir: outputDir,
-  model_kind: modelPackage.model_kind,
   adapter_id: modelPackage.adapter_id,
   record_id: recordId,
   expected_label: metrics.results[0]?.expected_label,
@@ -78,12 +59,10 @@ console.log(JSON.stringify({
 
 interface ModelPackage {
   type: string;
-  model_kind?: string;
   base_model: string;
   adapter_id: string;
   adapter_path: string;
   adapter_artifact_hash: string;
-  model_path?: string;
   eval: {
     metrics_path: string;
   };
@@ -101,30 +80,20 @@ function parseModelPackage(value: unknown): ModelPackage {
   const evalRecordObject = evalRecordValue as Record<string, unknown>;
   return {
     type: stringValue(record.type, "type"),
-    model_kind: optionalStringValue(record.model_kind, "model_kind"),
     base_model: stringValue(record.base_model, "base_model"),
     adapter_id: stringValue(record.adapter_id, "adapter_id"),
     adapter_path: stringValue(record.adapter_path, "adapter_path"),
     adapter_artifact_hash: stringValue(record.adapter_artifact_hash, "adapter_artifact_hash"),
-    model_path: optionalStringValue(record.model_path, "model_path"),
     eval: {
       metrics_path: stringValue(evalRecordObject.metrics_path, "eval.metrics_path"),
     },
   };
 }
 
-function parseEvaluationMetrics(value: unknown) {
-  const adapter = AdapterEvaluationMetricsSchema.safeParse(value);
-  if (adapter.success) {
-    return adapter.data;
-  }
-  return TextClassifierEvaluationMetricsSchema.parse(value);
-}
-
-function firstCorrectRecordId(metrics: ReturnType<typeof parseEvaluationMetrics>): string {
+function firstCorrectRecordId(metrics: ReturnType<typeof AdapterEvaluationMetricsSchema.parse>): string {
   const result = metrics.results.find((item) => item.correct);
   if (result == null) {
-    throw new Error(`${metrics.job_id} has no correct evaluation result to query`);
+    throw new Error(`${metrics.adapter_id} has no correct evaluation result to query`);
   }
   return result.id;
 }
@@ -169,13 +138,6 @@ function stringValue(value: unknown, field: string): string {
     throw new Error(`invalid ${field}`);
   }
   return value;
-}
-
-function optionalStringValue(value: unknown, field: string): string | undefined {
-  if (value == null) {
-    return undefined;
-  }
-  return stringValue(value, field);
 }
 
 function parseArgs(values: string[]): Record<string, string> {
