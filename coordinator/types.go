@@ -111,18 +111,28 @@ type ArtifactVerdict struct {
 }
 
 type ArtifactVerdictResult struct {
-	JobID           string           `json:"job_id"`
-	WorkerID        string           `json:"worker_id"`
-	Verdict         string           `json:"verdict"`
-	FinalVerdict    string           `json:"final_verdict,omitempty"`
-	ScoreDelta      int              `json:"score_delta"`
-	Reputation      WorkerReputation `json:"reputation"`
-	EventID         string           `json:"event_id,omitempty"`
-	ParticipationOK bool             `json:"participation_ok"`
-	Finalized       bool             `json:"finalized"`
-	Quorum          int              `json:"quorum"`
-	Votes           int              `json:"votes"`
-	Tally           map[string]int   `json:"tally,omitempty"`
+	JobID                string                      `json:"job_id"`
+	WorkerID             string                      `json:"worker_id"`
+	Verdict              string                      `json:"verdict"`
+	FinalVerdict         string                      `json:"final_verdict,omitempty"`
+	ScoreDelta           int                         `json:"score_delta"`
+	Reputation           WorkerReputation            `json:"reputation"`
+	ValidatorReputations []ValidatorReputationUpdate `json:"validator_reputations,omitempty"`
+	EventID              string                      `json:"event_id,omitempty"`
+	ParticipationOK      bool                        `json:"participation_ok"`
+	Finalized            bool                        `json:"finalized"`
+	Quorum               int                         `json:"quorum"`
+	Votes                int                         `json:"votes"`
+	Tally                map[string]int              `json:"tally,omitempty"`
+}
+
+type ValidatorReputationUpdate struct {
+	ValidatorID  string           `json:"validator_id"`
+	Vote         string           `json:"vote"`
+	FinalVerdict string           `json:"final_verdict"`
+	Aligned      bool             `json:"aligned"`
+	ScoreDelta   int              `json:"score_delta"`
+	Reputation   WorkerReputation `json:"reputation"`
 }
 
 type Event struct {

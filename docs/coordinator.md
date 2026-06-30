@@ -41,6 +41,8 @@ POST /jobs/{job_id}/claim
 POST /jobs/{job_id}/status
 POST /artifacts
 GET  /artifacts/{job_id}
+POST /artifacts/{job_id}/verdict
+GET  /workers/{worker_id}/reputation
 GET  /events?count=100
 ```
 
@@ -53,7 +55,13 @@ job_created
 job_claimed
 job_status_updated
 artifact_published
+artifact_verdict_vote_recorded
+artifact_verdict_recorded
+worker_reputation_updated
+validator_reputation_updated
 ```
+
+Validator verdicts require a registered, active validator worker with `validate_artifact` support. For quorum-based validation, the coordinator stores per-validator votes first and finalizes only when a verdict reaches quorum. Finalization updates the target worker reputation and scores validators based on whether their vote matched the final verdict. The HTTP verdict response includes `validator_reputations` when validator scoring occurs.
 
 ## Redis Keys
 

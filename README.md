@@ -108,6 +108,7 @@ marshall/
     tiny_char_lm.py
     mlx_linear_smoke.py
     mlx_lora_smoke.py
+    build_marshall_instruction_dataset.py
     build_ag_news_dataset.py
     mlx_ag_news_eval.py
   coordinator/
@@ -116,20 +117,6 @@ marshall/
   cmd/
     marshall-coordinator/
       main.go
-  examples/
-    datasets/
-      tiny-italian.jsonl
-      marshall-instructions/
-        manifest.json
-        train.jsonl
-        valid.jsonl
-        test.jsonl
-        eval.jsonl
-        shards/
-          shard-001/
-          shard-002/
-          shard-003/
-          shard-004/
   docs/
     architecture.md
     p2p.md
@@ -150,12 +137,12 @@ It proves:
 - the worker can register over `/marshall/worker/register/1.0.0`;
 - the worker can send heartbeat, job claim, job status, and artifact manifest messages over versioned libp2p streams;
 - the control peer can assign one `train_toy_model` job and accept the worker artifact manifest only when it matches the assigned worker;
-- the worker can run a real stdlib-only Python character bigram training job against `examples/datasets/tiny-italian.jsonl`;
+- the worker can run a real stdlib-only Python character bigram training job against a built-in inline smoke dataset materialized into the local dataset cache;
 - the training runner emits `model.json`, `metrics.json`, `train.log`, and a `toy_language_model` manifest.
 - `training/mlx_linear_smoke.py` verifies that a remote Apple Silicon worker can run a tiny MLX gradient-descent job on GPU.
 - `train_mlx_smoke` can be assigned through the p2p lifecycle and emits an `mlx_smoke_result` artifact manifest.
-- `train_adapter` runs a tiny MLX-LM LoRA job against `examples/datasets/marshall-instructions` and emits a `lora_adapter` artifact manifest.
-- `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
+- `train_adapter` runs a tiny MLX-LM LoRA job against a generated local `.marshall/datasets/marshall-instructions` dataset and emits a `lora_adapter` artifact manifest.
+- `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks under `.marshall/datasets/marshall-instructions`.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes `eval.json` metrics.
 - `MARSHALL_JOB_COUNT` lets the control CLI create multiple jobs in one run; `train_adapter` uses dataset shards for multi-worker claims.
 - workers materialize only the assigned shard into a content-addressed cache under `.marshall/cache/datasets/<sha256>` before training.
@@ -273,7 +260,7 @@ The MLX smoke test is intended for Apple Silicon workers with MLX installed and 
 The Redis-backed coordinator integration tests require a reachable Redis server.
 The coordinator bridge test requires the Go coordinator running and verifies that p2p worker registration, job claim, status, and artifact publication are persisted as coordinator events.
 
-Dataset artifacts are private/local for now. The repository carries only the synthetic MIT Marshall structure-validation dataset; external datasets should stay outside the repo until license and distribution policy are reviewed.
+Dataset artifacts are private/local for now. Generated datasets, external datasets, local harness artifacts, and exploratory fixtures stay outside the repo unless explicitly approved for repository inclusion.
 
 ## License
 

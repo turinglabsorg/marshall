@@ -77,7 +77,7 @@ def main() -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output-dir", type=Path, default=Path("examples/datasets/marshall-instructions"))
+    parser.add_argument("--output-dir", type=Path, default=Path(".marshall/datasets/marshall-instructions"))
     parser.add_argument("--check", action="store_true")
     return parser.parse_args()
 
@@ -337,7 +337,7 @@ def build_manifest(files: dict[str, str]) -> str:
         shards.append({
             "shard_id": f"marshall_instructions_shard_{index:03d}",
             "split": "train_valid",
-            "uri": f"file://examples/datasets/marshall-instructions/{shard_path}",
+            "uri": f"file://.marshall/datasets/marshall-instructions/{shard_path}",
             "sha256": hash_split_files(files, [f"{shard_path}/train.jsonl", f"{shard_path}/valid.jsonl"]),
             "token_estimate": 18_000,
         })

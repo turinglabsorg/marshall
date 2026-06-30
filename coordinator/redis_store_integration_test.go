@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -63,7 +64,7 @@ func TestRedisStoreLifecycle(t *testing.T) {
 		RunID:      "run_test_001",
 		JobType:    "train_mlx_smoke",
 		Backend:    "mlx",
-		DatasetURI: "file://examples/datasets/tiny-italian.jsonl",
+		DatasetURI: "inline://tiny-italian-v1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -180,6 +181,16 @@ func TestRedisStoreLifecycle(t *testing.T) {
 	if evalArtifact.ArtifactType != "adapter_evaluation" || evalArtifact.MetricsURI == "" {
 		t.Fatalf("unexpected persisted eval artifact: %+v", evalArtifact)
 	}
+	if _, err := store.RegisterWorker(ctx, Worker{
+		WorkerID:      "validator_test_001",
+		PeerID:        "12D3KooWValidatorTest",
+		Backend:       "cpu",
+		DeviceFamily:  "generic_cpu",
+		MemoryGB:      8,
+		SupportedJobs: []string{"validate_artifact"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	artifacts, err := store.Artifacts(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +204,7 @@ func TestRedisStoreLifecycle(t *testing.T) {
 		RunID:      "run_test_001",
 		JobType:    "train_mlx_smoke",
 		Backend:    "mlx",
-		DatasetURI: "file://examples/datasets/tiny-italian.jsonl",
+		DatasetURI: "inline://tiny-italian-v1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +261,7 @@ func TestRedisStoreLifecycle(t *testing.T) {
 		RunID:      "run_test_001",
 		JobType:    "train_mlx_smoke",
 		Backend:    "mlx",
-		DatasetURI: "file://examples/datasets/tiny-italian.jsonl",
+		DatasetURI: "inline://tiny-italian-v1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -329,6 +340,25 @@ func TestRedisStoreArtifactVerdictQuorum(t *testing.T) {
 		SupportedJobs: []string{"evaluate_adapter"},
 	}); err != nil {
 		t.Fatal(err)
+	}
+	for _, validator := range []struct {
+		workerID string
+		peerID   string
+	}{
+		{"validator_quorum_001", "12D3KooWQuorumValidatorOne"},
+		{"validator_quorum_002", "12D3KooWQuorumValidatorTwo"},
+		{"validator_quorum_003", "12D3KooWQuorumValidatorThree"},
+	} {
+		if _, err := store.RegisterWorker(ctx, Worker{
+			WorkerID:      validator.workerID,
+			PeerID:        validator.peerID,
+			Backend:       "cpu",
+			DeviceFamily:  "generic_cpu",
+			MemoryGB:      8,
+			SupportedJobs: []string{"validate_artifact"},
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := store.CreateJob(ctx, Job{
 		JobID:      "job_quorum_eval_001",
@@ -443,5 +473,164 @@ func TestRedisStoreArtifactVerdictQuorum(t *testing.T) {
 	}
 	if !duplicate.Finalized || duplicate.Reputation.RejectedArtifacts != 1 {
 		t.Fatalf("expected duplicate finalized response without extra reputation change, got %+v", duplicate)
+	}
+}
+
+func TestRedisStoreArtifactVerdictConcurrentQuorumFinalizesOnce(t *testing.T) {
+	addr := os.Getenv("MARSHALL_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("MARSHALL_REDIS_ADDR is required for Redis integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	prefix := "marshall:quorum-race-test:" + strings.ReplaceAll(time.Now().UTC().Format(time.RFC3339Nano), ":", "-")
+	store := NewRedisStore(addr, prefix)
+
+	if _, err := store.CreateRun(ctx, Run{
+		RunID:     "run_quorum_race_001",
+		Objective: "prove concurrent validator quorum finalizes once",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RegisterWorker(ctx, Worker{
+		WorkerID:      "worker_quorum_race_target_001",
+		PeerID:        "12D3KooWQuorumRaceTarget",
+		Backend:       "mlx",
+		DeviceFamily:  "apple_silicon",
+		MemoryGB:      32,
+		SupportedJobs: []string{"evaluate_adapter"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, validator := range []struct {
+		workerID string
+		peerID   string
+	}{
+		{"validator_quorum_race_001", "12D3KooWQuorumRaceValidatorOne"},
+		{"validator_quorum_race_002", "12D3KooWQuorumRaceValidatorTwo"},
+		{"validator_quorum_race_003", "12D3KooWQuorumRaceValidatorThree"},
+	} {
+		if _, err := store.RegisterWorker(ctx, Worker{
+			WorkerID:      validator.workerID,
+			PeerID:        validator.peerID,
+			Backend:       "cpu",
+			DeviceFamily:  "generic_cpu",
+			MemoryGB:      8,
+			SupportedJobs: []string{"validate_artifact"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.CreateJob(ctx, Job{
+		JobID:      "job_quorum_race_eval_001",
+		RunID:      "run_quorum_race_001",
+		JobType:    "evaluate_adapter",
+		Backend:    "mlx",
+		DatasetURI: "file://datasets/eval.jsonl",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimJob(ctx, JobClaim{
+		JobID:        "job_quorum_race_eval_001",
+		WorkerID:     "worker_quorum_race_target_001",
+		PeerID:       "12D3KooWQuorumRaceTarget",
+		LeaseSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishArtifact(ctx, Artifact{
+		JobID:        "job_quorum_race_eval_001",
+		WorkerID:     "worker_quorum_race_target_001",
+		PeerID:       "12D3KooWQuorumRaceTarget",
+		ArtifactType: "adapter_evaluation",
+		ArtifactURI:  "file://eval-artifacts/job_quorum_race_eval_001/metrics.json",
+		ArtifactHash: "sha256:quorum-race-eval",
+		ConfigHash:   "sha256:quorum-race-config",
+		MetricsURI:   "file://eval-artifacts/job_quorum_race_eval_001/metrics.json",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+		JobID:       "job_quorum_race_eval_001",
+		WorkerID:    "worker_quorum_race_target_001",
+		ValidatorID: "validator_quorum_race_001",
+		Verdict:     "accepted",
+		Reason:      "first accepted vote",
+		Quorum:      2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Finalized {
+		t.Fatalf("expected first vote to remain pending, got %+v", first)
+	}
+
+	start := make(chan struct{})
+	results := make(chan ArtifactVerdictResult, 2)
+	errs := make(chan error, 2)
+	var wait sync.WaitGroup
+	for _, validatorID := range []string{"validator_quorum_race_002", "validator_quorum_race_003"} {
+		wait.Add(1)
+		go func(id string) {
+			defer wait.Done()
+			<-start
+			result, err := store.RecordArtifactVerdict(ctx, ArtifactVerdict{
+				JobID:       "job_quorum_race_eval_001",
+				WorkerID:    "worker_quorum_race_target_001",
+				ValidatorID: id,
+				Verdict:     "accepted",
+				Reason:      "concurrent accepted vote",
+				Quorum:      2,
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- result
+		}(validatorID)
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	finalized := 0
+	for result := range results {
+		if !result.Finalized || result.FinalVerdict != "accepted" {
+			t.Fatalf("expected concurrent vote to return finalized accepted verdict, got %+v", result)
+		}
+		finalized++
+	}
+	if finalized != 2 {
+		t.Fatalf("expected two concurrent responses, got %d", finalized)
+	}
+
+	reputation, err := store.WorkerReputation(ctx, "worker_quorum_race_target_001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reputation.AcceptedArtifacts != 1 || reputation.ValidationEvents != 1 || reputation.Score != 100 {
+		t.Fatalf("expected target reputation to be updated exactly once, got %+v", reputation)
+	}
+	events, err := store.Events(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := 0
+	for _, event := range events {
+		if event.Type == "artifact_verdict_recorded" && event.Fields["job_id"] == "job_quorum_race_eval_001" {
+			recorded++
+		}
+	}
+	if recorded != 1 {
+		t.Fatalf("expected one artifact_verdict_recorded event, got %d", recorded)
 	}
 }

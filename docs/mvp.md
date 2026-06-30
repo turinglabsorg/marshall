@@ -42,7 +42,7 @@ Before the MLX LoRA backend is wired in, the prototype includes a deliberately t
 
 - job type: `train_toy_model`;
 - backend: `cpu`;
-- dataset: `examples/datasets/tiny-italian.jsonl`;
+- dataset: `inline://tiny-italian-v1`, materialized into the local dataset cache at runtime;
 - trainer: `training/tiny_char_lm.py`;
 - output artifact type: `toy_language_model`.
 

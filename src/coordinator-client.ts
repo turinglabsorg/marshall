@@ -69,6 +69,15 @@ const WorkerReputationSchema = z.object({
   last_verdict_at: z.string().optional(),
 });
 
+const ValidatorReputationUpdateSchema = z.object({
+  validator_id: z.string(),
+  vote: z.string(),
+  final_verdict: z.string(),
+  aligned: z.boolean(),
+  score_delta: z.number(),
+  reputation: WorkerReputationSchema,
+});
+
 const ArtifactVerdictResultSchema = z.object({
   job_id: z.string(),
   worker_id: z.string(),
@@ -76,6 +85,7 @@ const ArtifactVerdictResultSchema = z.object({
   final_verdict: z.string().optional(),
   score_delta: z.number(),
   reputation: WorkerReputationSchema,
+  validator_reputations: z.array(ValidatorReputationUpdateSchema).optional(),
   event_id: z.string().optional(),
   participation_ok: z.boolean(),
   finalized: z.boolean(),

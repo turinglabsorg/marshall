@@ -54,25 +54,25 @@ const MARSHALL_INSTRUCTIONS_DATASET_HASH = "sha256:420fb2db6fafc0eafaf88a205318b
 const MARSHALL_INSTRUCTIONS_SHARDS: AdapterDatasetShardDefinition[] = [
   {
     id: "marshall_instructions_shard_001",
-    uri: "file://examples/datasets/marshall-instructions/shards/shard-001",
+    uri: "file://.marshall/datasets/marshall-instructions/shards/shard-001",
     tokenEstimate: 18_000,
     hash: "sha256:4c47daada597e99c26571a55112167f0e21320101e631d48008d8c288693a5f6",
   },
   {
     id: "marshall_instructions_shard_002",
-    uri: "file://examples/datasets/marshall-instructions/shards/shard-002",
+    uri: "file://.marshall/datasets/marshall-instructions/shards/shard-002",
     tokenEstimate: 18_000,
     hash: "sha256:0929dab33e7694eec60cdf9ed197618629cbbedf22d49e5584f39aae98c4dcaa",
   },
   {
     id: "marshall_instructions_shard_003",
-    uri: "file://examples/datasets/marshall-instructions/shards/shard-003",
+    uri: "file://.marshall/datasets/marshall-instructions/shards/shard-003",
     tokenEstimate: 18_000,
     hash: "sha256:d420d91bf477d9dfa3368404453a229dde12bcd338151abcf09abc18fad3246a",
   },
   {
     id: "marshall_instructions_shard_004",
-    uri: "file://examples/datasets/marshall-instructions/shards/shard-004",
+    uri: "file://.marshall/datasets/marshall-instructions/shards/shard-004",
     tokenEstimate: 18_000,
     hash: "sha256:d4ad8da0d4956b41d82fe52c47672f2720d3ac68538505469eacff01e3ac13be",
   },
@@ -85,7 +85,7 @@ const MARSHALL_INSTRUCTIONS_DATASET: AdapterDatasetDefinition = {
   license: MARSHALL_INSTRUCTIONS_LICENSE,
   root: {
     id: "marshall_instructions_local",
-    uri: "file://examples/datasets/marshall-instructions",
+    uri: "file://.marshall/datasets/marshall-instructions",
     tokenEstimate: 70_000,
     hash: MARSHALL_INSTRUCTIONS_DATASET_HASH,
   },
@@ -101,7 +101,7 @@ export function createToyTrainingJob(options: TrainingJobOptions = {}): Training
     backend: "cpu",
     dataset_shard: {
       id: "tiny_italian_local",
-      uri: "file://examples/datasets/tiny-italian.jsonl",
+      uri: "inline://tiny-italian-v1",
       token_estimate: 2_000,
       hash: "sha256:067c5c80ae7ae08a2d33868b85e149de94878dd13c7689a64561d9dd3d0751dd",
     },

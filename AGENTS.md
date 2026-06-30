@@ -45,7 +45,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `src/control-peer.ts` implements the in-memory control peer and handlers for worker registration, heartbeat, job claim, job status, and artifact manifests.
 - `src/coordinator-client.ts` lets the TypeScript control peer persist lifecycle events into the Go coordinator over HTTP when `coordinatorUrl` is configured, sends the full `MarshallJob` as `job_spec`, and can read persisted jobs/artifacts back from the coordinator.
 - `src/coordinator-client.ts` supports coordinator write authentication with `MARSHALL_COORDINATOR_TOKEN` / `--coordinator-token` and worker heartbeat forwarding for live coordinator leases.
-- `src/coordinator-client.ts` can record artifact verdicts and read worker reputation through the coordinator API. Artifact verdict responses include `finalized`, `quorum`, `votes`, and per-verdict `tally`; artifact records include `verdict_status`, `verdict_votes`, and `verdict_quorum`.
+- `src/coordinator-client.ts` can record artifact verdicts and read worker reputation through the coordinator API. Artifact verdict responses include `finalized`, `quorum`, `votes`, per-verdict `tally`, and `validator_reputations` when finalization scores validators; artifact records include `verdict_status`, `verdict_votes`, and `verdict_quorum`.
 - `src/coordinator-client.ts` can list coordinator artifacts; `src/validation-jobs-cli.ts` turns unvalidated target artifacts into distributed `validate_artifact` jobs, scopes targets with `--target-job-prefix`, and defaults to quorum 2 with two validator jobs per artifact.
 - `src/worker-peer.ts` implements a worker peer that dials the control peer and drives the first job lifecycle.
 - `src/worker-peer.ts` supports optional swarm authentication with `MARSHALL_SWARM_TOKEN` / `--swarm-token` so untrusted peers cannot register or claim jobs from permissioned control peers.
@@ -63,14 +63,14 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `training/tiny_char_lm.py` trains a tiny character bigram language model with stdlib-only SGD and writes `model.json`, `metrics.json`, `train.log`, and `manifest.json`.
 - `training/mlx_linear_smoke.py` verifies MLX GPU execution with a tiny gradient-descent job on Apple Silicon.
 - `training/mlx_lora_smoke.py` runs a tiny MLX-LM LoRA training job, writes logs and `metrics.json`, captures train/validation loss, and validates adapter files.
-- `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks.
+- `training/build_marshall_instruction_dataset.py` generates and validates deterministic train/valid/test/eval splits for Marshall coordinator-event tasks under `.marshall/datasets/marshall-instructions`.
 - `training/mlx_lora_eval.py` runs held-out generation checks against a base model or LoRA adapter and writes eval metrics.
 - `training/build_ag_news_dataset.py` downloads AG News CSVs into `.marshall/cache/raw/ag-news`, builds local train/valid/test/eval JSONL plus 4 shards under `.marshall/datasets/ag-news`, and writes a manifest consumed by adapter job creation.
 - `npm run dataset:ag-news:micro:build` uses the same real AG News builder to create many non-fake micro-shards under `.marshall/datasets/ag-news-micro`; `MARSHALL_MICRO_SHARDS` controls the shard/job count.
 - `training/mlx_ag_news_eval.py` evaluates base models or LoRA adapters on AG News exact-label accuracy.
 - `src/dataset-cache.ts` materializes assigned dataset shards into a content-addressed local cache and verifies hashes before training or evaluation. Single JSONL eval shards remain addressable as files after caching.
-- `examples/datasets/tiny-italian.jsonl` is the tiny local JSONL dataset used by the smoke training job.
-- `examples/datasets/marshall-instructions/manifest.json`, `{train,valid,test,eval}.jsonl`, and `shards/shard-*/{train,valid}.jsonl` are the private synthetic MIT dataset artifacts for Marshall coordinator-event summaries and multi-worker adapter claims.
+- `inline://tiny-italian-v1` is the built-in smoke dataset URI. `src/dataset-cache.ts` materializes it into the local dataset cache before `training/tiny_char_lm.py` runs.
+- `.marshall/datasets/marshall-instructions/manifest.json`, `{train,valid,test,eval}.jsonl`, and `shards/shard-*/{train,valid}.jsonl` are generated private local dataset artifacts for Marshall coordinator-event summaries and multi-worker adapter claims. They are not repository examples.
 - `src/schemas.ts` defines Zod schemas for worker registration, heartbeat, job claim, `TrainingJob`, `AdapterEvaluationJob`, `ArtifactValidationJob`, `MarshallJob`, job status, artifact manifest, toy training metrics, MLX smoke metrics, MLX LoRA metrics, adapter evaluation metrics, artifact validation metrics, and ACK payloads. `ArtifactValidationPolicy.quorum` controls how many matching validator votes are required. `TrainingJob.dataset_shard`, `AdapterEvaluationJob.eval_shard`, and `ArtifactValidationJob.target` must include hashes verified by workers before producing artifacts or verdicts.
 - `src/jobs.ts` supports `adapterDataset: "ag_news"` through a local manifest. The control CLI exposes this as `--adapter-dataset ag_news` or `MARSHALL_ADAPTER_DATASET=ag_news`, with `--adapter-dataset-dir` / `MARSHALL_ADAPTER_DATASET_DIR` pointing at the local dataset directory.
 - `tests/jobs.test.ts` verifies the adapter job builder and MLX default backend.
@@ -80,7 +80,7 @@ Marshall is a p2p-first consumer AI compute network for asynchronous AI workload
 - `cmd/marshall-coordinator` is the native Go coordinator entry point.
 - `coordinator/redis_store.go` stores runs, workers, jobs, full job specs, job claims, statuses, artifacts, and append-only events in Redis.
 - `coordinator/redis_store.go` maintains job leases and can requeue expired running jobs so abandoned work is visible and recoverable.
-- `coordinator/redis_store.go` tracks worker reputation and blocks suspended workers from claiming more jobs. Artifact verdicts with `quorum > 1` are stored as per-validator votes first and finalize only when one verdict reaches quorum. Verdict policy is currently `accepted +2`, `poor -10`, `rejected -25`, `timeout -15`, and `malicious -100`, capped to the `0..100` score range.
+- `coordinator/redis_store.go` tracks worker reputation and blocks suspended workers from claiming more jobs. Artifact verdicts with `quorum > 1` are stored as per-validator votes first and finalize only when one verdict reaches quorum. Validators must be registered active workers that support `validate_artifact` and cannot validate their own artifacts. When a verdict finalizes, validator votes aligned with the final verdict are rewarded; validator votes that diverge are penalized, including hard suspension for accepting an artifact that finalizes as `malicious` or falsely marking an accepted artifact as `malicious`. Verdict policy is currently `accepted +2`, `poor -10`, `rejected -25`, `timeout -15`, and `malicious -100`, capped to the `0..100` score range.
 - `coordinator/http.go` exposes the coordinator HTTP admin API, including `GET /jobs/{job_id}`, `GET /artifacts`, `GET /artifacts/{job_id}`, `POST /artifacts/{job_id}/verdict`, `GET /workers/{worker_id}/reputation`, `POST /jobs/requeue-expired`, `GET /dashboard`, `GET /events/stream`, and the embedded public console at `/`.
 - `coordinator/http.go` enforces optional bearer-token write authentication when `MARSHALL_COORDINATOR_TOKEN` is set; read endpoints remain available for the public console.
 - `coordinator/public/index.html` is the embedded terminal-style swarm console for worker status, job status, artifact verdicts, and live coordinator events.
@@ -94,6 +94,7 @@ Use Node.js 22+.
 ```bash
 nvm use
 npm run typecheck
+npm run dataset:marshall:build
 npm run dataset:marshall:check
 npm test
 npm run demo:compiled
@@ -137,6 +138,7 @@ External datasets must stay out of the repo until license and distribution polic
 ## Development Rules
 
 - Keep all docs in English.
+- Do not add, remove, or publish repository examples, sample datasets, demo datasets, or local test harness artifacts unless the user explicitly asks for that specific repo content. Keep exploratory fixtures, adversary runs, generated datasets, and one-off validation artifacts outside the repo, preferably under `.marshall/` or `/tmp`.
 - Build and test Marshall as a product, not as manual orchestration. Do not replace missing product behavior with shell loops, ad hoc scripts, or the agent acting as the coordinator.
 - E2E validation must go through Marshall contracts: coordinator creates jobs, workers claim and run them, artifacts are published, evaluation jobs are scheduled, leaderboard/top-K is derived from artifacts, and only then merge/selection runs.
 - Manual shell commands are allowed only to start/stop services, inspect state, or run tests. If a repeated/manual operational step is needed to prove the system, implement it as Marshall code or documented CLI behavior first.

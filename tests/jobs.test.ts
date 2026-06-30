@@ -20,7 +20,7 @@ describe("training job builders", () => {
       backend: "mlx",
       dataset_shard: {
         id: "marshall_instructions_local",
-        uri: "file://examples/datasets/marshall-instructions",
+        uri: "file://.marshall/datasets/marshall-instructions",
       },
     });
     expect(defaultBackendForJob("train_adapter")).toBe("mlx");

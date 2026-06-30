@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CoordinatorClient } from "../src/coordinator-client.js";
 import { ControlPeer } from "../src/control-peer.js";
+import { createTrainingJob } from "../src/jobs.js";
 import { runArtifactValidation, runToyTraining } from "../src/training-runner.js";
 import type { AdapterEvaluationJob, AdapterEvaluationMetrics, ArtifactValidationJob, TrainingJob } from "../src/schemas.js";
 import { WorkerPeer } from "../src/worker-peer.js";
@@ -33,19 +34,11 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
   it("persists the p2p job lifecycle in the Go coordinator event log", async () => {
     const suffix = Date.now().toString(36);
     const workerId = `mac-worker-bridge-${suffix}`;
-    const job: TrainingJob = {
-      job_id: `job_bridge_${suffix}`,
-      run_id: `run_bridge_${suffix}`,
-      round_id: "round_001",
-      job_type: "train_toy_model",
-      backend: "cpu",
-      dataset_shard: {
-        id: "tiny_italian_local",
-        uri: "file://examples/datasets/tiny-italian.jsonl",
-        token_estimate: 2_000,
-        hash: "sha256:067c5c80ae7ae08a2d33868b85e149de94878dd13c7689a64561d9dd3d0751dd",
-      },
-    };
+    const job: TrainingJob = createTrainingJob("train_toy_model", {
+      jobId: `job_bridge_${suffix}`,
+      runId: `run_bridge_${suffix}`,
+      roundId: "round_001",
+    });
 
     control = await ControlPeer.create({
       privateKeyPath: join(tempDir, "control.key"),

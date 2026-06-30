@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const defaultLeaseSeconds = 300
@@ -528,38 +529,25 @@ func (store *RedisStore) RecordArtifactVerdict(ctx context.Context, verdict Arti
 	}
 
 	if artifact["verdict"] != "" {
-		reputation, err := store.WorkerReputation(ctx, verdict.WorkerID)
-		if err != nil {
-			return ArtifactVerdictResult{}, err
-		}
-		tally, votes, err := store.artifactVerdictTally(ctx, verdict.JobID)
-		if err != nil {
-			return ArtifactVerdictResult{}, err
-		}
-		if votes == 0 {
-			votes = intField(artifact, "verdict_votes", 1)
-			tally = map[string]int{artifact["verdict"]: votes}
-		}
-		return ArtifactVerdictResult{
-			JobID:           verdict.JobID,
-			WorkerID:        verdict.WorkerID,
-			Verdict:         artifact["verdict"],
-			FinalVerdict:    artifact["verdict"],
-			ScoreDelta:      intField(artifact, "verdict_score_delta", 0),
-			Reputation:      reputation,
-			ParticipationOK: reputation.Status != "suspended",
-			Finalized:       true,
-			Quorum:          intField(artifact, "verdict_quorum", quorum),
-			Votes:           votes,
-			Tally:           tally,
-		}, nil
+		return store.finalizedArtifactVerdictResult(ctx, verdict.JobID, verdict.WorkerID, artifact, quorum)
 	}
 
 	if quorum <= 1 {
+		if verdict.ValidatorID != "" {
+			if err := store.requireValidatorCanVote(ctx, verdict.ValidatorID, verdict.WorkerID); err != nil {
+				return ArtifactVerdictResult{}, err
+			}
+			if _, err := store.client.command(ctx, "HSET", store.key("artifact", verdict.JobID, "verdict_votes"), verdict.ValidatorID, normalizedVerdict); err != nil {
+				return ArtifactVerdictResult{}, err
+			}
+		}
 		return store.finalizeArtifactVerdict(ctx, verdict, normalizedVerdict, quorum, 1, map[string]int{normalizedVerdict: 1})
 	}
 	if verdict.ValidatorID == "" {
 		return ArtifactVerdictResult{}, fmt.Errorf("validator_id is required when quorum is greater than 1")
+	}
+	if err := store.requireValidatorCanVote(ctx, verdict.ValidatorID, verdict.WorkerID); err != nil {
+		return ArtifactVerdictResult{}, err
 	}
 
 	votesKey := store.key("artifact", verdict.JobID, "verdict_votes")
@@ -637,7 +625,30 @@ func (store *RedisStore) RecordArtifactVerdict(ctx context.Context, verdict Arti
 }
 
 func (store *RedisStore) finalizeArtifactVerdict(ctx context.Context, verdict ArtifactVerdict, normalizedVerdict string, quorum int, votes int, tally map[string]int) (ArtifactVerdictResult, error) {
+	lock, err := store.client.command(ctx, "SET", store.key("artifact", verdict.JobID, "verdict_finalize_lock"), normalizedVerdict, "NX", "EX", "30")
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	if lock.stringValue() != "OK" {
+		return store.waitForFinalizedArtifactVerdict(ctx, verdict.JobID, verdict.WorkerID, quorum)
+	}
+	defer func() {
+		_, _ = store.client.command(context.Background(), "DEL", store.key("artifact", verdict.JobID, "verdict_finalize_lock"))
+	}()
+
+	artifact, err := store.hash(ctx, store.key("artifact", verdict.JobID))
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	if artifact["verdict"] != "" {
+		return store.finalizedArtifactVerdictResult(ctx, verdict.JobID, verdict.WorkerID, artifact, quorum)
+	}
+
 	scoreDelta, reputation, err := store.applyWorkerReputation(ctx, verdict.WorkerID, normalizedVerdict, verdict.CreatedAt)
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	validatorUpdates, err := store.applyValidatorReputations(ctx, verdict.JobID, verdict.WorkerID, normalizedVerdict, verdict.CreatedAt)
 	if err != nil {
 		return ArtifactVerdictResult{}, err
 	}
@@ -670,19 +681,145 @@ func (store *RedisStore) finalizeArtifactVerdict(ctx context.Context, verdict Ar
 		return ArtifactVerdictResult{}, err
 	}
 	return ArtifactVerdictResult{
-		JobID:           verdict.JobID,
-		WorkerID:        verdict.WorkerID,
-		Verdict:         normalizedVerdict,
-		FinalVerdict:    normalizedVerdict,
-		ScoreDelta:      scoreDelta,
+		JobID:                verdict.JobID,
+		WorkerID:             verdict.WorkerID,
+		Verdict:              normalizedVerdict,
+		FinalVerdict:         normalizedVerdict,
+		ScoreDelta:           scoreDelta,
+		Reputation:           reputation,
+		ValidatorReputations: validatorUpdates,
+		EventID:              event.ID,
+		ParticipationOK:      reputation.Status != "suspended",
+		Finalized:            true,
+		Quorum:               quorum,
+		Votes:                votes,
+		Tally:                tally,
+	}, nil
+}
+
+func (store *RedisStore) waitForFinalizedArtifactVerdict(ctx context.Context, jobID string, workerID string, quorum int) (ArtifactVerdictResult, error) {
+	for range 40 {
+		artifact, err := store.hash(ctx, store.key("artifact", jobID))
+		if err != nil {
+			return ArtifactVerdictResult{}, err
+		}
+		if artifact["verdict"] != "" {
+			return store.finalizedArtifactVerdictResult(ctx, jobID, workerID, artifact, quorum)
+		}
+		select {
+		case <-ctx.Done():
+			return ArtifactVerdictResult{}, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	return ArtifactVerdictResult{}, fmt.Errorf("artifact verdict finalization timed out for %s", jobID)
+}
+
+func (store *RedisStore) finalizedArtifactVerdictResult(ctx context.Context, jobID string, workerID string, artifact map[string]string, quorum int) (ArtifactVerdictResult, error) {
+	if workerID == "" {
+		workerID = artifact["worker_id"]
+	}
+	reputation, err := store.WorkerReputation(ctx, workerID)
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	tally, votes, err := store.artifactVerdictTally(ctx, jobID)
+	if err != nil {
+		return ArtifactVerdictResult{}, err
+	}
+	if votes == 0 {
+		votes = intField(artifact, "verdict_votes", 1)
+		tally = map[string]int{artifact["verdict"]: votes}
+	}
+	return ArtifactVerdictResult{
+		JobID:           jobID,
+		WorkerID:        workerID,
+		Verdict:         artifact["verdict"],
+		FinalVerdict:    artifact["verdict"],
+		ScoreDelta:      intField(artifact, "verdict_score_delta", 0),
 		Reputation:      reputation,
-		EventID:         event.ID,
 		ParticipationOK: reputation.Status != "suspended",
 		Finalized:       true,
-		Quorum:          quorum,
+		Quorum:          intField(artifact, "verdict_quorum", quorum),
 		Votes:           votes,
 		Tally:           tally,
 	}, nil
+}
+
+func (store *RedisStore) requireValidatorCanVote(ctx context.Context, validatorID string, targetWorkerID string) error {
+	if validatorID == "" {
+		return fmt.Errorf("validator_id is required")
+	}
+	if validatorID == targetWorkerID {
+		return fmt.Errorf("validator cannot validate its own artifact")
+	}
+	workerFields, err := store.hash(ctx, store.key("worker", validatorID))
+	if err != nil {
+		return err
+	}
+	if workerFields["worker_id"] == "" {
+		return fmt.Errorf("validator not registered")
+	}
+	reputation := reputationFromFields(validatorID, workerFields)
+	if reputation.Status == "suspended" {
+		return fmt.Errorf("validator suspended")
+	}
+	if !supportsJob(workerFields["supported_jobs"], "validate_artifact") {
+		return fmt.Errorf("validator does not support validate_artifact")
+	}
+	return nil
+}
+
+func (store *RedisStore) applyValidatorReputations(ctx context.Context, jobID string, targetWorkerID string, finalVerdict string, createdAt string) ([]ValidatorReputationUpdate, error) {
+	votes, err := store.artifactVerdictVotes(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if len(votes) == 0 {
+		return nil, nil
+	}
+	updates := make([]ValidatorReputationUpdate, 0, len(votes))
+	for validatorID, vote := range votes {
+		if validatorID == "" || validatorID == targetWorkerID {
+			continue
+		}
+		validatorFields, err := store.hash(ctx, store.key("worker", validatorID))
+		if err != nil {
+			return nil, err
+		}
+		if validatorFields["worker_id"] == "" {
+			continue
+		}
+		validatorVerdict := validatorReputationVerdict(vote, finalVerdict)
+		delta, reputation, err := store.applyWorkerReputation(ctx, validatorID, validatorVerdict, createdAt)
+		if err != nil {
+			return nil, err
+		}
+		aligned := vote == finalVerdict
+		if _, err := store.appendEvent(ctx, "validator_reputation_updated", map[string]string{
+			"job_id":            jobID,
+			"target_worker_id":  targetWorkerID,
+			"validator_id":      validatorID,
+			"vote":              vote,
+			"final_verdict":     finalVerdict,
+			"aligned":           strconv.FormatBool(aligned),
+			"score_delta":       strconv.Itoa(delta),
+			"reputation_score":  strconv.Itoa(reputation.Score),
+			"reputation_status": reputation.Status,
+			"created_at":        createdAt,
+		}); err != nil {
+			return nil, err
+		}
+		updates = append(updates, ValidatorReputationUpdate{
+			ValidatorID:  validatorID,
+			Vote:         vote,
+			FinalVerdict: finalVerdict,
+			Aligned:      aligned,
+			ScoreDelta:   delta,
+			Reputation:   reputation,
+		})
+	}
+	return updates, nil
 }
 
 func (store *RedisStore) WorkerReputation(ctx context.Context, workerID string) (WorkerReputation, error) {
@@ -773,6 +910,20 @@ func (store *RedisStore) artifactVerdictTally(ctx context.Context, jobID string)
 		votes += 1
 	}
 	return tally, votes, nil
+}
+
+func (store *RedisStore) artifactVerdictVotes(ctx context.Context, jobID string) (map[string]string, error) {
+	fields, err := store.hash(ctx, store.key("artifact", jobID, "verdict_votes"))
+	if err != nil {
+		return nil, err
+	}
+	votes := map[string]string{}
+	for validatorID, verdict := range fields {
+		if validatorID != "" && verdict != "" {
+			votes[validatorID] = verdict
+		}
+	}
+	return votes, nil
 }
 
 func (store *RedisStore) key(parts ...string) string {
@@ -910,6 +1061,16 @@ func reputationDelta(verdict string) int {
 	}
 }
 
+func validatorReputationVerdict(vote string, finalVerdict string) string {
+	if vote == finalVerdict {
+		return "accepted"
+	}
+	if (finalVerdict == "malicious" && vote == "accepted") || (finalVerdict == "accepted" && vote == "malicious") {
+		return "malicious"
+	}
+	return "rejected"
+}
+
 func reputationStatus(score int) string {
 	if score < suspendedReputationThreshold {
 		return "suspended"
@@ -936,6 +1097,15 @@ func nonEmpty(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func supportsJob(supportedJobs string, expected string) bool {
+	for _, job := range strings.Split(supportedJobs, ",") {
+		if strings.TrimSpace(job) == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func clampInt(value int, min int, max int) int {

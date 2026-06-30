@@ -57,6 +57,8 @@ npm run worker:pool:compiled -- \
 
 Validation workers are CPU-friendly. They verify assigned artifact hashes and metrics, then publish an `artifact_validation` manifest. The coordinator records that manifest as a validator vote and finalizes the target artifact only after the configured quorum is reached.
 
+Validator votes affect validator reputation after quorum finalization. Correctly aligned votes are rewarded; votes that diverge from the final verdict are penalized, and collusion on malicious artifacts can suspend the validator.
+
 ```sh
 npm run worker:pool:compiled -- \
   --control "$MARSHALL_CONTROL_ADDR" \
@@ -100,6 +102,7 @@ npm run worker:pool:compiled -- \
 - Keep heartbeat enabled while working; the coordinator can requeue jobs whose lease expires.
 - Published artifacts are validated before they affect global model selection.
 - Low-quality, rejected, malicious, or timed-out work reduces worker reputation.
+- Bad validation votes reduce validator reputation.
 - A suspended worker cannot claim more jobs until the operator restores participation.
 - Keep generated data under `.marshall/`; do not commit local run artifacts.
 - Do not change job specs, labels, metrics, hashes, or leaderboard files by hand.

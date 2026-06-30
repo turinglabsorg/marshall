@@ -172,6 +172,8 @@ Checks:
 - duplicate or corrupted upload detection;
 - peer/worker identity consistency.
 
+Validator workers are ordinary registered workers with `validate_artifact` capability. A validator cannot vote on its own artifact, and suspended validators cannot vote. Validator votes are stored independently and only finalize a target artifact when one verdict reaches quorum.
+
 ### Reputation
 
 Reputation is an internal scheduling signal first, not a public reward system.
@@ -186,6 +188,8 @@ Signals:
 - throughput consistency;
 - hardware honesty;
 - failure recovery.
+
+Target workers are scored from finalized artifact verdicts. Validator workers are scored from vote alignment after finalization: aligned votes are rewarded, divergent votes are penalized, and validator collusion on a malicious artifact can suspend the validator.
 
 ## Core Data Model
 

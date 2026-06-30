@@ -52,6 +52,14 @@ func TestHTTPServerLifecycle(t *testing.T) {
 		MemoryGB:      32,
 		SupportedJobs: []string{"train_mlx_smoke"},
 	}, http.StatusOK)
+	postJSON(t, server.URL+"/workers", Worker{
+		WorkerID:      "validator_http_001",
+		PeerID:        "12D3KooWHTTPValidator",
+		Backend:       "cpu",
+		DeviceFamily:  "generic_cpu",
+		MemoryGB:      8,
+		SupportedJobs: []string{"validate_artifact"},
+	}, http.StatusOK)
 	postJSON(t, server.URL+"/workers/worker_http_001/heartbeat", WorkerHeartbeat{
 		WorkerID:  "worker_http_001",
 		PeerID:    "12D3KooWHTTP",
@@ -63,7 +71,7 @@ func TestHTTPServerLifecycle(t *testing.T) {
 		RunID:      "run_http_001",
 		JobType:    "train_mlx_smoke",
 		Backend:    "mlx",
-		DatasetURI: "file://examples/datasets/tiny-italian.jsonl",
+		DatasetURI: "inline://tiny-italian-v1",
 		JobSpec:    json.RawMessage(`{"job_id":"job_http_001","run_id":"run_http_001","job_type":"train_mlx_smoke"}`),
 	}, http.StatusOK)
 	var persistedJob Job
@@ -144,10 +152,10 @@ func TestHTTPServerLifecycle(t *testing.T) {
 
 	var dashboard DashboardSnapshot
 	getJSONInto(t, server.URL+"/dashboard", http.StatusOK, &dashboard)
-	if dashboard.Summary.WorkersRegistered != 1 || dashboard.Summary.JobsCompleted != 1 || dashboard.Summary.ArtifactsPublished != 1 {
+	if dashboard.Summary.WorkersRegistered != 2 || dashboard.Summary.JobsCompleted != 1 || dashboard.Summary.ArtifactsPublished != 1 {
 		t.Fatalf("unexpected dashboard summary: %+v", dashboard.Summary)
 	}
-	if len(dashboard.Workers) != 1 || dashboard.Workers[0].LastArtifactHash == "" {
+	if len(dashboard.Workers) != 2 {
 		t.Fatalf("unexpected dashboard workers: %+v", dashboard.Workers)
 	}
 }

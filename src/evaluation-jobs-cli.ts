@@ -16,6 +16,7 @@ if (evalFile == null) {
 const jobs = await createAdapterEvaluationJobs({
   artifactsDir,
   evalFile,
+  evalUri: args["eval-uri"] ?? process.env.MARSHALL_EVAL_URI,
   runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID ?? "run_adapter_eval_001",
   roundId: args["round-id"] ?? process.env.MARSHALL_ROUND_ID ?? "round_001",
   jobPrefix: args["job-prefix"] ?? process.env.MARSHALL_JOB_ID ?? "job_eval_adapter",
@@ -39,6 +40,7 @@ console.log(JSON.stringify({
 interface CreateAdapterEvaluationJobsOptions {
   artifactsDir: string;
   evalFile: string;
+  evalUri?: string;
   runId: string;
   roundId: string;
   jobPrefix: string;
@@ -85,7 +87,7 @@ async function createAdapterEvaluationJobs(options: CreateAdapterEvaluationJobsO
       },
       eval_shard: {
         id: basename(options.evalFile).replace(/[^a-zA-Z0-9_-]+/g, "_") || "eval_jsonl",
-        uri: pathToFileURL(evalPath).toString(),
+        uri: options.evalUri ?? pathToFileURL(evalPath).toString(),
         token_estimate: 1,
         hash: evalHash,
       },

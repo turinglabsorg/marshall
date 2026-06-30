@@ -1,9 +1,22 @@
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { TrainingJob } from "./schemas.js";
 
 const DATASET_FILES = ["train.jsonl", "valid.jsonl", "test.jsonl", "eval.jsonl"] as const;
+const INLINE_DATASETS = new Map<string, { filename: string; content: string }>([
+  ["inline://tiny-italian-v1", {
+    filename: "tiny-italian.jsonl",
+    content: [
+      "{\"text\":\"ciao mondo. marshall impara una rete leggera.\"}",
+      "{\"text\":\"un worker piccolo addestra un modello minuscolo.\"}",
+      "{\"text\":\"il modello predice il prossimo carattere del testo.\"}",
+      "{\"text\":\"dataset piccolo, training vero, test veloce.\"}",
+      "{\"text\":\"la rete p2p assegna un job e riceve un artifact.\"}",
+      "",
+    ].join("\n"),
+  }],
+]);
 
 export interface PreparedDatasetShard {
   path: string;
@@ -22,12 +35,7 @@ export async function prepareDatasetShard(
   options: PrepareDatasetShardOptions,
 ): Promise<PreparedDatasetShard> {
   if (shard.uri.startsWith("inline://")) {
-    return {
-      path: shard.uri,
-      cachePath: shard.uri,
-      hash: shard.hash,
-      cacheHit: true,
-    };
+    return prepareInlineDatasetShard(shard, options);
   }
 
   const sourcePath = resolveDatasetUri(shard.uri, options.projectRoot);
@@ -71,6 +79,68 @@ export async function prepareDatasetShard(
     if (!(await isUsableCache(cachePath, shard.hash))) {
       await rm(cachePath, { recursive: true, force: true });
       await copyDatasetPath(sourcePath, tempPath);
+      await rename(tempPath, cachePath);
+    }
+  }
+
+  return {
+    path: await trainingPathForCache(cachePath),
+    cachePath,
+    hash: shard.hash,
+    cacheHit: false,
+  };
+}
+
+async function prepareInlineDatasetShard(
+  shard: TrainingJob["dataset_shard"],
+  options: PrepareDatasetShardOptions,
+): Promise<PreparedDatasetShard> {
+  const dataset = INLINE_DATASETS.get(shard.uri);
+  if (dataset == null) {
+    throw new Error(`unsupported inline dataset URI: ${shard.uri}`);
+  }
+
+  const sourceHash = sha256Text(dataset.content);
+  if (sourceHash !== shard.hash) {
+    throw new Error(`dataset shard hash mismatch for ${shard.id}: expected ${shard.hash}, got ${sourceHash}`);
+  }
+
+  const cacheRoot = resolve(options.cacheRoot ?? join(options.projectRoot, ".marshall/cache/datasets"));
+  const cachePath = join(cacheRoot, shard.hash.replace("sha256:", ""));
+  const cached = await isUsableCache(cachePath, shard.hash);
+  if (cached) {
+    return {
+      path: await trainingPathForCache(cachePath),
+      cachePath,
+      hash: shard.hash,
+      cacheHit: true,
+    };
+  }
+
+  await mkdir(cacheRoot, { recursive: true });
+  const tempPath = `${cachePath}.tmp-${process.pid}-${randomUUID()}`;
+  await rm(tempPath, { recursive: true, force: true });
+  await mkdir(tempPath, { recursive: true });
+  await writeFile(join(tempPath, dataset.filename), dataset.content, "utf8");
+
+  const cachedHash = await hashDatasetPath(tempPath);
+  if (cachedHash !== shard.hash) {
+    await rm(tempPath, { recursive: true, force: true });
+    throw new Error(`cached dataset shard hash mismatch for ${shard.id}: expected ${shard.hash}, got ${cachedHash}`);
+  }
+
+  try {
+    await rename(tempPath, cachePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" && (error as NodeJS.ErrnoException).code !== "ENOTEMPTY") {
+      await rm(tempPath, { recursive: true, force: true });
+      throw error;
+    }
+    await rm(tempPath, { recursive: true, force: true });
+    if (!(await isUsableCache(cachePath, shard.hash))) {
+      await rm(cachePath, { recursive: true, force: true });
+      await mkdir(tempPath, { recursive: true });
+      await writeFile(join(tempPath, dataset.filename), dataset.content, "utf8");
       await rename(tempPath, cachePath);
     }
   }
@@ -171,4 +241,10 @@ async function trainingPathForCache(cachePath: string): Promise<string> {
     return join(cachePath, jsonlFiles[0].name);
   }
   return cachePath;
+}
+
+function sha256Text(content: string): string {
+  const digest = createHash("sha256");
+  digest.update(content, "utf8");
+  return `sha256:${digest.digest("hex")}`;
 }
