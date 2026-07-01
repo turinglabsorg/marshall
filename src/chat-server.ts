@@ -875,8 +875,10 @@ function writeSseHead(response: ServerResponse): void {
 }
 
 function sendInferenceSse(response: ServerResponse, event: InferenceStreamEvent, config: ResolvedChatServerConfig): void {
+  const publicEvent: Record<string, unknown> = { ...event };
+  delete publicEvent.prompt;
   sendSse(response, event.event, {
-    ...event,
+    ...publicEvent,
     model: event.event === "started" || event.event === "completed" ? event.model ?? config.model : undefined,
     adapter_id: event.event === "started" || event.event === "completed" ? event.adapter_id ?? config.adapterId : undefined,
     adapter_hash: event.event === "started" || event.event === "completed" ? event.adapter_hash ?? config.adapterArtifactHash : undefined,

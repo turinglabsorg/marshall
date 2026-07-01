@@ -147,9 +147,11 @@ function emit(payload) {
       worker_id: "macbook-inference-test",
       text: "p2p stream chunk",
     });
+    expect((streamEvents.find((event) => event.name === "completed")?.data as any).prompt).toBeUndefined();
     expect(streamEvents.at(-1)?.data).toMatchObject({
       type: "marshall_chat_response",
       worker_id: "macbook-inference-test",
+      prompt: "stream ping",
       text: "p2p stream answer: user: stream ping\nassistant:",
     });
   }, 15_000);

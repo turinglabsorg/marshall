@@ -352,6 +352,25 @@ scripts/uninstall-macos-chat-launchd.sh
 
 The installer writes generated plists under `~/Library/LaunchAgents`, stores logs under `.marshall/logs`, and keeps both gateway and tunnel alive with `KeepAlive`.
 
+Inference workers can use the same persistent macOS pattern. Create an ignored env file such as `.marshall/secrets/inference-worker.env` on the worker Mac:
+
+```bash
+MARSHALL_NODE_BIN=/absolute/path/to/node
+MARSHALL_INFERENCE_KEY=.marshall/inference-worker.key
+MARSHALL_INFERENCE_LISTEN=/ip4/0.0.0.0/tcp/8788
+MARSHALL_INFERENCE_WORKER_ID=<stable-worker-id>
+MARSHALL_PYTHON=/absolute/path/to/mlx-python
+MARSHALL_MODEL_PACKAGE=.marshall/runs/<run-id>/model-package/model_package.json
+```
+
+Then install the worker LaunchAgent from that machine:
+
+```bash
+scripts/install-macos-inference-launchd.sh
+```
+
+`scripts/run-inference-worker-local.sh` starts the compiled `dist/src/inference-worker-cli.js`, validates Node.js 22+, requires an explicit worker id, key, listen address, Python binary, and either a model package or explicit model/adapter metadata. `scripts/uninstall-macos-inference-launchd.sh` removes the LaunchAgent. Keep the worker env file out of git; it is machine-local operational state.
+
 For a single-process debugging run only:
 
 ```bash
@@ -415,6 +434,8 @@ Core components:
 - `scripts/run-chat-gateway-local.sh`: Mac Pro gateway runner backed by an ignored local env file;
 - `scripts/run-chat-tunnel-gcp.sh`: reverse SSH tunnel runner from the GCP VM to the local gateway;
 - `scripts/install-macos-chat-launchd.sh`: macOS LaunchAgent installer for persistent gateway and tunnel processes;
+- `scripts/run-inference-worker-local.sh`: macOS inference worker runner backed by an ignored local env file;
+- `scripts/install-macos-inference-launchd.sh`: macOS LaunchAgent installer for persistent inference workers;
 - `src/round-daemon-cli.ts`: unattended train/eval/validation/selection round manager;
 - `src/training-runner.ts`: training, evaluation, and validation runner bridge;
 - `src/dataset-manifest.ts`: content-addressed dataset manifest generation;

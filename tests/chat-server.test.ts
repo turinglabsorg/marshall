@@ -161,8 +161,11 @@ function emit(payload) {
     }).then((response) => response.text());
     const streamEvents = eventsFromSse(streamText);
     expect(streamEvents.map((event) => event.name)).toEqual(["accepted", "started", "chunk", "completed", "done"]);
+    const completed = streamEvents.find((event) => event.name === "completed")?.data as any;
+    expect(completed.prompt).toBeUndefined();
     const done = streamEvents.at(-1)?.data as any;
     expect(done.text).toContain("stream answer:");
+    expect(done.prompt).toBe("Stream answer.");
     expect(done.conversation.messages).toHaveLength(6);
   });
 });
