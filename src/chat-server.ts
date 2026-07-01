@@ -10,6 +10,7 @@ import {
   FileConversationStore,
   publicConversation,
   ttlDaysToMs,
+  type LongTermMemoryUpdate,
 } from "./chat-memory.js";
 import { InferenceRouter } from "./inference-router.js";
 import { createMarshallNode } from "./node.js";
@@ -32,6 +33,7 @@ export interface ChatServerConfig {
   conversationDir?: string;
   conversationTtlDays?: number;
   maxContextMessages?: number;
+  maxMemoryItems?: number;
   modelPackagePath?: string;
   model?: string;
   adapterPath?: string;
@@ -77,6 +79,17 @@ interface ChatRequest {
   messages?: unknown;
   max_tokens?: unknown;
   temperature?: unknown;
+}
+
+interface ConversationMemoryRequest {
+  conversation_id?: unknown;
+  memory?: unknown;
+  summary?: unknown;
+  facts?: unknown;
+  preferences?: unknown;
+  goals?: unknown;
+  open_tasks?: unknown;
+  plans?: unknown;
 }
 
 interface ChatMessage {
@@ -192,6 +205,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     await handleConversation(url, response, config);
     return;
   }
+  if (request.method === "POST" && url.pathname === "/api/conversation/memory") {
+    await handleConversationMemory(request, response, config);
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/api/inference/workers") {
     await handleInferenceWorkers(url, response, config);
     return;
@@ -234,6 +251,7 @@ async function handleHealth(response: ServerResponse, config: RuntimeChatServerC
       backend: "file",
       conversation_dir: config.conversationDir ?? defaultConversationDir(),
       max_context_messages: config.maxContextMessages ?? 18,
+      max_memory_items: config.maxMemoryItems ?? 24,
       ttl_days: config.conversationTtlDays ?? null,
     },
     package_path: config.modelPackagePath ?? null,
@@ -273,6 +291,17 @@ async function handleConversation(url: URL, response: ServerResponse, config: Ru
   });
 }
 
+async function handleConversationMemory(request: IncomingMessage, response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
+  const body = await readJsonBody<ConversationMemoryRequest>(request);
+  const id = requiredConversationId(body.conversation_id);
+  const memory = parseMemoryUpdate(body);
+  const conversation = await config.conversations.updateMemory(id, memory, conversationMetadata(config));
+  sendJson(response, 200, {
+    type: "marshall_chat_conversation_memory",
+    conversation: publicConversation(conversation),
+  });
+}
+
 async function handleChat(request: IncomingMessage, response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
   const body = await readJsonBody<ChatRequest>(request);
   const userContent = userPrompt(body);
@@ -280,7 +309,7 @@ async function handleChat(request: IncomingMessage, response: ServerResponse, co
     conversationId(body),
     userContent,
     conversationMetadata(config),
-    { maxMessages: config.maxContextMessages },
+    { maxMessages: config.maxContextMessages, maxMemoryItems: config.maxMemoryItems },
   );
   const maxTokens = positiveInteger(body.max_tokens, config.maxTokens, "max_tokens");
   const temperature = finiteNumber(body.temperature, config.temperature, "temperature");
@@ -320,7 +349,7 @@ async function handleChatStream(request: IncomingMessage, response: ServerRespon
       conversationId(body),
       userContent,
       conversationMetadata(config),
-      { maxMessages: config.maxContextMessages },
+      { maxMessages: config.maxContextMessages, maxMemoryItems: config.maxMemoryItems },
     );
     const maxTokens = positiveInteger(body.max_tokens, config.maxTokens, "max_tokens");
     const temperature = finiteNumber(body.temperature, config.temperature, "temperature");
@@ -637,6 +666,46 @@ function conversationId(body: ChatRequest): string | undefined {
     return undefined;
   }
   return stringValue(body.conversation_id, "conversation_id");
+}
+
+function requiredConversationId(value: unknown): string {
+  if (value == null || value === "") {
+    throw new Error("conversation_id is required");
+  }
+  return stringValue(value, "conversation_id");
+}
+
+function parseMemoryUpdate(body: ConversationMemoryRequest): LongTermMemoryUpdate {
+  const source = typeof body.memory === "object" && body.memory != null
+    ? body.memory as Record<string, unknown>
+    : body as Record<string, unknown>;
+  const update: LongTermMemoryUpdate = {};
+  if ("summary" in source) {
+    update.summary = stringOrEmpty(source.summary, "summary");
+  }
+  for (const section of ["facts", "preferences", "goals", "open_tasks", "plans"] as const) {
+    if (section in source) {
+      update[section] = memorySection(source[section], section);
+    }
+  }
+  return update;
+}
+
+function memorySection(value: unknown, field: string): unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array`);
+  }
+  return value;
+}
+
+function stringOrEmpty(value: unknown, field: string): string {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string`);
+  }
+  return value;
 }
 
 function conversationMetadata(config: ResolvedChatServerConfig) {

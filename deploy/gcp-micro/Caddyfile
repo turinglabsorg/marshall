@@ -14,6 +14,11 @@ marshall.training {
 	reverse_proxy 127.0.0.1:8080
 }
 
+marshall.chat {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8787
+}
+
 :80 {
 	reverse_proxy 127.0.0.1:8080
 }

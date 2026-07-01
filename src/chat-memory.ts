@@ -10,6 +10,37 @@ export interface ConversationMessage {
   created_at: string;
 }
 
+export type LongTermMemorySection = "facts" | "preferences" | "goals" | "open_tasks" | "plans";
+export type LongTermMemoryStatus = "active" | "done" | "archived";
+
+export interface LongTermMemoryItem {
+  id: string;
+  text: string;
+  created_at: string;
+  updated_at: string;
+  status: LongTermMemoryStatus;
+}
+
+export interface LongTermMemory {
+  type: "marshall_chat_long_term_memory";
+  updated_at: string;
+  summary: string;
+  facts: LongTermMemoryItem[];
+  preferences: LongTermMemoryItem[];
+  goals: LongTermMemoryItem[];
+  open_tasks: LongTermMemoryItem[];
+  plans: LongTermMemoryItem[];
+}
+
+export interface LongTermMemoryUpdate {
+  summary?: string;
+  facts?: unknown[];
+  preferences?: unknown[];
+  goals?: unknown[];
+  open_tasks?: unknown[];
+  plans?: unknown[];
+}
+
 export interface ConversationRecord {
   type: "marshall_chat_conversation";
   conversation_id: string;
@@ -19,6 +50,7 @@ export interface ConversationRecord {
   adapter_id: string;
   adapter_hash: string;
   summary: string;
+  memory: LongTermMemory;
   messages: ConversationMessage[];
 }
 
@@ -40,7 +72,12 @@ export interface ConversationContext {
 }
 
 const DEFAULT_CONTEXT_MESSAGES = 18;
+const DEFAULT_MEMORY_ITEMS = 24;
+const MAX_MEMORY_ITEMS_PER_SECTION = 64;
+const MAX_MEMORY_TEXT_LENGTH = 2000;
+const MAX_SUMMARY_LENGTH = 6000;
 const CONVERSATION_ID_PATTERN = /^[a-zA-Z0-9._-]{1,96}$/;
+const MEMORY_SECTIONS: LongTermMemorySection[] = ["plans", "open_tasks", "goals", "facts", "preferences"];
 
 export class FileConversationStore {
   private readonly dir: string;
@@ -57,6 +94,7 @@ export class FileConversationStore {
       return existing;
     }
     const now = nowUTC();
+    const memory = emptyLongTermMemory(now);
     return {
       type: "marshall_chat_conversation",
       conversation_id: conversationId == null || conversationId === "" ? newConversationId() : safeConversationId(conversationId),
@@ -66,6 +104,7 @@ export class FileConversationStore {
       adapter_id: metadata.adapterId,
       adapter_hash: metadata.adapterHash,
       summary: "",
+      memory,
       messages: [],
     };
   }
@@ -104,6 +143,8 @@ export class FileConversationStore {
       model: metadata.model,
       adapter_id: metadata.adapterId,
       adapter_hash: metadata.adapterHash,
+      summary: conversation.memory.summary,
+      memory: conversation.memory,
       updated_at: now,
       messages: [
         ...conversation.messages,
@@ -115,11 +156,31 @@ export class FileConversationStore {
     return next;
   }
 
+  async updateMemory(
+    conversationId: string,
+    update: LongTermMemoryUpdate,
+    metadata: ConversationMetadata,
+  ): Promise<ConversationRecord> {
+    const conversation = await this.getOrCreate(conversationId, metadata);
+    const memory = mergeLongTermMemory(conversation.memory, update);
+    const next: ConversationRecord = {
+      ...conversation,
+      model: metadata.model,
+      adapter_id: metadata.adapterId,
+      adapter_hash: metadata.adapterHash,
+      updated_at: memory.updated_at,
+      summary: memory.summary,
+      memory,
+    };
+    await this.save(next);
+    return next;
+  }
+
   async context(
     conversationId: string | undefined,
     userContent: string,
     metadata: ConversationMetadata,
-    options: { maxMessages?: number } = {},
+    options: { maxMessages?: number; maxMemoryItems?: number } = {},
   ): Promise<ConversationContext> {
     const conversation = await this.getOrCreate(conversationId, metadata);
     const maxMessages = options.maxMessages ?? DEFAULT_CONTEXT_MESSAGES;
@@ -131,7 +192,9 @@ export class FileConversationStore {
     return {
       conversation,
       context_messages: contextMessages,
-      prompt: conversationPrompt(conversation.summary, contextMessages),
+      prompt: conversationPrompt(conversation.memory, contextMessages, {
+        maxMemoryItems: options.maxMemoryItems ?? DEFAULT_MEMORY_ITEMS,
+      }),
     };
   }
 
@@ -148,19 +211,51 @@ export function publicConversation(conversation: ConversationRecord) {
     model: conversation.model,
     adapter_id: conversation.adapter_id,
     adapter_hash: conversation.adapter_hash,
-    has_summary: conversation.summary.trim() !== "",
+    has_summary: conversation.memory.summary.trim() !== "",
+    memory: publicLongTermMemory(conversation.memory),
     messages: conversation.messages,
   };
 }
 
-export function conversationPrompt(summary: string, messages: ConversationMessage[]): string {
+export function conversationPrompt(
+  memory: LongTermMemory | string,
+  messages: ConversationMessage[],
+  options: { maxMemoryItems?: number } = {},
+): string {
   const sections: string[] = [];
-  if (summary.trim() !== "") {
-    sections.push(`summary: ${summary.trim()}`);
+  const normalizedMemory = typeof memory === "string" ? memoryFromSummary(memory) : memory;
+  const memoryPrompt = longTermMemoryPrompt(normalizedMemory, options.maxMemoryItems ?? DEFAULT_MEMORY_ITEMS);
+  if (memoryPrompt !== "") {
+    sections.push(memoryPrompt);
   }
   sections.push(...messages.map((message) => `${message.role}: ${message.content}`));
   sections.push("assistant:");
   return sections.join("\n");
+}
+
+export function longTermMemoryPrompt(memory: LongTermMemory, maxItems: number = DEFAULT_MEMORY_ITEMS): string {
+  const lines: string[] = [];
+  if (memory.summary.trim() !== "") {
+    lines.push(`summary: ${memory.summary.trim()}`);
+  }
+  let remaining = Math.max(0, maxItems);
+  for (const section of MEMORY_SECTIONS) {
+    if (remaining <= 0) {
+      break;
+    }
+    const activeItems = memory[section]
+      .filter((item) => item.status === "active" && item.text.trim() !== "")
+      .slice(0, remaining);
+    if (activeItems.length === 0) {
+      continue;
+    }
+    lines.push(`${section}:`);
+    for (const item of activeItems) {
+      lines.push(`- ${item.text.trim()}`);
+    }
+    remaining -= activeItems.length;
+  }
+  return lines.length === 0 ? "" : `long_term_memory:\n${lines.join("\n")}`;
 }
 
 export function defaultConversationDir(): string {
@@ -179,6 +274,8 @@ function parseConversation(value: unknown): ConversationRecord {
     throw new Error("conversation must be an object");
   }
   const record = value as Record<string, unknown>;
+  const legacySummary = typeof record.summary === "string" ? record.summary : "";
+  const memory = parseLongTermMemory(record.memory, legacySummary);
   const conversation: ConversationRecord = {
     type: "marshall_chat_conversation",
     conversation_id: safeConversationId(stringField(record.conversation_id, "conversation_id")),
@@ -187,10 +284,146 @@ function parseConversation(value: unknown): ConversationRecord {
     model: stringField(record.model, "model"),
     adapter_id: stringField(record.adapter_id, "adapter_id"),
     adapter_hash: stringField(record.adapter_hash, "adapter_hash"),
-    summary: typeof record.summary === "string" ? record.summary : "",
+    summary: memory.summary,
+    memory,
     messages: Array.isArray(record.messages) ? record.messages.map(parseMessage) : [],
   };
   return conversation;
+}
+
+function parseLongTermMemory(value: unknown, legacySummary: string): LongTermMemory {
+  const now = nowUTC();
+  if (typeof value !== "object" || value == null) {
+    return memoryFromSummary(legacySummary, now);
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    type: "marshall_chat_long_term_memory",
+    updated_at: typeof record.updated_at === "string" && record.updated_at !== "" ? record.updated_at : now,
+    summary: boundedText(typeof record.summary === "string" ? record.summary : legacySummary, MAX_SUMMARY_LENGTH),
+    facts: parseMemoryItems(record.facts, now),
+    preferences: parseMemoryItems(record.preferences, now),
+    goals: parseMemoryItems(record.goals, now),
+    open_tasks: parseMemoryItems(record.open_tasks, now),
+    plans: parseMemoryItems(record.plans, now),
+  };
+}
+
+function parseMemoryItems(value: unknown, now: string): LongTermMemoryItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.slice(0, MAX_MEMORY_ITEMS_PER_SECTION).map((item) => parseMemoryItem(item, now));
+}
+
+function parseMemoryItem(value: unknown, now: string): LongTermMemoryItem {
+  if (typeof value === "string") {
+    return newMemoryItem(value, now);
+  }
+  if (typeof value !== "object" || value == null) {
+    throw new Error("memory item must be a string or object");
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    id: typeof record.id === "string" && record.id !== "" ? safeMemoryItemId(record.id) : newMemoryItemId(),
+    text: boundedRequiredText(stringField(record.text, "memory item text"), MAX_MEMORY_TEXT_LENGTH, "memory item text"),
+    created_at: typeof record.created_at === "string" && record.created_at !== "" ? record.created_at : now,
+    updated_at: typeof record.updated_at === "string" && record.updated_at !== "" ? record.updated_at : now,
+    status: memoryStatus(record.status),
+  };
+}
+
+function mergeLongTermMemory(existing: LongTermMemory, update: LongTermMemoryUpdate): LongTermMemory {
+  const now = nowUTC();
+  const next: LongTermMemory = {
+    ...existing,
+    updated_at: now,
+    summary: update.summary == null ? existing.summary : boundedText(String(update.summary), MAX_SUMMARY_LENGTH),
+  };
+  for (const section of MEMORY_SECTIONS) {
+    if (update[section] == null) {
+      continue;
+    }
+    next[section] = normalizeMemoryUpdateItems(update[section], existing[section], now);
+  }
+  return next;
+}
+
+function normalizeMemoryUpdateItems(value: unknown, existing: LongTermMemoryItem[], now: string): LongTermMemoryItem[] {
+  if (!Array.isArray(value)) {
+    throw new Error("memory sections must be arrays");
+  }
+  return value
+    .slice(0, MAX_MEMORY_ITEMS_PER_SECTION)
+    .map((item) => normalizeMemoryUpdateItem(item, existing, now))
+    .filter((item) => item != null);
+}
+
+function normalizeMemoryUpdateItem(value: unknown, existing: LongTermMemoryItem[], now: string): LongTermMemoryItem | null {
+  if (typeof value === "string") {
+    const text = boundedText(value, MAX_MEMORY_TEXT_LENGTH).trim();
+    if (text === "") {
+      return null;
+    }
+    const matching = existing.find((item) => item.text === text);
+    return matching == null ? newMemoryItem(text, now) : { ...matching, updated_at: now };
+  }
+  if (typeof value !== "object" || value == null) {
+    throw new Error("memory item must be a string or object");
+  }
+  const record = value as Record<string, unknown>;
+  const text = boundedRequiredText(stringField(record.text, "memory item text"), MAX_MEMORY_TEXT_LENGTH, "memory item text");
+  const id = typeof record.id === "string" && record.id !== "" ? safeMemoryItemId(record.id) : undefined;
+  const previous = id == null ? undefined : existing.find((item) => item.id === id);
+  return {
+    id: id ?? previous?.id ?? newMemoryItemId(),
+    text,
+    created_at: previous?.created_at ?? (typeof record.created_at === "string" && record.created_at !== "" ? record.created_at : now),
+    updated_at: now,
+    status: memoryStatus(record.status),
+  };
+}
+
+function publicLongTermMemory(memory: LongTermMemory) {
+  return {
+    updated_at: memory.updated_at,
+    summary: memory.summary,
+    facts: memory.facts,
+    preferences: memory.preferences,
+    goals: memory.goals,
+    open_tasks: memory.open_tasks,
+    plans: memory.plans,
+  };
+}
+
+function emptyLongTermMemory(now: string = nowUTC()): LongTermMemory {
+  return {
+    type: "marshall_chat_long_term_memory",
+    updated_at: now,
+    summary: "",
+    facts: [],
+    preferences: [],
+    goals: [],
+    open_tasks: [],
+    plans: [],
+  };
+}
+
+function memoryFromSummary(summary: string, now: string = nowUTC()): LongTermMemory {
+  return {
+    ...emptyLongTermMemory(now),
+    summary: boundedText(summary, MAX_SUMMARY_LENGTH),
+  };
+}
+
+function newMemoryItem(text: string, now: string): LongTermMemoryItem {
+  return {
+    id: newMemoryItemId(),
+    text: boundedRequiredText(text, MAX_MEMORY_TEXT_LENGTH, "memory item text"),
+    created_at: now,
+    updated_at: now,
+    status: "active",
+  };
 }
 
 function parseMessage(value: unknown): ConversationMessage {
@@ -216,8 +449,19 @@ function safeConversationId(value: string): string {
   return value;
 }
 
+function safeMemoryItemId(value: string): string {
+  if (!CONVERSATION_ID_PATTERN.test(value)) {
+    throw new Error("invalid memory item id");
+  }
+  return value;
+}
+
 function newConversationId(): string {
   return `conv_${randomUUID()}`;
+}
+
+function newMemoryItemId(): string {
+  return `mem_${randomUUID()}`;
 }
 
 function nonEmptyString(value: string, field: string): string {
@@ -227,11 +471,30 @@ function nonEmptyString(value: string, field: string): string {
   return value.trim();
 }
 
+function boundedRequiredText(value: string, maxLength: number, field: string): string {
+  const text = boundedText(value, maxLength).trim();
+  if (text === "") {
+    throw new Error(`${field} is required`);
+  }
+  return text;
+}
+
+function boundedText(value: string, maxLength: number): string {
+  return value.trim().slice(0, maxLength);
+}
+
 function stringField(value: unknown, field: string): string {
   if (typeof value !== "string" || value === "") {
     throw new Error(`invalid ${field}`);
   }
   return value;
+}
+
+function memoryStatus(value: unknown): LongTermMemoryStatus {
+  if (value === "active" || value === "done" || value === "archived") {
+    return value;
+  }
+  return "active";
 }
 
 function nowUTC(): string {

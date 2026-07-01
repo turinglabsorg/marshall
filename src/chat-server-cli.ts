@@ -23,6 +23,7 @@ const server = await createChatServer({
   conversationDir: args["conversation-dir"] ?? process.env.MARSHALL_CHAT_CONVERSATION_DIR,
   conversationTtlDays: optionalPositiveNumberArg(args["conversation-ttl-days"] ?? process.env.MARSHALL_CHAT_CONVERSATION_TTL_DAYS),
   maxContextMessages: optionalPositiveIntegerArg(args["max-context-messages"] ?? process.env.MARSHALL_CHAT_MAX_CONTEXT_MESSAGES),
+  maxMemoryItems: optionalPositiveIntegerArg(args["max-memory-items"] ?? process.env.MARSHALL_CHAT_MAX_MEMORY_ITEMS),
   modelPackagePath: args["model-package"] ?? args.package ?? process.env.MARSHALL_MODEL_PACKAGE,
   model: args.model ?? process.env.MARSHALL_MODEL,
   adapterPath: args["adapter-path"] ?? process.env.MARSHALL_ADAPTER_PATH,

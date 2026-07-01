@@ -53,6 +53,7 @@ input {
 .topbar,
 .chat-pane,
 .model-panel,
+.memory-panel,
 .activity-panel {
   border: 1px solid var(--line);
   background: rgba(5, 10, 7, 0.92);
@@ -97,7 +98,8 @@ h1 {
 .statusline,
 .terminal-title,
 dt,
-.composer-actions span {
+.composer-actions span,
+.memory-form span {
   color: var(--muted);
   font-size: 12px;
   text-transform: uppercase;
@@ -147,7 +149,7 @@ dt,
 
 .side-pane {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   gap: 14px;
 }
 
@@ -280,12 +282,46 @@ button:disabled {
   opacity: 0.55;
 }
 
+.mini-button {
+  min-height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
 .model-panel dl {
   margin: 0;
   padding: 14px;
   display: grid;
   grid-template-columns: 82px minmax(0, 1fr);
   gap: 10px 12px;
+}
+
+.memory-panel {
+  min-height: 0;
+}
+
+.memory-form {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.memory-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.memory-form span {
+  font-size: 11px;
+}
+
+.memory-form textarea {
+  min-height: 58px;
+  max-height: 104px;
+  resize: vertical;
+  padding: 9px;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 dt,
@@ -308,7 +344,7 @@ dd {
 
 .activity-log {
   min-height: 160px;
-  max-height: calc(100vh - 366px);
+  max-height: calc(100vh - 666px);
   overflow: auto;
   padding: 12px;
   display: flex;

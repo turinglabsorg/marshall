@@ -118,6 +118,24 @@ function emit(payload) {
     const persisted = await fetch(`${baseUrl}/api/conversation?conversation_id=${encodeURIComponent(chat.conversation_id)}`).then((response) => response.json()) as any;
     expect(persisted.conversation.messages).toHaveLength(2);
 
+    const memory = await fetch(`${baseUrl}/api/conversation/memory`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: chat.conversation_id,
+        memory: {
+          summary: "Marshall chat should keep durable gateway-owned memory.",
+          plans: ["Keep inference workers stateless"],
+          facts: ["The current model package is under test"],
+          open_tasks: ["Add semantic retrieval later"],
+        },
+      }),
+    }).then((response) => response.json()) as any;
+    expect(memory.conversation.memory.plans[0]).toMatchObject({
+      text: "Keep inference workers stateless",
+      status: "active",
+    });
+
     const followUp = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -128,6 +146,8 @@ function emit(payload) {
     }).then((response) => response.json()) as any;
 
     expect(followUp.conversation.messages).toHaveLength(4);
+    expect(followUp.text).toContain("long_term_memory:");
+    expect(followUp.text).toContain("Keep inference workers stateless");
     expect(followUp.text).toContain("assistant: answer: user: When did Virgin Australia start operating?");
     expect(followUp.text).toContain("user: Answer again.");
 

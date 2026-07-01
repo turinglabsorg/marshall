@@ -9,6 +9,7 @@ Marshall is not trying to pretend that random public machines are one synchronou
 ## Live Network
 
 - Training dashboard: <https://marshall.training>
+- Chat gateway target: <https://marshall.chat>
 - Worker onboarding guide: <https://marshall.training/AGENTS.md>
 - Coordinator snapshot: <https://marshall.training/dashboard>
 - libp2p control peer descriptor: <https://marshall.training/control.json>
@@ -77,12 +78,13 @@ Implemented:
 - worker reputation and suspension policy;
 - accepted-only adapter leaderboard and model package path;
 - round advancement CLI for evaluation scheduling, validation scheduling, accepted-only leaderboard selection, and verified model packaging;
+- P2P `marshall.chat` gateway with streamed browser responses, gateway-owned durable conversation memory, and stateless libp2p inference workers;
 - GCP small-VM deployment with Caddy HTTPS, local Redis, coordinator, and control peer services.
 
 Not implemented yet:
 
 - always-on round orchestration daemon from training to validation to next run;
-- public `marshall.chat` inference gateway;
+- production DNS/TLS cutover and process supervision for the public `marshall.chat` gateway;
 - CUDA worker backend;
 - model cache capability reporting;
 - trusted model-parallel cluster scheduling;
@@ -331,7 +333,7 @@ Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/i
 
 In the chat composer, `Enter` submits the prompt and `Shift+Enter` inserts a newline.
 
-Conversation memory belongs to the gateway, not to inference workers. The current durable store is file-backed under `.marshall/chat/conversations` by default. Workers stay stateless: they receive only the context window needed for the current turn. Use `--conversation-ttl-days <n>` to expire old files and `--max-context-messages <n>` to cap the prompt sent to a worker. Future long-term memory should add summarization and semantic retrieval in the gateway or a private memory service, while the coordinator remains limited to routing, worker capacity, reputation, and public job metadata.
+Conversation memory belongs to the gateway, not to inference workers. The current durable store is file-backed under `.marshall/chat/conversations` by default. Each conversation file contains message history plus structured long-term memory: `summary`, `facts`, `preferences`, `goals`, `open_tasks`, and `plans`. The browser UI can edit and persist this memory through `POST /api/conversation/memory`; `GET /api/conversation` returns it with the conversation. Workers stay stateless: they receive only a bounded prompt assembled by the gateway. Use `--conversation-ttl-days <n>` to expire old files, `--max-context-messages <n>` to cap recent turns, and `--max-memory-items <n>` to cap long-term memory items included in the worker prompt. Future memory should add automatic summarization, semantic retrieval, encryption, and retention controls in the gateway or a private memory service, while the coordinator remains limited to routing, worker capacity, reputation, and public job metadata.
 
 For a single-process debugging run only:
 
@@ -365,6 +367,7 @@ The current public trial deploy target is a small GCP VM:
 - instance: `marshall-micro-1`;
 - machine type: `e2-small` with a 2GB swapfile;
 - domain: `marshall.training`;
+- chat domain: `marshall.chat`;
 - HTTPS proxy: Caddy;
 - coordinator: Go service on `127.0.0.1:8080`;
 - control peer: Node.js libp2p service on TCP `4001`, serving live coordinator jobs with `--coordinator-jobs true`;
@@ -377,7 +380,7 @@ Deploy:
 ./scripts/deploy-gcp-micro.sh
 ```
 
-The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery.
+The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config has a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`; for the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
 
 ## Architecture
 
@@ -391,6 +394,7 @@ Core components:
 - `src/worker-supervisor-cli.ts`: persistent model worker supervisor for train/eval/validation work;
 - `src/inference-worker-cli.ts`: libp2p inference worker for selected model packages;
 - `src/chat-server-cli.ts`: `marshall.chat` gateway with local debug and P2P worker runtimes;
+- `src/chat-memory.ts`: file-backed conversation memory and structured long-term plans owned by the gateway;
 - `src/round-daemon-cli.ts`: unattended train/eval/validation/selection round manager;
 - `src/training-runner.ts`: training, evaluation, and validation runner bridge;
 - `src/dataset-manifest.ts`: content-addressed dataset manifest generation;

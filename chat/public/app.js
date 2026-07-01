@@ -1,6 +1,8 @@
 const state = {
   conversationId: existingConversationId(),
   messages: [],
+  memory: null,
+  memoryDirty: false,
   busy: false,
   health: null,
 };
@@ -24,8 +26,14 @@ const workersLabel = document.getElementById("workersLabel");
 const selectedWorkerLabel = document.getElementById("selectedWorkerLabel");
 const activityLog = document.getElementById("activityLog");
 const clockLabel = document.getElementById("clockLabel");
+const memorySaveButton = document.getElementById("memorySaveButton");
+const memorySummaryInput = document.getElementById("memorySummaryInput");
+const memoryPlansInput = document.getElementById("memoryPlansInput");
+const memoryFactsInput = document.getElementById("memoryFactsInput");
+const memoryTasksInput = document.getElementById("memoryTasksInput");
 
 render();
+renderMemory();
 refreshHealth();
 loadConversation();
 setInterval(refreshHealth, 5000);
@@ -42,6 +50,46 @@ input.addEventListener("keydown", (event) => {
     return;
   }
   form.requestSubmit();
+});
+
+for (const memoryInput of [memorySummaryInput, memoryPlansInput, memoryFactsInput, memoryTasksInput]) {
+  memoryInput.addEventListener("input", () => {
+    state.memoryDirty = true;
+    memorySaveButton.textContent = "save";
+  });
+}
+
+memorySaveButton.addEventListener("click", async () => {
+  if (state.busy) {
+    return;
+  }
+  memorySaveButton.disabled = true;
+  memorySaveButton.textContent = "saving";
+  try {
+    const response = await fetch("/api/conversation/memory", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: state.conversationId,
+        memory: collectMemory(),
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || `memory save failed ${response.status}`);
+    }
+    state.conversationId = payload.conversation?.conversation_id || state.conversationId;
+    localStorage.setItem("marshall.chat.conversation_id", state.conversationId);
+    state.memory = payload.conversation?.memory || state.memory;
+    state.memoryDirty = false;
+    renderMemory();
+    logEvent("memory", "saved");
+  } catch (error) {
+    logEvent("memory_error", error instanceof Error ? error.message : String(error));
+    memorySaveButton.textContent = "save";
+  } finally {
+    memorySaveButton.disabled = false;
+  }
 });
 
 form.addEventListener("submit", async (event) => {
@@ -69,6 +117,10 @@ form.addEventListener("submit", async (event) => {
     state.messages = payload.conversation?.messages || [
       ...state.messages,
     ];
+    if (!state.memoryDirty) {
+      state.memory = payload.conversation?.memory || state.memory;
+      renderMemory();
+    }
     latencyLabel.textContent = `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms`;
     const selectedWorker = payload.worker_id || payload.worker_peer_id || "";
     selectedWorkerLabel.textContent = selectedWorker ? short(selectedWorker, 32) : "--";
@@ -199,7 +251,9 @@ async function loadConversation() {
       throw new Error(payload.error || `conversation failed ${response.status}`);
     }
     state.messages = payload.conversation?.messages || [];
+    state.memory = payload.conversation?.memory || state.memory;
     render();
+    renderMemory();
     logEvent("memory", `${state.messages.length} persisted messages`);
   } catch (error) {
     logEvent("memory_error", error instanceof Error ? error.message : String(error));
@@ -246,6 +300,52 @@ function render() {
   sendButton.disabled = state.busy;
   sendButton.textContent = state.busy ? "running" : "send";
   transcript.scrollTop = transcript.scrollHeight;
+}
+
+function renderMemory() {
+  const memory = state.memory || emptyMemory();
+  if (!state.memoryDirty) {
+    memorySummaryInput.value = memory.summary || "";
+    memoryPlansInput.value = itemsToLines(memory.plans);
+    memoryFactsInput.value = itemsToLines(memory.facts);
+    memoryTasksInput.value = itemsToLines(memory.open_tasks);
+  }
+  memorySaveButton.textContent = state.memoryDirty ? "save" : "saved";
+}
+
+function collectMemory() {
+  return {
+    summary: memorySummaryInput.value,
+    plans: linesToItems(memoryPlansInput.value),
+    facts: linesToItems(memoryFactsInput.value),
+    open_tasks: linesToItems(memoryTasksInput.value),
+  };
+}
+
+function emptyMemory() {
+  return {
+    summary: "",
+    facts: [],
+    preferences: [],
+    goals: [],
+    open_tasks: [],
+    plans: [],
+  };
+}
+
+function itemsToLines(items) {
+  return (items || [])
+    .filter((item) => !item.status || item.status === "active")
+    .map((item) => item.text || "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function linesToItems(value) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function logEvent(type, detail) {
