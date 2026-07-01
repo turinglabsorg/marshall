@@ -20,6 +20,8 @@ const adapterLabel = document.getElementById("adapterLabel");
 const hashLabel = document.getElementById("hashLabel");
 const evalLabel = document.getElementById("evalLabel");
 const scoreLabel = document.getElementById("scoreLabel");
+const workersLabel = document.getElementById("workersLabel");
+const selectedWorkerLabel = document.getElementById("selectedWorkerLabel");
 const activityLog = document.getElementById("activityLog");
 const clockLabel = document.getElementById("clockLabel");
 
@@ -76,7 +78,9 @@ form.addEventListener("submit", async (event) => {
       { role: "assistant", content: payload.text || payload.raw_text || "" },
     ];
     latencyLabel.textContent = `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms`;
-    logEvent("response", `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms`);
+    const selectedWorker = payload.worker_id || payload.worker_peer_id || "";
+    selectedWorkerLabel.textContent = selectedWorker ? short(selectedWorker, 32) : "--";
+    logEvent("response", `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms ${selectedWorker ? `via ${short(selectedWorker, 40)}` : ""}`.trim());
   } catch (error) {
     state.messages.push({ role: "error", content: error instanceof Error ? error.message : String(error) });
     readyDot.className = "status-dot bad";
@@ -122,6 +126,7 @@ async function refreshHealth() {
     hashLabel.textContent = shortHash(payload.adapter_hash);
     evalLabel.textContent = evalText(payload.eval);
     scoreLabel.textContent = payload.eval?.score == null ? "score --" : `score ${Number(payload.eval.score).toFixed(3)}`;
+    workersLabel.textContent = workerText(payload.inference);
   } catch {
     readyDot.className = "status-dot bad";
     readyText.textContent = "offline";
@@ -187,6 +192,15 @@ function evalText(evalInfo) {
   const accuracy = Number(evalInfo.accuracy).toFixed(3);
   const correct = evalInfo.correct == null || evalInfo.examples == null ? "" : ` ${evalInfo.correct}/${evalInfo.examples}`;
   return `${accuracy}${correct}`;
+}
+
+function workerText(inference) {
+  if (!inference) {
+    return "--";
+  }
+  const ready = inference.ready_workers ?? 0;
+  const configured = inference.configured_workers ?? 0;
+  return `${ready}/${configured} ready`;
 }
 
 function existingConversationId() {

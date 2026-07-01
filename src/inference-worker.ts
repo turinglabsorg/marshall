@@ -2,7 +2,7 @@ import type { Libp2p, Stream } from "@libp2p/interface";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import { createMarshallNode } from "./node.js";
 import { PROTOCOLS } from "./protocols.js";
-import { InferenceRequestSchema, InferenceResponseSchema } from "./schemas.js";
+import { InferenceHelloRequestSchema, InferenceHelloResponseSchema, InferenceRequestSchema, InferenceResponseSchema } from "./schemas.js";
 import {
   defaultChatPublicDir,
   defaultChatRunnerPath,
@@ -35,6 +35,7 @@ export class InferenceWorkerPeer {
     readonly node: Libp2p,
     readonly config: ResolvedChatServerConfig,
     private readonly workerId?: string,
+    private readonly startedAt = Date.now(),
   ) {}
 
   static async create(options: InferenceWorkerOptions): Promise<InferenceWorkerPeer> {
@@ -75,7 +76,34 @@ export class InferenceWorkerPeer {
   }
 
   private async registerHandlers(): Promise<void> {
+    await this.node.handle(PROTOCOLS.inferenceHello, (stream) => this.handleHello(stream));
     await this.node.handle(PROTOCOLS.inferenceGenerate, (stream) => this.handleGenerate(stream));
+  }
+
+  private async handleHello(stream: Stream): Promise<void> {
+    try {
+      InferenceHelloRequestSchema.parse(await readJson(stream));
+      await writeJson(stream, InferenceHelloResponseSchema.parse({
+        type: "marshall_inference_hello_response",
+        accepted: true,
+        peer_id: this.peerId,
+        worker_id: this.workerId,
+        model: this.config.model,
+        adapter_id: this.config.adapterId,
+        adapter_hash: this.config.adapterArtifactHash,
+        max_tokens: this.config.maxTokens,
+        temperature: this.config.temperature,
+        uptime_ms: Date.now() - this.startedAt,
+      }));
+    } catch (error) {
+      await writeJson(stream, InferenceHelloResponseSchema.parse({
+        type: "marshall_inference_hello_response",
+        accepted: false,
+        peer_id: this.peerId,
+        worker_id: this.workerId,
+        error: error instanceof Error ? error.message : "inference worker hello failed",
+      }));
+    }
   }
 
   private async handleGenerate(stream: Stream): Promise<void> {

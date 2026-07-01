@@ -5,17 +5,15 @@ import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { Libp2p } from "@libp2p/interface";
-import { multiaddr } from "@multiformats/multiaddr";
 import {
   defaultConversationDir,
   FileConversationStore,
   publicConversation,
   ttlDaysToMs,
 } from "./chat-memory.js";
+import { InferenceRouter } from "./inference-router.js";
 import { createMarshallNode } from "./node.js";
-import { PROTOCOLS } from "./protocols.js";
-import { InferenceResponseSchema } from "./schemas.js";
-import { requestJson } from "./wire.js";
+import type { InferenceRequest } from "./schemas.js";
 
 export type ChatRuntime = "local_process" | "p2p_worker";
 
@@ -27,7 +25,10 @@ export interface ChatServerConfig {
   p2pPrivateKeyPath?: string;
   p2pListen?: string[];
   p2pWorkerAddr?: string;
+  p2pWorkerAddrs?: string[];
   p2pRequestTimeoutMs?: number;
+  p2pProbeTimeoutMs?: number;
+  p2pMaxAttempts?: number;
   conversationDir?: string;
   conversationTtlDays?: number;
   maxContextMessages?: number;
@@ -62,10 +63,12 @@ export interface ResolvedChatServerConfig extends ChatServerConfig {
   adapterId: string;
   packageInfo: LoadedModelPackage | null;
   p2pNode?: Libp2p;
+  p2pWorkerAddrs: string[];
 }
 
 interface RuntimeChatServerConfig extends ResolvedChatServerConfig {
   conversations: FileConversationStore;
+  inferenceRouter?: InferenceRouter;
 }
 
 interface ChatRequest {
@@ -85,6 +88,10 @@ interface InferenceResult {
   type: string;
   model: string;
   adapter_path: string | null;
+  adapter_id?: string;
+  adapter_hash?: string;
+  peer_id?: string;
+  worker_id?: string;
   prompt: string;
   text: string;
   raw_text: string;
@@ -98,6 +105,7 @@ export async function resolveChatConfig(config: ChatServerConfig): Promise<Resol
   const adapterPath = config.adapterPath ?? packageInfo?.adapter_path;
   const adapterArtifactHash = config.adapterArtifactHash ?? packageInfo?.adapter_artifact_hash;
   const adapterId = config.adapterId ?? packageInfo?.adapter_id;
+  const p2pWorkerAddrs = normalizeWorkerAddrs(config);
 
   if (model == null || model === "") {
     throw new Error("--model or model_package.base_model is required");
@@ -111,8 +119,8 @@ export async function resolveChatConfig(config: ChatServerConfig): Promise<Resol
   if (adapterId == null || adapterId === "") {
     throw new Error("--adapter-id or model_package.adapter_id is required");
   }
-  if (runtime === "p2p_worker" && (config.p2pWorkerAddr == null || config.p2pWorkerAddr === "")) {
-    throw new Error("--p2p-worker-addr is required for p2p_worker runtime");
+  if (runtime === "p2p_worker" && p2pWorkerAddrs.length === 0) {
+    throw new Error("--p2p-worker-addr or --p2p-worker-addrs is required for p2p_worker runtime");
   }
   if (runtime === "p2p_worker" && (config.p2pPrivateKeyPath == null || config.p2pPrivateKeyPath === "")) {
     throw new Error("--p2p-key is required for p2p_worker runtime");
@@ -126,6 +134,7 @@ export async function resolveChatConfig(config: ChatServerConfig): Promise<Resol
     adapterArtifactHash,
     adapterId,
     packageInfo,
+    p2pWorkerAddrs,
   };
 }
 
@@ -141,10 +150,21 @@ export async function createChatServer(config: ChatServerConfig): Promise<Server
       listen: resolved.p2pListen ?? ["/ip4/127.0.0.1/tcp/0"],
     })
     : undefined;
+  const inferenceRouter = p2pNode == null ? undefined : new InferenceRouter({
+    node: p2pNode,
+    workerAddrs: resolved.p2pWorkerAddrs,
+    model: resolved.model,
+    adapterId: resolved.adapterId,
+    adapterHash: resolved.adapterArtifactHash,
+    requestTimeoutMs: resolved.p2pRequestTimeoutMs,
+    probeTimeoutMs: resolved.p2pProbeTimeoutMs,
+    maxAttempts: resolved.p2pMaxAttempts,
+  });
   const runtimeConfig: RuntimeChatServerConfig = {
     ...resolved,
     p2pNode,
     conversations,
+    inferenceRouter,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -172,6 +192,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     await handleConversation(url, response, config);
     return;
   }
+  if (request.method === "GET" && url.pathname === "/api/inference/workers") {
+    await handleInferenceWorkers(url, response, config);
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/chat") {
     await handleChat(request, response, config);
     return;
@@ -187,16 +211,21 @@ async function handleHealth(response: ServerResponse, config: RuntimeChatServerC
   const adapterStat = config.runtime === "local_process" && config.adapterPath != null
     ? await stat(config.adapterPath).catch(() => null)
     : null;
+  const workers = config.inferenceRouter == null ? [] : await config.inferenceRouter.refresh();
   sendJson(response, 200, {
     type: "marshall_chat_health",
-    ready: config.runtime === "local_process" ? adapterStat != null : config.p2pNode != null,
+    ready: config.runtime === "local_process" ? adapterStat != null : (config.inferenceRouter?.readyWorkers ?? 0) > 0,
     runtime: config.runtime,
     model: config.model,
     adapter_id: config.adapterId,
     adapter_path: config.adapterPath ?? null,
     adapter_hash: config.adapterArtifactHash,
-    p2p_worker_addr: config.p2pWorkerAddr ?? null,
     p2p_gateway_peer_id: config.p2pNode?.peerId.toString() ?? null,
+    inference: {
+      configured_workers: config.inferenceRouter?.configuredWorkers ?? 0,
+      ready_workers: config.inferenceRouter?.readyWorkers ?? 0,
+      workers,
+    },
     memory: {
       backend: "file",
       conversation_dir: config.conversationDir ?? defaultConversationDir(),
@@ -205,6 +234,21 @@ async function handleHealth(response: ServerResponse, config: RuntimeChatServerC
     },
     package_path: config.modelPackagePath ?? null,
     eval: config.packageInfo?.eval ?? null,
+  });
+}
+
+async function handleInferenceWorkers(url: URL, response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
+  if (config.inferenceRouter == null) {
+    sendJson(response, 400, {
+      type: "marshall_chat_inference_workers",
+      error: "p2p inference router is not enabled",
+    });
+    return;
+  }
+  const force = url.searchParams.get("refresh") !== "false";
+  sendJson(response, 200, {
+    type: "marshall_chat_inference_workers",
+    workers: await config.inferenceRouter.refresh({ force }),
   });
 }
 
@@ -252,6 +296,8 @@ async function handleChat(request: IncomingMessage, response: ServerResponse, co
     model: result.model ?? config.model,
     adapter_id: result.adapter_id ?? config.adapterId,
     adapter_hash: result.adapter_hash ?? config.adapterArtifactHash,
+    worker_id: result.worker_id ?? null,
+    worker_peer_id: result.peer_id ?? null,
     conversation_id: updatedConversation.conversation_id,
     prompt: userContent,
     text: result.text ?? "",
@@ -289,32 +335,23 @@ async function runLocalInference(
 }
 
 async function runP2pInference(
-  config: ResolvedChatServerConfig,
+  config: RuntimeChatServerConfig,
   prompt: string,
   promptSystem: string,
   maxTokens: number,
   temperature: number,
 ) {
-  if (config.p2pNode == null || config.p2pWorkerAddr == null) {
-    throw new Error("p2p_worker runtime requires an active libp2p gateway node and worker address");
+  if (config.inferenceRouter == null) {
+    throw new Error("p2p_worker runtime requires an active inference router");
   }
-  const response = InferenceResponseSchema.parse(await requestJson(
-    config.p2pNode,
-    multiaddr(config.p2pWorkerAddr),
-    PROTOCOLS.inferenceGenerate,
-    {
-      type: "marshall_inference_request",
-      prompt,
-      system_prompt: promptSystem,
-      max_tokens: maxTokens,
-      temperature,
-    },
-    { timeoutMs: config.p2pRequestTimeoutMs ?? 120_000 },
-  ));
-  if (!response.accepted) {
-    throw new Error(response.error ?? "p2p inference worker rejected request");
-  }
-  return response;
+  const request: InferenceRequest = {
+    type: "marshall_inference_request",
+    prompt,
+    system_prompt: promptSystem,
+    max_tokens: maxTokens,
+    temperature,
+  };
+  return config.inferenceRouter.generate(request);
 }
 
 export async function runInference(options: {
@@ -442,6 +479,21 @@ function conversationMetadata(config: ResolvedChatServerConfig) {
     adapterId: config.adapterId,
     adapterHash: config.adapterArtifactHash,
   };
+}
+
+function normalizeWorkerAddrs(config: ChatServerConfig): string[] {
+  const values = [
+    config.p2pWorkerAddr,
+    ...(config.p2pWorkerAddrs ?? []),
+  ];
+  return Array.from(new Set(values.flatMap((value) => splitOptionalList(value))));
+}
+
+function splitOptionalList(value: string | undefined): string[] {
+  if (value == null || value === "") {
+    return [];
+  }
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function systemPrompt(body: ChatRequest, fallback: string): string {

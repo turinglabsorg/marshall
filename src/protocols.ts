@@ -6,6 +6,7 @@ export const PROTOCOLS = {
   jobStatus: "/marshall/job/status/1.0.0",
   artifactManifest: "/marshall/artifact/manifest/1.0.0",
   artifactFetch: "/marshall/artifact/fetch/1.0.0",
+  inferenceHello: "/marshall/inference/hello/1.0.0",
   inferenceGenerate: "/marshall/inference/generate/1.0.0",
 } as const;
 

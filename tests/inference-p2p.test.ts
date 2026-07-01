@@ -10,7 +10,7 @@ import { InferenceWorkerPeer } from "../src/inference-worker.js";
 describe("marshall.chat p2p inference", () => {
   let tempDir: string;
   let server: Server | undefined;
-  let worker: InferenceWorkerPeer | undefined;
+  let workers: InferenceWorkerPeer[] = [];
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "marshall-inference-p2p-"));
@@ -21,8 +21,8 @@ describe("marshall.chat p2p inference", () => {
       await new Promise<void>((resolve) => server!.close(() => resolve()));
       server = undefined;
     }
-    await worker?.stop();
-    worker = undefined;
+    await Promise.all(workers.map((worker) => worker.stop()));
+    workers = [];
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -56,7 +56,7 @@ function value(flag) {
 }
 `, "utf8");
 
-    worker = await InferenceWorkerPeer.create({
+    const worker = await InferenceWorkerPeer.create({
       privateKeyPath: join(tempDir, "worker.key"),
       listen: ["/ip4/127.0.0.1/tcp/0"],
       workerId: "macbook-inference-test",
@@ -71,6 +71,7 @@ function value(flag) {
       maxTokens: 64,
       temperature: 0.1,
     });
+    workers.push(worker);
 
     server = await createChatServer({
       publicDir,
@@ -113,7 +114,126 @@ function value(flag) {
       adapter_hash: "sha256:test-adapter",
       text: "p2p answer: user: ping\nassistant:",
       elapsed_ms: 11,
+      worker_id: "macbook-inference-test",
     });
     expect(chat.conversation_id).toMatch(/^conv_/);
   }, 15_000);
+
+  it("selects compatible workers and fails over when the first generation fails", async () => {
+    const publicDir = join(tempDir, "public");
+    const adapterPath = join(tempDir, "adapter");
+    const badRunnerPath = join(tempDir, "bad-runner.mjs");
+    const goodRunnerPath = join(tempDir, "good-runner.mjs");
+    await mkdir(publicDir);
+    await mkdir(adapterPath);
+    await writeFile(join(publicDir, "index.html"), "<!doctype html><title>marshall.chat</title>", "utf8");
+    await writeFile(badRunnerPath, `
+process.stderr.write("simulated worker failure\\n");
+process.exit(2);
+`, "utf8");
+    await writeFile(goodRunnerPath, `
+const prompt = value("--prompt");
+const model = value("--model");
+const adapterPath = value("--adapter-path");
+console.log(JSON.stringify({
+  type: "marshall_chat_completion",
+  model,
+  adapter_path: adapterPath,
+  prompt,
+  text: "good worker: " + prompt,
+  raw_text: "good worker: " + prompt,
+  elapsed_ms: 13
+}));
+
+function value(flag) {
+  const index = process.argv.indexOf(flag);
+  if (index === -1) {
+    throw new Error("missing " + flag);
+  }
+  return process.argv[index + 1];
+}
+`, "utf8");
+
+    const badWorker = await InferenceWorkerPeer.create({
+      privateKeyPath: join(tempDir, "bad-worker.key"),
+      listen: ["/ip4/127.0.0.1/tcp/0"],
+      workerId: "bad-inference-test",
+      publicDir,
+      runnerPath: badRunnerPath,
+      pythonBin: process.execPath,
+      model: "mlx-community/gemma-3-1b-it-4bit",
+      adapterPath,
+      adapterArtifactHash: "sha256:test-adapter",
+      adapterId: "job_test_adapter",
+      systemPrompt: "You are Marshall.",
+      maxTokens: 64,
+      temperature: 0.1,
+    });
+    const goodWorker = await InferenceWorkerPeer.create({
+      privateKeyPath: join(tempDir, "good-worker.key"),
+      listen: ["/ip4/127.0.0.1/tcp/0"],
+      workerId: "good-inference-test",
+      publicDir,
+      runnerPath: goodRunnerPath,
+      pythonBin: process.execPath,
+      model: "mlx-community/gemma-3-1b-it-4bit",
+      adapterPath,
+      adapterArtifactHash: "sha256:test-adapter",
+      adapterId: "job_test_adapter",
+      systemPrompt: "You are Marshall.",
+      maxTokens: 64,
+      temperature: 0.1,
+    });
+    workers.push(badWorker, goodWorker);
+
+    server = await createChatServer({
+      publicDir,
+      runnerPath: goodRunnerPath,
+      pythonBin: process.execPath,
+      runtime: "p2p_worker",
+      p2pPrivateKeyPath: join(tempDir, "gateway.key"),
+      p2pWorkerAddrs: [
+        badWorker.multiaddrs[0].toString(),
+        goodWorker.multiaddrs[0].toString(),
+      ],
+      p2pRequestTimeoutMs: 10_000,
+      p2pProbeTimeoutMs: 10_000,
+      model: "mlx-community/gemma-3-1b-it-4bit",
+      adapterArtifactHash: "sha256:test-adapter",
+      adapterId: "job_test_adapter",
+      systemPrompt: "You are Marshall.",
+      maxTokens: 64,
+      temperature: 0.1,
+      conversationDir: join(tempDir, "conversations"),
+    });
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const registry = await fetch(`${baseUrl}/api/inference/workers`).then((response) => response.json()) as any;
+    expect(registry.workers.map((worker: any) => worker.status)).toEqual(["ready", "ready"]);
+
+    const chat = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "route me" }),
+    }).then((response) => response.json()) as any;
+
+    expect(chat).toMatchObject({
+      type: "marshall_chat_response",
+      runtime: "p2p_worker",
+      worker_id: "good-inference-test",
+      text: "good worker: user: route me\nassistant:",
+    });
+
+    const after = await fetch(`${baseUrl}/api/inference/workers?refresh=false`).then((response) => response.json()) as any;
+    expect(after.workers[0]).toMatchObject({
+      worker_id: "bad-inference-test",
+      failed_requests: 1,
+    });
+    expect(after.workers[1]).toMatchObject({
+      worker_id: "good-inference-test",
+      completed_requests: 1,
+    });
+  }, 20_000);
 });

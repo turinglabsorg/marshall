@@ -309,7 +309,7 @@ npm run inference:worker -- \
   --python ~/.marshall/mlx-venv/bin/python
 ```
 
-The worker prints libp2p multiaddrs. Start the gateway on the Mac Pro with one reachable worker address:
+The worker prints libp2p multiaddrs. Start the gateway on the Mac Pro with one or more reachable worker addresses:
 
 ```bash
 npm run chat:dev -- \
@@ -318,6 +318,8 @@ npm run chat:dev -- \
   --runtime p2p_worker \
   --p2p-key .marshall/chat-gateway.key \
   --p2p-worker-addr "/ip4/<worker-ip>/tcp/8788/p2p/<worker-peer-id>" \
+  --p2p-worker-addrs "/ip4/<second-worker-ip>/tcp/8788/p2p/<second-worker-peer-id>" \
+  --p2p-max-attempts 3 \
   --conversation-dir .marshall/chat/conversations \
   --max-context-messages 18 \
   --model mlx-community/gemma-3-1b-it-4bit \
@@ -325,7 +327,7 @@ npm run chat:dev -- \
   --adapter-hash sha256:<adapter-root-hash>
 ```
 
-Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/conversation?conversation_id=<id>`, and `POST /api/chat`; `/api/chat` stores the user turn under a durable `conversation_id`, builds the bounded context window, sends `/marshall/inference/generate/1.0.0` to the worker over libp2p, stores the assistant turn, and returns the updated conversation.
+Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/inference/workers`, `GET /api/conversation?conversation_id=<id>`, and `POST /api/chat`. The gateway probes workers with `/marshall/inference/hello/1.0.0`, filters for the requested model and adapter, routes `/marshall/inference/generate/1.0.0` to a ready worker, and retries another compatible worker when generation fails. `/api/chat` stores the user turn under a durable `conversation_id`, builds the bounded context window, sends the request over libp2p, stores the assistant turn, and returns the updated conversation plus the selected `worker_id` and `worker_peer_id`.
 
 In the chat composer, `Enter` submits the prompt and `Shift+Enter` inserts a newline.
 

@@ -83,11 +83,13 @@ Initial merge mode can remain `single_adapter`. Future merge modes may include w
 
 ## Phase 4: Replicated Distributed Inference
 
-`marshall.chat` now has a first P2P inference prototype: an HTTP gateway can route a prompt to one explicit libp2p inference worker running the selected model package.
+`marshall.chat` now has a P2P inference prototype: an HTTP gateway can route a prompt to one or more libp2p inference workers running the selected model package.
 
 It also has durable gateway-owned conversation memory. The gateway persists `conversation_id`, message history, model package metadata, and a summary field under `.marshall/chat/conversations`, then sends only a bounded context window to the selected worker. Inference workers must remain stateless for privacy and routing resilience; a conversation can move between workers because the gateway carries the context.
 
-The next product step is a replicated inference gateway.
+The gateway now probes configured workers with `/marshall/inference/hello/1.0.0`, filters for the requested model and adapter, exposes a public worker registry endpoint without raw multiaddrs, and retries compatible workers when generation fails.
+
+The next product step is a replicated inference gateway with streamed responses.
 
 Workers advertise loaded models and adapters. A router receives a prompt, selects one capable worker, forwards the request, streams tokens back, and records runtime metrics.
 
@@ -106,6 +108,7 @@ This scales throughput by adding workers. It does not split one forward pass acr
 
 Implemented prototype protocol:
 
+- `/marshall/inference/hello/1.0.0` for worker capability probes;
 - `/marshall/inference/generate/1.0.0` for gateway-to-worker generation requests.
 
 Required production protocols:
@@ -114,7 +117,7 @@ Required production protocols:
 - model cache manifest publication;
 - inference request and streamed response protocol;
 - inference benchmark jobs;
-- timeout and retry policy;
+- timeout and retry policy with reputation-aware scoring;
 - output audit logs with hashes and model package identifiers.
 
 Long-term memory roadmap:

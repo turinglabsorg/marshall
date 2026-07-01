@@ -6,6 +6,8 @@ const port = positiveIntegerArg(args.port ?? process.env.MARSHALL_CHAT_PORT ?? "
 const publicDir = args["public-dir"] ?? process.env.MARSHALL_CHAT_PUBLIC_DIR ?? defaultChatPublicDir();
 const runnerPath = args.runner ?? process.env.MARSHALL_CHAT_RUNNER ?? defaultChatRunnerPath();
 const pythonBin = args.python ?? process.env.MARSHALL_PYTHON ?? "python3";
+const p2pWorkerAddr = args["p2p-worker-addr"] ?? process.env.MARSHALL_CHAT_P2P_WORKER_ADDR;
+const p2pWorkerAddrs = optionalSplitList(args["p2p-worker-addrs"] ?? process.env.MARSHALL_CHAT_P2P_WORKER_ADDRS);
 const server = await createChatServer({
   publicDir,
   runnerPath,
@@ -13,8 +15,11 @@ const server = await createChatServer({
   runtime: runtimeArg(args.runtime ?? process.env.MARSHALL_CHAT_RUNTIME ?? "local_process"),
   p2pPrivateKeyPath: args["p2p-key"] ?? process.env.MARSHALL_CHAT_P2P_KEY,
   p2pListen: optionalSplitList(args["p2p-listen"] ?? process.env.MARSHALL_CHAT_P2P_LISTEN),
-  p2pWorkerAddr: args["p2p-worker-addr"] ?? process.env.MARSHALL_CHAT_P2P_WORKER_ADDR,
+  p2pWorkerAddr,
+  p2pWorkerAddrs,
   p2pRequestTimeoutMs: optionalPositiveIntegerArg(args["p2p-timeout-ms"] ?? process.env.MARSHALL_CHAT_P2P_TIMEOUT_MS),
+  p2pProbeTimeoutMs: optionalPositiveIntegerArg(args["p2p-probe-timeout-ms"] ?? process.env.MARSHALL_CHAT_P2P_PROBE_TIMEOUT_MS),
+  p2pMaxAttempts: optionalPositiveIntegerArg(args["p2p-max-attempts"] ?? process.env.MARSHALL_CHAT_P2P_MAX_ATTEMPTS),
   conversationDir: args["conversation-dir"] ?? process.env.MARSHALL_CHAT_CONVERSATION_DIR,
   conversationTtlDays: optionalPositiveNumberArg(args["conversation-ttl-days"] ?? process.env.MARSHALL_CHAT_CONVERSATION_TTL_DAYS),
   maxContextMessages: optionalPositiveIntegerArg(args["max-context-messages"] ?? process.env.MARSHALL_CHAT_MAX_CONTEXT_MESSAGES),
@@ -38,6 +43,7 @@ server.listen(port, host, () => {
     public_dir: publicDir,
     runner: runnerPath,
     conversation_dir: args["conversation-dir"] ?? process.env.MARSHALL_CHAT_CONVERSATION_DIR ?? null,
+    p2p_worker_addrs: countWorkerAddrs(p2pWorkerAddr, p2pWorkerAddrs),
   }, null, 2));
 });
 
@@ -69,6 +75,13 @@ function optionalSplitList(value: string | undefined): string[] | undefined {
     return undefined;
   }
   return splitList(value);
+}
+
+function countWorkerAddrs(single: string | undefined, values: string[] | undefined): number {
+  return new Set([
+    ...splitList(single ?? ""),
+    ...(values ?? []),
+  ]).size;
 }
 
 function runtimeArg(value: string) {
