@@ -152,11 +152,13 @@ npm run worker:pool -- \
   --backend mlx \
   --concurrency 1 \
   --dataset-cache-dir .marshall/cache/datasets \
+  --memory-gb 32 \
   --python ~/.marshall/mlx-venv/bin/python
 ```
 
 `worker:pool` is long-running by default: each stable worker slot claims another compatible job after completing the previous one. Use `--max-jobs <n>` and `--exit-when-idle` only for bounded local tests or maintenance runs.
 Keep `--key-dir` stable when reusing the same `--worker-id-prefix`; the coordinator binds worker identity to the libp2p peer key and rejects mismatches.
+Workers must report `--memory-gb` explicitly. The control peer rejects memory-gated jobs before claim when the registered worker memory is below the job's `resource_requirements.min_memory_gb`.
 
 ## Dataset Runs
 
@@ -175,12 +177,14 @@ npm run dataset:run:prepare -- \
   --iters 20 \
   --learning-rate 0.00001 \
   --num-layers 4 \
+  --min-memory-gb 16 \
   --instruction-field instruction \
   --response-field response \
   --context-field context
 ```
 
 For remote public workers, shard URIs must be worker-resolvable HTTP/S URLs and every file must carry a SHA-256 hash and optional byte size. Workers fail the job on hash or size mismatch.
+`dataset:run:prepare` requires `--min-memory-gb` for adapter training jobs. Larger base models should raise this value so under-sized workers stay idle instead of claiming work they cannot finish.
 
 External datasets and generated dataset artifacts are intentionally kept out of the repository unless explicitly approved.
 
@@ -203,10 +207,12 @@ npm run eval:jobs -- \
   --job-prefix <eval-job-prefix> \
   --model mlx-community/Qwen2.5-0.5B-Instruct-4bit \
   --max-examples 3 \
-  --max-tokens 80
+  --max-tokens 80 \
+  --min-memory-gb 16
 ```
 
 Use `eval_kind ag_news` for exact-label AG News scoring and `eval_kind instruction_terms` for held-out instruction generation checks. The worker records the evaluation kind in the produced metrics artifact so leaderboard and validator stages can reason about what was measured.
+Evaluation jobs that load the same base model should use the same memory gate as training, or a higher one if generation settings require it.
 
 ## Round Advancement
 
@@ -232,6 +238,7 @@ npm run round:advance -- \
   --model mlx-community/Qwen2.5-0.5B-Instruct-4bit \
   --max-examples 3 \
   --max-tokens 80 \
+  --eval-min-memory-gb 16 \
   --package-dir <package-dir>
 ```
 
@@ -254,6 +261,7 @@ npm run round:daemon:compiled -- \
   --model <base-model> \
   --max-examples <n> \
   --max-tokens <n> \
+  --eval-min-memory-gb <gb> \
   --validators-per-artifact 2 \
   --quorum 2 \
   --min-accuracy 0.3 \
@@ -278,6 +286,7 @@ npm run worker:join:compiled -- \
   --train-concurrency 1 \
   --eval-concurrency 1 \
   --validation-concurrency 2 \
+  --memory-gb 32 \
   --python "$MARSHALL_PYTHON"
 ```
 

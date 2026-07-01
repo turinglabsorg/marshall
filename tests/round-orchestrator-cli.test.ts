@@ -44,6 +44,8 @@ describe("round orchestrator CLI", () => {
         "3",
         "--max-tokens",
         "80",
+        "--eval-min-memory-gb",
+        "32",
       ],
       { cwd: process.cwd(), timeout: 10_000 },
     );
@@ -56,6 +58,7 @@ describe("round orchestrator CLI", () => {
     expect(jobs[0].job_type).toBe("evaluate_adapter");
     expect(jobs[0].adapter.artifact_uri).toBe("marshall-artifact://job_train_001");
     expect(jobs[0].eval_kind).toBe("instruction_terms");
+    expect(jobs[0].resource_requirements.min_memory_gb).toBe(32);
   });
 
   it("auto-schedules validation jobs for unvalidated evaluation artifacts", async () => {

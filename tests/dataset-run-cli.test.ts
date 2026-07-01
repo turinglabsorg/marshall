@@ -37,6 +37,7 @@ describe("dataset run CLI", () => {
         "--iters", "12",
         "--learning-rate", "0.00002",
         "--num-layers", "6",
+        "--min-memory-gb", "24",
         "--instruction-field", "instruction",
         "--response-field", "response",
         "--context-field", "context",
@@ -77,6 +78,9 @@ describe("dataset run CLI", () => {
           learning_rate: 0.00002,
           num_layers: 6,
         },
+        resource_requirements: {
+          min_memory_gb: 24,
+        },
       });
 
       const run = JSON.parse(await readFile(summary.run_file, "utf8")) as {
@@ -89,6 +93,9 @@ describe("dataset run CLI", () => {
           model: string;
           iters: number;
         };
+        resource_requirements: {
+          min_memory_gb: number;
+        };
       };
       expect(run.control).toMatchObject({
         jobs_file: summary.jobs_file,
@@ -98,6 +105,9 @@ describe("dataset run CLI", () => {
       expect(run.training_config).toMatchObject({
         model: "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
         iters: 12,
+      });
+      expect(run.resource_requirements).toEqual({
+        min_memory_gb: 24,
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });

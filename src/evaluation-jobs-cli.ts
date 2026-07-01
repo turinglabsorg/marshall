@@ -27,6 +27,7 @@ const jobs = await createAdapterEvaluationJobs({
   maxTokens: numberArg(requiredArg("max-tokens", args["max-tokens"] ?? process.env.MARSHALL_EVAL_MAX_TOKENS)),
   limit: optionalNumberArg(args.limit ?? process.env.MARSHALL_EVAL_ADAPTER_LIMIT),
   adapterJobPrefix: args["adapter-job-prefix"] ?? process.env.MARSHALL_EVAL_ADAPTER_JOB_PREFIX,
+  minMemoryGb: optionalPositiveNumberArg(args["min-memory-gb"] ?? process.env.MARSHALL_EVAL_MIN_MEMORY_GB ?? process.env.MARSHALL_MIN_MEMORY_GB),
 });
 
 await mkdir(dirname(outputFile), { recursive: true });
@@ -53,6 +54,7 @@ interface CreateAdapterEvaluationJobsOptions {
   maxTokens: number;
   limit?: number;
   adapterJobPrefix?: string;
+  minMemoryGb?: number;
 }
 
 async function createAdapterEvaluationJobs(options: CreateAdapterEvaluationJobsOptions): Promise<AdapterEvaluationJob[]> {
@@ -81,6 +83,7 @@ async function createAdapterEvaluationJobs(options: CreateAdapterEvaluationJobsO
       round_id: options.roundId,
       job_type: "evaluate_adapter",
       backend: "mlx",
+      resource_requirements: options.minMemoryGb == null ? undefined : { min_memory_gb: options.minMemoryGb },
       eval_kind: options.evalKind,
       model: options.model,
       adapter: {
@@ -176,4 +179,15 @@ function optionalNumberArg(value: string | undefined): number | undefined {
     return undefined;
   }
   return numberArg(value);
+}
+
+function optionalPositiveNumberArg(value: string | undefined): number | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
+  }
+  return parsed;
 }

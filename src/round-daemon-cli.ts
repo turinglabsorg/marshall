@@ -67,6 +67,7 @@ async function tick() {
       "--model", requiredArg("model", args.model ?? process.env.MARSHALL_MODEL),
       "--max-examples", requiredArg("max-examples", args["max-examples"] ?? process.env.MARSHALL_EVAL_EXAMPLES),
       "--max-tokens", requiredArg("max-tokens", args["max-tokens"] ?? process.env.MARSHALL_EVAL_MAX_TOKENS),
+      ...optionalValueArg("--eval-min-memory-gb", args["eval-min-memory-gb"] ?? process.env.MARSHALL_EVAL_MIN_MEMORY_GB ?? args["min-memory-gb"] ?? process.env.MARSHALL_MIN_MEMORY_GB),
       "--eval-job-prefix", evalJobPrefix,
       "--adapter-job-prefix", trainJobPrefix,
       "--publish", "true",
@@ -97,6 +98,7 @@ async function tick() {
       "--min-accuracy", requiredArg("min-accuracy", args["min-accuracy"] ?? process.env.MARSHALL_VALIDATION_MIN_ACCURACY),
       "--max-invalid-rate", requiredArg("max-invalid-rate", args["max-invalid-rate"] ?? process.env.MARSHALL_VALIDATION_MAX_INVALID_RATE),
       "--min-examples", requiredArg("min-examples", args["min-examples"] ?? process.env.MARSHALL_VALIDATION_MIN_EXAMPLES),
+      ...optionalValueArg("--validation-min-memory-gb", args["validation-min-memory-gb"] ?? process.env.MARSHALL_VALIDATION_MIN_MEMORY_GB),
       "--publish", "true",
     ]);
     return daemonAction("scheduled_validation", jobs, artifacts, { result });
@@ -257,6 +259,13 @@ function requiredArg(name: string, value: string | undefined): string {
     throw new Error(`--${name} is required`);
   }
   return value;
+}
+
+function optionalValueArg(name: string, value: string | undefined): string[] {
+  if (value == null || value.trim() === "") {
+    return [];
+  }
+  return [name, value];
 }
 
 function positiveIntegerArg(value: string): number {

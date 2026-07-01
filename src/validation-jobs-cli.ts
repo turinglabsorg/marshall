@@ -30,6 +30,7 @@ const jobs = await createArtifactValidationJobs({
   validatorsPerArtifact,
   includeValidated: booleanArg(args["include-validated"] ?? process.env.MARSHALL_INCLUDE_VALIDATED_ARTIFACTS, false),
   limit: optionalNumberArg(args.limit ?? process.env.MARSHALL_VALIDATION_JOB_LIMIT),
+  minMemoryGb: optionalPositiveNumberArg(args["min-memory-gb"] ?? process.env.MARSHALL_VALIDATION_MIN_MEMORY_GB),
   policy: {
     min_accuracy: numberArg(args["min-accuracy"] ?? process.env.MARSHALL_VALIDATION_MIN_ACCURACY, 0.3),
     max_invalid_rate: numberArg(args["max-invalid-rate"] ?? process.env.MARSHALL_VALIDATION_MAX_INVALID_RATE, 0.2),
@@ -58,6 +59,7 @@ interface CreateArtifactValidationJobsOptions {
   validatorsPerArtifact: number;
   includeValidated: boolean;
   limit?: number;
+  minMemoryGb?: number;
   policy: Required<ArtifactValidationPolicy>;
 }
 
@@ -80,6 +82,7 @@ async function createArtifactValidationJobs(options: CreateArtifactValidationJob
         round_id: options.roundId,
         job_type: "validate_artifact",
         backend: "cpu",
+        resource_requirements: options.minMemoryGb == null ? undefined : { min_memory_gb: options.minMemoryGb },
         target: {
           job_id: artifact.job_id,
           worker_id: artifact.worker_id,
@@ -146,6 +149,17 @@ function optionalNumberArg(value: string | undefined): number | undefined {
     return undefined;
   }
   return integerArg(value, 1);
+}
+
+function optionalPositiveNumberArg(value: string | undefined): number | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
+  }
+  return parsed;
 }
 
 function booleanArg(value: string | undefined, fallback: boolean): boolean {

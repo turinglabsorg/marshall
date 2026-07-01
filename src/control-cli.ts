@@ -10,6 +10,7 @@ const coordinatorJobSource = booleanArg(args["coordinator-jobs"] ?? process.env.
 const jobType = jobTypeArg(args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? "train_toy_model");
 const jobCount = numberArg(args["job-count"] ?? process.env.MARSHALL_JOB_COUNT, 1);
 const jobsFile = args["jobs-file"] ?? process.env.MARSHALL_JOBS_FILE;
+const resourceRequirements = resourceRequirementsArg(args["min-memory-gb"] ?? process.env.MARSHALL_MIN_MEMORY_GB);
 const jobs = coordinatorJobSource
   ? []
   : jobsFile != null && jobsFile !== ""
@@ -20,6 +21,7 @@ const jobs = coordinatorJobSource
     roundId: args["round-id"] ?? process.env.MARSHALL_ROUND_ID,
     adapterDataset: adapterDatasetArg(args["adapter-dataset"] ?? process.env.MARSHALL_ADAPTER_DATASET),
     adapterDatasetDir: args["adapter-dataset-dir"] ?? process.env.MARSHALL_ADAPTER_DATASET_DIR,
+    resourceRequirements,
   });
 const control = await ControlPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_CONTROL_KEY ?? ".marshall/control.key",
@@ -50,6 +52,7 @@ const started = {
   coordinator_url: args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL ?? null,
   artifact_store_dir: args["artifact-store-dir"] ?? process.env.MARSHALL_ARTIFACT_STORE_DIR ?? null,
   artifact_serve_dirs: splitList(args["artifact-serve-dirs"] ?? process.env.MARSHALL_ARTIFACT_SERVE_DIRS ?? ""),
+  resource_requirements: resourceRequirements ?? null,
 };
 
 const infoFile = args["info-file"] ?? process.env.MARSHALL_CONTROL_INFO_FILE;
@@ -125,6 +128,13 @@ function adapterDatasetArg(value: string | undefined): AdapterDatasetProfile | u
   throw new Error(`unsupported adapter dataset: ${value}`);
 }
 
+function resourceRequirementsArg(minMemoryGb: string | undefined) {
+  if (minMemoryGb == null || minMemoryGb === "") {
+    return undefined;
+  }
+  return { min_memory_gb: positiveNumberArg(minMemoryGb) };
+}
+
 function publicControlAddr(peerId: string): string {
   const explicit = args["public-control-addr"] ?? process.env.MARSHALL_PUBLIC_CONTROL_ADDR;
   if (explicit != null && explicit !== "") {
@@ -146,6 +156,14 @@ function numberArg(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new Error(`invalid positive integer: ${value}`);
+  }
+  return parsed;
+}
+
+function positiveNumberArg(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
   }
   return parsed;
 }

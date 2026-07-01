@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { TrainingJobSchema, type Backend, type JobType, type TrainingJob } from "./schemas.js";
+import { TrainingJobSchema, type Backend, type JobType, type ResourceRequirements, type TrainingJob } from "./schemas.js";
 
 export type AdapterDatasetProfile = "marshall_instructions" | "ag_news" | "manifest";
 
@@ -11,6 +11,7 @@ export interface TrainingJobOptions {
   adapterDataset?: AdapterDatasetProfile;
   adapterDatasetDir?: string;
   adapterTrainingConfig?: AdapterTrainingConfig;
+  resourceRequirements?: ResourceRequirements;
 }
 
 export interface AdapterTrainingConfig {
@@ -150,6 +151,7 @@ export function createToyTrainingJob(options: TrainingJobOptions = {}): Training
       token_estimate: 2_000,
       hash: "sha256:067c5c80ae7ae08a2d33868b85e149de94878dd13c7689a64561d9dd3d0751dd",
     },
+    resource_requirements: options.resourceRequirements,
   });
 }
 
@@ -166,6 +168,7 @@ export function createMlxSmokeJob(options: TrainingJobOptions = {}): TrainingJob
       token_estimate: 4,
       hash: "sha256:mlx-linear-smoke-v1",
     },
+    resource_requirements: options.resourceRequirements,
   });
 }
 
@@ -189,6 +192,7 @@ export function createAdapterTrainingJob(options: TrainingJobOptions = {}): Trai
       hash: dataset.root.hash,
       files: dataset.root.files,
     },
+    resource_requirements: options.resourceRequirements,
     training_config: trainingConfig,
   });
 }
@@ -219,6 +223,7 @@ export function createAdapterTrainingShardJobs(count: number, options: TrainingJ
         hash: shard.hash,
         files: shard.files,
       },
+      resource_requirements: options.resourceRequirements,
       training_config: trainingConfig,
     });
   });
@@ -247,9 +252,8 @@ export function createTrainingJobs(
     const suffix = String(index + 1).padStart(3, "0");
     const defaultBase = jobType === "train_mlx_smoke" ? "job_mlx_smoke" : "job_toy";
     return createTrainingJob(jobType, {
+      ...options,
       jobId: options.jobId == null ? `${defaultBase}_${suffix}` : `${options.jobId}_${suffix}`,
-      runId: options.runId,
-      roundId: options.roundId,
     });
   });
 }

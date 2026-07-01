@@ -164,6 +164,46 @@ describe("Marshall p2p substrate", () => {
     expect(control.state.statuses.filter((status) => status.status === "completed")).toHaveLength(4);
   }, 20_000);
 
+  it("rejects claims from workers below a job memory requirement", async () => {
+    control = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "control.key"),
+      jobs: createTrainingJobs("train_toy_model", 1, {
+        jobId: "job_memory_gated",
+        runId: "run_memory_gated",
+        roundId: "round_001",
+        resourceRequirements: {
+          min_memory_gb: 32,
+        },
+      }),
+    });
+    const lowMemoryWorker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "worker-low-memory.key"),
+      workerId: "mac-worker-low-memory",
+      controlAddr: control.multiaddrs[0],
+      memoryGb: 16,
+      tokensPerSecond: 1000,
+    });
+    const highMemoryWorker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "worker-high-memory.key"),
+      workerId: "mac-worker-high-memory",
+      controlAddr: control.multiaddrs[0],
+      memoryGb: 64,
+      tokensPerSecond: 1000,
+    });
+    workers.push(lowMemoryWorker, highMemoryWorker);
+
+    await lowMemoryWorker.register();
+    await highMemoryWorker.register();
+
+    const rejectedClaim = await lowMemoryWorker.claimToyTrainingJob(2_000);
+    expect(rejectedClaim.accepted).toBe(false);
+    expect(rejectedClaim.reason).toContain("below job minimum");
+
+    const acceptedClaim = await highMemoryWorker.claimToyTrainingJob(2_000);
+    expect(acceptedClaim.accepted).toBe(true);
+    expect(acceptedClaim.job?.job_id).toBe("job_memory_gated");
+  }, 15_000);
+
   it("transfers artifact payloads over libp2p and verifies stored hashes", async () => {
     const controlArtifactStore = join(tempDir, "control-artifacts");
     control = await ControlPeer.create({

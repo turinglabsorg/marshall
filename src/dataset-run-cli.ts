@@ -47,6 +47,9 @@ const jobsFile = join(jobsDir, "train-adapters.json");
 const runFile = join(runDir, "run.json");
 const coordinatorUrl = args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL;
 const publish = booleanArg(args.publish ?? process.env.MARSHALL_PUBLISH_JOBS, coordinatorUrl != null && coordinatorUrl !== "");
+const resourceRequirements = {
+  min_memory_gb: requiredPositiveNumberArg("min-memory-gb", args["min-memory-gb"] ?? process.env.MARSHALL_MIN_MEMORY_GB),
+};
 const adapterTrainingConfig = {
   model: args.model ?? process.env.MARSHALL_MODEL ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
   iters: positiveIntegerArg(args.iters ?? process.env.MARSHALL_ITERS, 20),
@@ -71,6 +74,7 @@ const jobs = createTrainingJobs("train_adapter", jobCount, {
   adapterDataset: "manifest",
   adapterDatasetDir: datasetDir,
   adapterTrainingConfig,
+  resourceRequirements,
 });
 
 await mkdir(jobsDir, { recursive: true });
@@ -103,6 +107,7 @@ const runBundle = {
   shard_count: manifest.shards.length,
   token_estimate: manifest.token_estimate,
   training_config: adapterTrainingConfig,
+  resource_requirements: resourceRequirements,
   coordinator_url: coordinatorUrl ?? null,
   published_jobs: publishedJobs,
   control: {
@@ -172,6 +177,13 @@ function optionalStringArg(value: string | undefined): string | undefined {
   return value.trim();
 }
 
+function requiredArg(name: string, value: string | undefined): string {
+  if (value == null || value.trim() === "") {
+    throw new Error(`--${name} is required`);
+  }
+  return value;
+}
+
 function positiveIntegerArg(value: string | undefined, fallback: number): number {
   const parsed = integerArg(value, fallback);
   if (parsed < 1) {
@@ -194,6 +206,10 @@ function positiveNumberArg(value: string | undefined, fallback: number): number 
     throw new Error(`invalid positive number: ${value ?? fallback}`);
   }
   return parsed;
+}
+
+function requiredPositiveNumberArg(name: string, value: string | undefined): number {
+  return positiveNumberArg(requiredArg(name, value), 1);
 }
 
 function optionalPositiveIntegerArg(value: string | undefined): number | undefined {

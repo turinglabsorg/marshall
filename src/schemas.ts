@@ -76,6 +76,10 @@ export const DatasetShardSchema = z.object({
   })).optional(),
 });
 
+export const ResourceRequirementsSchema = z.object({
+  min_memory_gb: z.number().positive().optional(),
+});
+
 export const TrainingJobSchema = z.object({
   job_id: z.string().min(1),
   run_id: z.string().min(1),
@@ -83,6 +87,7 @@ export const TrainingJobSchema = z.object({
   job_type: z.enum(["train_toy_model", "train_mlx_smoke", "train_adapter"]),
   backend: BackendSchema,
   dataset_shard: DatasetShardSchema,
+  resource_requirements: ResourceRequirementsSchema.optional(),
   training_config: z.object({
     model: z.string().min(1),
     iters: z.number().int().positive(),
@@ -113,6 +118,7 @@ export const AdapterEvaluationJobSchema = z.object({
   round_id: z.string().min(1),
   job_type: z.literal("evaluate_adapter"),
   backend: BackendSchema,
+  resource_requirements: ResourceRequirementsSchema.optional(),
   eval_kind: z.enum(["ag_news", "instruction_terms"]),
   model: z.string().min(1),
   adapter: AdapterReferenceSchema,
@@ -148,6 +154,7 @@ export const ArtifactValidationJobSchema = z.object({
   round_id: z.string().min(1),
   job_type: z.literal("validate_artifact"),
   backend: BackendSchema,
+  resource_requirements: ResourceRequirementsSchema.optional(),
   target: ArtifactValidationTargetSchema,
   policy: ArtifactValidationPolicySchema.optional(),
 });
@@ -384,6 +391,7 @@ export type WorkerRegistrationResponse = z.infer<typeof WorkerRegistrationRespon
 export type WorkerHeartbeat = z.infer<typeof WorkerHeartbeatSchema>;
 export type JobClaim = z.infer<typeof JobClaimSchema>;
 export type DatasetShard = z.infer<typeof DatasetShardSchema>;
+export type ResourceRequirements = z.infer<typeof ResourceRequirementsSchema>;
 export type TrainingJob = z.infer<typeof TrainingJobSchema>;
 export type AdapterReference = z.infer<typeof AdapterReferenceSchema>;
 export type AdapterEvaluationJob = z.infer<typeof AdapterEvaluationJobSchema>;

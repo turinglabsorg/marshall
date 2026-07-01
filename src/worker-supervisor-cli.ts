@@ -11,6 +11,7 @@ const stateDir = requiredArg("state-dir", args["state-dir"] ?? process.env.MARSH
 const trainConcurrency = requiredNonNegativeInteger("train-concurrency", args["train-concurrency"] ?? process.env.MARSHALL_TRAIN_CONCURRENCY);
 const evalConcurrency = requiredNonNegativeInteger("eval-concurrency", args["eval-concurrency"] ?? process.env.MARSHALL_EVAL_CONCURRENCY);
 const validationConcurrency = requiredNonNegativeInteger("validation-concurrency", args["validation-concurrency"] ?? process.env.MARSHALL_VALIDATION_CONCURRENCY);
+const memoryGb = positiveNumberArg(requiredArg("memory-gb", args["memory-gb"] ?? process.env.MARSHALL_MEMORY_GB));
 const heartbeatIntervalMs = positiveIntegerArg(args["heartbeat-interval-ms"] ?? process.env.MARSHALL_HEARTBEAT_INTERVAL_MS ?? "15000");
 const idleBackoffMs = positiveIntegerArg(args["idle-backoff-ms"] ?? process.env.MARSHALL_WORKER_POOL_IDLE_BACKOFF_MS ?? "5000");
 const restartDelayMs = positiveIntegerArg(args["restart-delay-ms"] ?? process.env.MARSHALL_WORKER_RESTART_DELAY_MS ?? "5000");
@@ -56,6 +57,7 @@ console.log(JSON.stringify({
   control,
   worker_id_base: workerIdBase,
   state_dir: stateDir,
+  memory_gb: memoryGb,
   roles: roles.map((role) => ({
     name: role.name,
     job_type: role.jobType,
@@ -96,6 +98,7 @@ async function runRole(role: WorkerRole): Promise<number | null> {
     "--artifacts-dir", join(roleDir, "artifacts"),
     "--input-artifacts-dir", join(roleDir, "input-artifacts"),
     "--dataset-cache-dir", join(roleDir, "dataset-cache"),
+    "--memory-gb", String(memoryGb),
     "--heartbeat-interval-ms", String(heartbeatIntervalMs),
     "--idle-backoff-ms", String(idleBackoffMs),
   ];
@@ -200,6 +203,14 @@ function positiveIntegerArg(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new Error(`invalid positive integer: ${value}`);
+  }
+  return parsed;
+}
+
+function positiveNumberArg(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
   }
   return parsed;
 }

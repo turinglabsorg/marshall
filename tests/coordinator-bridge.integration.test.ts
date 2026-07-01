@@ -68,6 +68,7 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
       learningRate: 0.35,
     });
 
+    control.state.assignedJobs.delete(job.job_id);
     await worker.publishArtifactManifest(training.manifest);
     await worker.reportJobStatus({
       job_id: job.job_id,
@@ -123,8 +124,9 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
     control = await ControlPeer.create({
       privateKeyPath: join(tempDir, "control.key"),
       coordinatorUrl,
-      jobs: [job],
+      jobs: [sourceAdapterTrainingJob(job), job],
     });
+    await publishSourceAdapterArtifact(job);
     worker = await WorkerPeer.create({
       privateKeyPath: join(tempDir, "worker.key"),
       workerId,
@@ -241,8 +243,9 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
       control = await ControlPeer.create({
         privateKeyPath: join(tempDir, "control.key"),
         coordinatorUrl,
-        jobs: [evalJob, ...validationJobs],
+        jobs: [sourceAdapterTrainingJob(evalJob), evalJob, ...validationJobs],
       });
+      await publishSourceAdapterArtifact(evalJob);
       const evalWorker = await WorkerPeer.create({
         privateKeyPath: join(tempDir, "eval-worker.key"),
         workerId: evalWorkerId,
@@ -352,8 +355,9 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
       control = await ControlPeer.create({
         privateKeyPath: join(tempDir, "control.key"),
         coordinatorUrl,
-        jobs,
+        jobs: [...jobs.map((job) => sourceAdapterTrainingJob(job)), ...jobs],
       });
+      await Promise.all(jobs.map((job) => publishSourceAdapterArtifact(job)));
       for (let index = 0; index < 4; index += 1) {
         concurrentWorkers.push(await WorkerPeer.create({
           privateKeyPath: join(tempDir, `worker-${index}.key`),
@@ -408,16 +412,66 @@ function adapterEvaluationMetrics(job: AdapterEvaluationJob): AdapterEvaluationM
     invalid: 0,
     invalid_rate: 0,
     labels: ["World", "Sports"],
-    results: [
-      {
-        id: "example-001",
+    results: Array.from({ length: 20 }, (_value, index) => {
+      const correct = index < 15;
+      return {
+        id: `example-${String(index + 1).padStart(3, "0")}`,
         expected_label: "World",
-        predicted_label: "World",
-        correct: true,
-        output: "World",
-      },
-    ],
+        predicted_label: correct ? "World" : "Sports",
+        correct,
+        output: correct ? "World" : "Sports",
+      };
+    }),
   };
+}
+
+async function publishSourceAdapterArtifact(job: AdapterEvaluationJob): Promise<void> {
+  if (job.adapter.source_job_id == null) {
+    throw new Error(`missing source_job_id for ${job.job_id}`);
+  }
+  const coordinator = new CoordinatorClient(coordinatorUrl!);
+  const workerId = `source-worker-${job.adapter.source_job_id}`;
+  const peerId = `source-peer-${job.adapter.source_job_id}`;
+  await coordinator.registerWorker({
+    worker_id: workerId,
+    peer_id: peerId,
+    public_key: `source-public-key-${job.adapter.source_job_id}`,
+    backend: "mlx",
+    device_family: "test",
+    memory_gb: 64,
+    supported_jobs: ["train_adapter"],
+    benchmarks: {
+      tokens_per_second: 1000,
+    },
+  });
+  await coordinator.claimJob(job.adapter.source_job_id, {
+    worker_id: workerId,
+    peer_id: peerId,
+    job_type: "train_adapter",
+    backend: "mlx",
+    max_tokens: 8_000,
+  });
+  await coordinator.publishArtifact({
+    job_id: job.adapter.source_job_id,
+    worker_id: workerId,
+    peer_id: peerId,
+    artifact_type: "lora_adapter",
+    artifact_uri: job.adapter.artifact_uri,
+    artifact_hash: job.adapter.artifact_hash,
+    config_hash: job.adapter.config_hash ?? `sha256:source-config-${job.adapter.source_job_id}`,
+    created_at: new Date().toISOString(),
+  });
+}
+
+function sourceAdapterTrainingJob(job: AdapterEvaluationJob): TrainingJob {
+  if (job.adapter.source_job_id == null) {
+    throw new Error(`missing source_job_id for ${job.job_id}`);
+  }
+  return createTrainingJob("train_adapter", {
+    jobId: job.adapter.source_job_id,
+    runId: job.run_id,
+    roundId: job.round_id,
+  });
 }
 
 async function sha256File(path: string): Promise<string> {

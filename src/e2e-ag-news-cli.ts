@@ -20,6 +20,7 @@ const swarmToken = args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN;
 const jobLeaseSeconds = args["job-lease-seconds"] ?? process.env.MARSHALL_JOB_LEASE_SECONDS;
 const heartbeatIntervalMs = args["heartbeat-interval-ms"] ?? process.env.MARSHALL_HEARTBEAT_INTERVAL_MS;
 const pythonBin = args.python ?? process.env.MARSHALL_PYTHON;
+const memoryGb = requiredArg("memory-gb", args["memory-gb"] ?? process.env.MARSHALL_MEMORY_GB);
 const jobCount = numberArg(args["job-count"] ?? process.env.MARSHALL_JOB_COUNT, 4);
 const concurrency = numberArg(args.concurrency ?? process.env.MARSHALL_WORKER_POOL_CONCURRENCY, jobCount);
 const requireValidation = booleanArg(args["require-validation"] ?? process.env.MARSHALL_REQUIRE_VALIDATION, coordinatorUrl != null && coordinatorUrl !== "");
@@ -71,6 +72,7 @@ const trainControl = await startControl([
   "--round-id", "round_001",
   "--adapter-dataset", "ag_news",
   "--adapter-dataset-dir", datasetDir,
+  "--min-memory-gb", memoryGb,
   "--key", join(runRoot, "control-train.key"),
   "--artifact-store-dir", artifactsDir,
   ...optionalArg("--coordinator-url", coordinatorUrl),
@@ -95,6 +97,7 @@ try {
     ...optionalArg("--swarm-token", swarmToken),
     ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
     ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
+    "--memory-gb", memoryGb,
     ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
     ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
     "--iters", args.iters ?? process.env.MARSHALL_ITERS ?? "20",
@@ -123,6 +126,7 @@ await runScript(evalJobsScript, [
   "--job-prefix", `${jobPrefix}_eval`,
   "--max-examples", args["eval-examples"] ?? process.env.MARSHALL_EVAL_EXAMPLES ?? "40",
   "--max-tokens", args["eval-max-tokens"] ?? process.env.MARSHALL_EVAL_MAX_TOKENS ?? "8",
+  "--min-memory-gb", memoryGb,
 ]);
 const evalJobs = parseEvalJobs(JSON.parse(await readFile(evalJobsFile, "utf8")));
 if (evalJobs.length !== jobCount) {
@@ -159,6 +163,7 @@ try {
     ...optionalArg("--swarm-token", swarmToken),
     ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
     ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
+    "--memory-gb", memoryGb,
     ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
     ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
     ...optionalArg("--python", pythonBin),
@@ -219,6 +224,7 @@ if (requireValidation) {
       ...optionalArg("--swarm-token", swarmToken),
       ...optionalArg("--job-lease-seconds", jobLeaseSeconds),
       ...optionalArg("--heartbeat-interval-ms", heartbeatIntervalMs),
+      "--memory-gb", memoryGb,
       ...optionalArg("--artifact-chunk-bytes", artifactChunkBytes),
       ...optionalArg("--artifact-chunk-retries", artifactChunkRetries),
     ])), validationJobs.length);

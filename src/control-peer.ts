@@ -204,7 +204,16 @@ export class ControlPeer {
       return;
     }
     const claim = withoutAuthToken(payload);
-    const response = await this.claimCompatibleJob(claim);
+    let response: JobClaimResponse;
+    try {
+      response = await this.claimCompatibleJob(claim);
+    } catch (error) {
+      response = {
+        accepted: false,
+        job: null,
+        reason: error instanceof Error ? error.message : "job claim failed",
+      };
+    }
     await writeJson(stream, JobClaimResponseSchema.parse(response));
   }
 
@@ -295,6 +304,10 @@ export class ControlPeer {
   }
 
   private async participationError(job: MarshallJob, claim: JobClaim): Promise<string | undefined> {
+    const resourceError = this.resourceParticipationError(job, claim);
+    if (resourceError != null) {
+      return resourceError;
+    }
     if (job.job_type !== "evaluate_adapter") {
       return undefined;
     }
@@ -319,6 +332,31 @@ export class ControlPeer {
     return undefined;
   }
 
+  private resourceParticipationError(job: MarshallJob, claim: JobClaim): string | undefined {
+    const minMemoryGb = job.resource_requirements?.min_memory_gb;
+    if (minMemoryGb == null) {
+      return undefined;
+    }
+    const registration = this.latestRegistration(claim.worker_id);
+    if (registration == null) {
+      return "worker registration unavailable for memory-gated job";
+    }
+    if (registration.memory_gb < minMemoryGb) {
+      return `worker memory ${registration.memory_gb}GB below job minimum ${minMemoryGb}GB`;
+    }
+    return undefined;
+  }
+
+  private latestRegistration(workerID: string): WorkerRegistration | undefined {
+    for (let index = this.state.registrations.length - 1; index >= 0; index -= 1) {
+      const registration = this.state.registrations[index];
+      if (registration.worker_id === workerID) {
+        return registration;
+      }
+    }
+    return undefined;
+  }
+
   private async artifactProducer(jobID: string): Promise<{ worker_id: string; peer_id: string } | undefined> {
     for (const serveDir of this.artifactServeDirs) {
       try {
@@ -337,7 +375,15 @@ export class ControlPeer {
     if (this.coordinator == null) {
       return undefined;
     }
-    const artifact = await this.coordinator.getArtifact(jobID);
+    let artifact: ArtifactManifest | { worker_id: string; peer_id: string };
+    try {
+      artifact = await this.coordinator.getArtifact(jobID);
+    } catch (error) {
+      if (isCoordinatorMissing(error)) {
+        return undefined;
+      }
+      throw error;
+    }
     return {
       worker_id: artifact.worker_id,
       peer_id: artifact.peer_id,
@@ -378,12 +424,28 @@ export class ControlPeer {
       return;
     }
     const manifest = withoutAuthToken(payload);
-    const assignedWorker = this.state.assignedJobs.get(manifest.job_id);
+    let assignment: { workerID: string; peerID?: string } | undefined;
+    try {
+      assignment = await this.assignedJobProducer(manifest.job_id);
+    } catch (error) {
+      await writeJson(stream, AckSchema.parse({
+        accepted: false,
+        reason: error instanceof Error ? error.message : "coordinator assignment lookup failed",
+      }));
+      return;
+    }
 
-    if (assignedWorker !== manifest.worker_id) {
+    if (assignment?.workerID !== manifest.worker_id) {
       await writeJson(stream, AckSchema.parse({
         accepted: false,
         reason: "artifact producer does not match assigned worker",
+      }));
+      return;
+    }
+    if (assignment.peerID != null && assignment.peerID !== "" && assignment.peerID !== manifest.peer_id) {
+      await writeJson(stream, AckSchema.parse({
+        accepted: false,
+        reason: "artifact producer peer does not match assigned peer",
       }));
       return;
     }
@@ -412,6 +474,26 @@ export class ControlPeer {
 
     this.state.manifests.push(storedManifest);
     await writeJson(stream, AckSchema.parse({ accepted: true }));
+  }
+
+  private async assignedJobProducer(jobID: string): Promise<{ workerID: string; peerID?: string } | undefined> {
+    const localWorkerID = this.state.assignedJobs.get(jobID);
+    if (localWorkerID != null) {
+      return { workerID: localWorkerID };
+    }
+    if (this.coordinator == null) {
+      return undefined;
+    }
+
+    const job = await this.coordinator.getJob(jobID);
+    if (job.worker_id == null || job.worker_id === "") {
+      return undefined;
+    }
+    this.state.assignedJobs.set(jobID, job.worker_id);
+    return {
+      workerID: job.worker_id,
+      peerID: job.peer_id,
+    };
   }
 
   private async fetchArtifactPayload(manifest: ArtifactManifest, worker: DialTarget): Promise<ArtifactManifest> {
@@ -567,6 +649,13 @@ function workerAlternationKey(workerID: string): string {
 
 function isMissingFile(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function isCoordinatorMissing(error: unknown): boolean {
+  return error instanceof Error && (
+    error.message.includes("failed with 404")
+    || error.message.includes("artifact not found")
+  );
 }
 
 function rejectedArtifactFetchResponse(requestType: "manifest" | "chunk", reason: string): unknown {

@@ -103,11 +103,13 @@ npm run worker:join:compiled -- \
   --train-concurrency 1 \
   --eval-concurrency 1 \
   --validation-concurrency 2 \
+  --memory-gb 32 \
   --python "$MARSHALL_PYTHON"
 ```
 
 Keep this process running. When one job finishes, the same role immediately asks for more compatible work. Keep train/eval concurrency at `1` until you know the machine has enough memory for parallel MLX runs; validation is CPU-light and can usually use more slots.
 For later restarts, keep the same `--worker-id-base` and `--state-dir` if you want to preserve the same worker identities and reputation.
+Set `--memory-gb` to the real unified memory or RAM available to the worker. Some jobs declare `resource_requirements.min_memory_gb`; workers below that threshold stay idle and should not claim the job.
 
 If you intentionally want to run only one role for debugging, use `npm run worker:pool:compiled` with an explicit `--job-type`, separate `--worker-id-prefix`, `--key-dir`, and role-specific cache/artifact directories.
 

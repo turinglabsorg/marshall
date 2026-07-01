@@ -111,6 +111,7 @@ async function scheduleEvaluationJobs(artifacts: CoordinatorArtifact[], options:
   const jobPrefix = args["eval-job-prefix"] ?? process.env.MARSHALL_EVAL_JOB_PREFIX ?? "job_eval_adapter";
   const adapterJobPrefix = args["adapter-job-prefix"] ?? process.env.MARSHALL_EVAL_ADAPTER_JOB_PREFIX;
   const limit = optionalPositiveIntegerArg(args.limit ?? process.env.MARSHALL_ROUND_LIMIT);
+  const minMemoryGb = optionalPositiveNumberArg(args["eval-min-memory-gb"] ?? process.env.MARSHALL_EVAL_MIN_MEMORY_GB ?? args["min-memory-gb"] ?? process.env.MARSHALL_MIN_MEMORY_GB);
   const selected = (adapterJobPrefix == null
     ? artifacts
     : artifacts.filter((artifact) => artifact.job_id.startsWith(adapterJobPrefix))
@@ -124,6 +125,7 @@ async function scheduleEvaluationJobs(artifacts: CoordinatorArtifact[], options:
       round_id: options.roundId,
       job_type: "evaluate_adapter",
       backend: "mlx",
+      resource_requirements: minMemoryGb == null ? undefined : { min_memory_gb: minMemoryGb },
       eval_kind: evalKind,
       model,
       adapter: {
@@ -164,6 +166,7 @@ async function scheduleValidationJobs(artifacts: CoordinatorArtifact[], options:
   }
   const jobPrefix = args["validation-job-prefix"] ?? process.env.MARSHALL_VALIDATION_JOB_PREFIX ?? "job_validate_artifact";
   const limit = optionalPositiveIntegerArg(args.limit ?? process.env.MARSHALL_ROUND_LIMIT);
+  const minMemoryGb = optionalPositiveNumberArg(args["validation-min-memory-gb"] ?? process.env.MARSHALL_VALIDATION_MIN_MEMORY_GB);
   const selected = artifacts.slice(0, limit ?? artifacts.length);
   const jobs = selected.flatMap((artifact, targetIndex) => (
     Array.from({ length: validatorsPerArtifact }, (_value, validatorIndex) => {
@@ -175,6 +178,7 @@ async function scheduleValidationJobs(artifacts: CoordinatorArtifact[], options:
         round_id: options.roundId,
         job_type: "validate_artifact",
         backend: "cpu",
+        resource_requirements: minMemoryGb == null ? undefined : { min_memory_gb: minMemoryGb },
         target: {
           job_id: artifact.job_id,
           worker_id: artifact.worker_id,
@@ -517,6 +521,17 @@ function optionalPositiveIntegerArg(value: string | undefined): number | undefin
     return undefined;
   }
   return positiveIntegerArg(value);
+}
+
+function optionalPositiveNumberArg(value: string | undefined): number | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
+  }
+  return parsed;
 }
 
 function numberArg(value: string): number {

@@ -454,6 +454,82 @@
         box-shadow: inset 0 0 30px rgba(51, 255, 136, 0.035);
       }
 
+      .runs-panel {
+        margin-bottom: 14px;
+      }
+
+      .run-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        padding: 10px;
+        background: #030704;
+      }
+
+      .run-list.past {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .run-lane {
+        min-width: 0;
+        padding: 13px;
+        background: var(--panel);
+      }
+
+      .run-lane.primary {
+        background: var(--panel-2);
+        box-shadow: inset 0 0 28px rgba(51, 255, 136, 0.065);
+      }
+
+      .run-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .run-title span {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: none;
+        text-align: right;
+      }
+
+      .run-model {
+        margin-top: 8px;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .run-meta {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
+
+      .run-counts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .past-run-lane {
+        min-width: 0;
+        padding: 11px;
+        background: #050806;
+      }
+
+      .past-run-lane .run-model {
+        font-size: 12px;
+      }
+
       .progress-total,
       .progress-phases {
         min-width: 0;
@@ -575,6 +651,13 @@
         grid-template-columns: 1fr;
       }
 
+      .live-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+
       .section {
         min-width: 0;
         border: 1px solid var(--line);
@@ -650,6 +733,24 @@
         background: rgba(51, 255, 136, 0.045);
       }
 
+      .run-divider td {
+        background: #030704;
+        color: var(--green);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .run-divider span {
+        color: var(--muted);
+        font-weight: 400;
+        text-transform: none;
+      }
+
+      .run-divider:hover td {
+        background: #030704;
+      }
+
       .pill {
         display: inline-flex;
         align-items: center;
@@ -662,6 +763,32 @@
         font-weight: 700;
         white-space: nowrap;
         word-break: normal;
+      }
+
+      .inline-control {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 28px;
+        padding: 0 9px;
+        border: 1px solid var(--line);
+        background: #020403;
+        color: var(--green);
+        font: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .inline-control:disabled {
+        color: var(--dim);
+        cursor: not-allowed;
+      }
+
+      .pager {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
       }
 
       .pill.running {
@@ -736,6 +863,7 @@
         .boot-grid,
         .contract-panel,
         .progress-panel,
+        .live-grid,
         .grid {
           grid-template-columns: 1fr;
         }
@@ -749,6 +877,14 @@
         }
 
         .progress-phases {
+          grid-template-columns: 1fr;
+        }
+
+        .run-list {
+          grid-template-columns: 1fr;
+        }
+
+        .run-list.past {
           grid-template-columns: 1fr;
         }
 
@@ -845,7 +981,7 @@
         <section class="contract-panel" aria-label="Current training contract">
           <div class="contract-main">
             <div class="contract-label" id="jobContractLabel">active training contract</div>
-            <div class="contract-title" id="jobContractTitle">No training job published</div>
+            <div class="contract-title" id="jobContractTitle">Loading coordinator jobs</div>
             <div class="contract-meta" id="jobContractMeta"></div>
           </div>
           <div class="contract-side">
@@ -865,9 +1001,25 @@
           <div class="metric"><span>cluster.speed</span><strong id="clusterThroughput">0</strong></div>
         </section>
 
+        <section class="section runs-panel" aria-label="Published runs">
+          <div class="section-header">
+            <h3>active runs</h3>
+            <span>grouped by base model</span>
+          </div>
+          <div class="run-list" id="runsList"></div>
+        </section>
+
+        <section class="section runs-panel" aria-label="Past runs">
+          <div class="section-header">
+            <h3>past runs</h3>
+            <button class="inline-control" id="togglePastRuns" type="button">show history</button>
+          </div>
+          <div class="run-list past" id="pastRunsList" hidden></div>
+        </section>
+
         <section class="progress-panel" aria-label="End-to-end work completion">
           <div class="progress-total">
-            <div class="progress-label">published work completion</div>
+            <div class="progress-label" id="progressLabel">selected run completion</div>
             <div class="progress-value" id="overallProgress">0%</div>
             <div class="progress-detail" id="overallProgressDetail">0 / 0 terminal jobs</div>
             <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="overallProgressFill"></div></div>
@@ -875,7 +1027,7 @@
           <div class="progress-phases" id="phaseProgress"></div>
         </section>
 
-        <section class="grid vertical">
+        <section class="live-grid" aria-label="Live worker activity">
           <div class="section">
             <div class="section-header">
               <h3>workers</h3>
@@ -898,8 +1050,22 @@
 
           <div class="section">
             <div class="section-header">
+              <h3>event stream</h3>
+              <span id="streamText">opening stream</span>
+            </div>
+            <div class="event-log" id="eventLog"></div>
+          </div>
+        </section>
+
+        <section class="grid vertical">
+          <div class="section">
+            <div class="section-header">
               <h3>jobs</h3>
-              <span>latest coordinator state</span>
+              <div class="pager">
+                <button class="inline-control" id="jobsPrev" type="button">prev</button>
+                <span id="jobsPageText">page 1 / 1</span>
+                <button class="inline-control" id="jobsNext" type="button">next</button>
+              </div>
             </div>
             <div class="table-wrap">
               <table>
@@ -934,14 +1100,6 @@
               </table>
             </div>
           </div>
-
-          <div class="section">
-            <div class="section-header">
-              <h3>event stream</h3>
-              <span id="streamText">opening stream</span>
-            </div>
-            <div class="event-log" id="eventLog"></div>
-          </div>
         </section>
       </main>
     </div>
@@ -952,7 +1110,10 @@
         events: new Map(),
         refreshTimer: null,
         pollTimer: null,
-        syncIntervalMs: 5000
+        syncIntervalMs: 5000,
+        showPastRuns: false,
+        jobPage: 1,
+        jobsPerPage: 6
       };
 
       const nodes = {
@@ -974,12 +1135,19 @@
         contractQueued: document.getElementById("contractQueued"),
         contractIters: document.getElementById("contractIters"),
         contractLayers: document.getElementById("contractLayers"),
+        runsList: document.getElementById("runsList"),
+        pastRunsList: document.getElementById("pastRunsList"),
+        togglePastRuns: document.getElementById("togglePastRuns"),
+        progressLabel: document.getElementById("progressLabel"),
         overallProgress: document.getElementById("overallProgress"),
         overallProgressDetail: document.getElementById("overallProgressDetail"),
         overallProgressFill: document.getElementById("overallProgressFill"),
         phaseProgress: document.getElementById("phaseProgress"),
         workersTable: document.getElementById("workersTable"),
         jobsTable: document.getElementById("jobsTable"),
+        jobsPrev: document.getElementById("jobsPrev"),
+        jobsNext: document.getElementById("jobsNext"),
+        jobsPageText: document.getElementById("jobsPageText"),
         artifactsTable: document.getElementById("artifactsTable"),
         eventLog: document.getElementById("eventLog")
       };
@@ -992,6 +1160,19 @@
           state.syncIntervalMs = Number(nodes.syncInterval.value);
           startPolling();
           refreshDashboard();
+        });
+        nodes.togglePastRuns.addEventListener("click", () => {
+          state.showPastRuns = !state.showPastRuns;
+          state.jobPage = 1;
+          render();
+        });
+        nodes.jobsPrev.addEventListener("click", () => {
+          state.jobPage = Math.max(1, state.jobPage - 1);
+          render();
+        });
+        nodes.jobsNext.addEventListener("click", () => {
+          state.jobPage += 1;
+          render();
         });
         startPolling();
         openEventStream();
@@ -1076,19 +1257,26 @@
         nodes.artifactsPublished.textContent = summary.artifacts_published ?? 0;
         nodes.clusterThroughput.textContent = throughputSummary(summary);
         nodes.workersUpdated.textContent = `updated ${timeLabel(dashboard.generated_at)}`;
-        renderTrainingContract(dashboard.jobs || []);
-        renderProgress(dashboard.jobs || []);
+        const runs = summarizeRuns(dashboard.jobs || []);
+        const selectedRun = selectPrimaryRun(runs);
+        renderTrainingContract(selectedRun);
+        renderRuns(runs, selectedRun);
+        renderPastRuns(runs);
+        renderProgress(dashboard.jobs || [], selectedRun);
         renderWorkers(dashboard.workers || [], summary);
-        renderJobs(dashboard.jobs || []);
+        renderJobs(runs);
         renderArtifacts(dashboard.artifacts || []);
         renderEvents();
       }
 
-      function renderProgress(jobs) {
+      function renderProgress(jobs, selectedRun) {
+        const scopedJobs = selectedRun
+          ? jobs.filter((entry) => canonicalRunId((entry.job || {}).run_id || "") === selectedRun.key)
+          : [];
         const phases = [
-          phaseProgress(jobs, "train_adapter", "training"),
-          phaseProgress(jobs, "evaluate_adapter", "evaluation"),
-          phaseProgress(jobs, "validate_artifact", "validation")
+          phaseProgress(scopedJobs, "train_adapter", "training"),
+          phaseProgress(scopedJobs, "evaluate_adapter", "evaluation"),
+          phaseProgress(scopedJobs, "validate_artifact", "validation")
         ];
         const totals = phases.reduce((total, phase) => ({
           total: total.total + phase.total,
@@ -1097,9 +1285,10 @@
         }), { total: 0, terminal: 0, remaining: 0 });
         const percent = percentValue(totals.terminal, totals.total);
 
+        nodes.progressLabel.textContent = selectedRun ? `${selectedRun.shortName} completion` : "active run completion";
         nodes.overallProgress.textContent = totals.total === 0 ? "0%" : `${percent}%`;
         nodes.overallProgressDetail.textContent = totals.total === 0
-          ? "no published jobs"
+          ? "no active run jobs"
           : `${totals.terminal} / ${totals.total} terminal jobs · ${totals.remaining} remaining`;
         nodes.overallProgressFill.style.width = `${percent}%`;
         nodes.phaseProgress.innerHTML = phases.map(renderPhaseProgress).join("");
@@ -1145,11 +1334,10 @@
         return Math.round((part / total) * 100);
       }
 
-      function renderTrainingContract(jobs) {
-        const selected = selectContractJob(jobs);
-        if (!selected) {
+      function renderTrainingContract(selectedRun) {
+        if (!selectedRun) {
           nodes.jobContractLabel.textContent = "active training contract";
-          nodes.jobContractTitle.textContent = "No training job published";
+          nodes.jobContractTitle.textContent = "Waiting for coordinator jobs";
           nodes.jobContractMeta.innerHTML = `<span class="pill idle">waiting</span>`;
           nodes.contractShards.textContent = "0";
           nodes.contractQueued.textContent = "0";
@@ -1158,34 +1346,188 @@
           return;
         }
 
-        const job = selected.job || {};
-        const spec = job.job_spec || {};
-        const shard = spec.dataset_shard || {};
-        const config = spec.training_config || {};
-        const runJobs = jobs.filter((entry) => (entry.job || {}).run_id === job.run_id);
-        const queued = runJobs.filter((entry) => ((entry.job || {}).status || "queued") === "queued").length;
-        const title = `${config.model || "model unset"} :: ${shard.dataset_id || shard.id || job.dataset_uri || "dataset unset"}`;
-        nodes.jobContractLabel.textContent = `${job.job_type || "job"} / ${job.status || "unknown"}`;
+        const config = selectedRun.trainingConfig || {};
+        const queued = selectedRun.jobs.filter((entry) => ((entry.job || {}).status || "queued") === "queued").length;
+        const title = `${selectedRun.model || "model unset"} :: ${selectedRun.dataset || "dataset unset"}`;
+        nodes.jobContractLabel.textContent = `${selectedRun.phaseLabel} / ${selectedRun.statusLabel}`;
         nodes.jobContractTitle.textContent = title;
         nodes.jobContractMeta.innerHTML = [
-          metaPill(`run ${job.run_id || "unknown"}`, "running"),
-          metaPill(`dataset ${shard.dataset_version || "unversioned"}`),
-          metaPill(`shard ${shard.id || "unknown"}`),
+          metaPill(`run ${selectedRun.key || "unknown"}`, "running"),
+          metaPill(`dataset ${selectedRun.datasetVersion || "unversioned"}`),
+          metaPill(`jobs ${selectedRun.jobs.length}`),
           metaPill(`seq ${config.max_seq_length || "?"}`),
           metaPill(`lr ${config.learning_rate || "?"}`),
+          metaPill(`ram ${selectedRun.minMemoryGb || "?"}GB`),
         ].join("");
-        nodes.contractShards.textContent = String(runJobs.length || 1);
+        nodes.contractShards.textContent = String(selectedRun.counts.train.total || selectedRun.jobs.length);
         nodes.contractQueued.textContent = String(queued);
         nodes.contractIters.textContent = String(config.iters || 0);
         nodes.contractLayers.textContent = String(config.num_layers || 0);
       }
 
-      function selectContractJob(jobs) {
-        const trainJobs = jobs.filter((entry) => (entry.job || {}).job_type === "train_adapter");
-        return trainJobs.find((entry) => ["running", "claimed"].includes((entry.job || {}).status))
-          || trainJobs.find((entry) => ((entry.job || {}).status || "queued") === "queued")
-          || trainJobs.at(-1)
-          || null;
+      function renderRuns(runs, selectedRun) {
+        const activeRuns = runs.filter(runIsActive);
+        if (activeRuns.length === 0) {
+          nodes.runsList.innerHTML = `<div class="empty">No active runs.</div>`;
+          return;
+        }
+        nodes.runsList.innerHTML = activeRuns.slice(0, 6).map((run) => {
+          const primary = selectedRun && run.key === selectedRun.key ? " primary" : "";
+          return `<article class="run-lane${primary}">
+            <div class="run-title">${html(run.shortName)}<span>${html(run.statusLabel)}</span></div>
+            <div class="run-model">${html(run.model || "model unset")}</div>
+            <div class="run-meta">${html(run.dataset || "dataset unset")} · ${html(run.key)}</div>
+            <div class="run-counts">
+              ${runCountPill("train", run.counts.train)}
+              ${runCountPill("eval", run.counts.eval)}
+              ${runCountPill("val", run.counts.validation)}
+              ${metaPill(`ram ${run.minMemoryGb || "?"}GB`)}
+            </div>
+          </article>`;
+        }).join("");
+      }
+
+      function renderPastRuns(runs) {
+        const pastRuns = runs.filter((run) => !runIsActive(run));
+        nodes.pastRunsList.hidden = !state.showPastRuns;
+        nodes.togglePastRuns.textContent = state.showPastRuns ? "hide history" : `show history (${pastRuns.length})`;
+        if (pastRuns.length === 0) {
+          nodes.pastRunsList.innerHTML = `<div class="empty">No completed runs yet.</div>`;
+          return;
+        }
+        if (!state.showPastRuns) {
+          return;
+        }
+        nodes.pastRunsList.innerHTML = pastRuns.slice(0, 9).map((run) => {
+          const terminal = run.jobs.filter((entry) => isTerminalStatus((entry.job || {}).status)).length;
+          const failed = run.jobs.filter((entry) => (entry.job || {}).status === "failed").length;
+          return `<article class="past-run-lane">
+            <div class="run-title">${html(run.shortName)}<span>${html(timeLabel(new Date(run.latestTime).toISOString()))}</span></div>
+            <div class="run-model">${html(run.model || "model unset")}</div>
+            <div class="run-meta">${html(run.dataset || "dataset unset")} · ${html(run.key)}</div>
+            <div class="run-counts">
+              ${metaPill(`${terminal}/${run.jobs.length} terminal`, failed > 0 ? "failed" : "completed")}
+              ${failed > 0 ? metaPill(`${failed} failed`, "failed") : metaPill("clean", "completed")}
+              ${metaPill(`ram ${run.minMemoryGb || "?"}GB`)}
+            </div>
+          </article>`;
+        }).join("");
+      }
+
+      function runCountPill(label, counts) {
+        const status = counts.failed > 0 ? "failed" : counts.running > 0 ? "running" : counts.queued > 0 ? "queued" : counts.completed > 0 ? "completed" : "idle";
+        return metaPill(`${label} ${counts.completed}/${counts.total}`, status);
+      }
+
+      function summarizeRuns(jobs) {
+        const runs = new Map();
+        for (const entry of jobs) {
+          const job = entry.job || {};
+          const key = canonicalRunId(job.run_id || job.job_id || "unknown");
+          const run = runs.get(key) || emptyRun(key);
+          run.jobs.push(entry);
+          run.latestTime = Math.max(run.latestTime, Date.parse(job.created_at || "") || 0);
+          run.firstTime = Math.min(run.firstTime, Date.parse(job.created_at || "") || run.firstTime);
+          run.statusLabel = runStatusLabel(run.jobs);
+          const spec = job.job_spec || {};
+          const config = spec.training_config || {};
+          if (!run.trainingConfig && Object.keys(config).length > 0) {
+            run.trainingConfig = config;
+          }
+          run.model ||= config.model || spec.model || "";
+          const shard = spec.dataset_shard || spec.eval_shard || {};
+          run.dataset ||= shard.dataset_id || shard.id || job.dataset_uri || "";
+          run.datasetVersion ||= shard.dataset_version || "";
+          run.minMemoryGb ||= (spec.resource_requirements || {}).min_memory_gb || "";
+          const counts = countsForJobType(run, job.job_type);
+          counts.total += 1;
+          const status = job.status || "queued";
+          if (status === "completed") counts.completed += 1;
+          else if (status === "failed") counts.failed += 1;
+          else if (status === "running" || status === "claimed") counts.running += 1;
+          else counts.queued += 1;
+          runs.set(key, run);
+        }
+        const output = Array.from(runs.values());
+        for (const run of output) {
+          run.statusLabel = runStatusLabel(run.jobs);
+          run.phaseLabel = runPhaseLabel(run);
+        }
+        return output.sort((left, right) => {
+          const leftActive = runIsActive(left) ? 1 : 0;
+          const rightActive = runIsActive(right) ? 1 : 0;
+          if (leftActive !== rightActive) return rightActive - leftActive;
+          return right.latestTime - left.latestTime;
+        });
+      }
+
+      function emptyRun(key) {
+        return {
+          key,
+          shortName: shortRunLabel(key),
+          jobs: [],
+          model: "",
+          dataset: "",
+          datasetVersion: "",
+          trainingConfig: null,
+          minMemoryGb: "",
+          latestTime: 0,
+          firstTime: Number.POSITIVE_INFINITY,
+          statusLabel: "queued",
+          phaseLabel: "run",
+          counts: {
+            train: emptyCounts(),
+            eval: emptyCounts(),
+            validation: emptyCounts()
+          }
+        };
+      }
+
+      function emptyCounts() {
+        return { total: 0, queued: 0, running: 0, completed: 0, failed: 0 };
+      }
+
+      function countsForJobType(run, jobType) {
+        if (jobType === "evaluate_adapter") return run.counts.eval;
+        if (jobType === "validate_artifact") return run.counts.validation;
+        return run.counts.train;
+      }
+
+      function selectPrimaryRun(runs) {
+        return runs.find(runIsActive) || null;
+      }
+
+      function runIsActive(run) {
+        return run.jobs.some((entry) => ["queued", "claimed", "running", ""].includes((entry.job || {}).status || "queued"));
+      }
+
+      function runStatusLabel(jobs) {
+        const statuses = jobs.map((entry) => (entry.job || {}).status || "queued");
+        if (statuses.some((status) => status === "running" || status === "claimed")) return "running";
+        if (statuses.some((status) => status === "queued" || status === "")) return "queued";
+        if (statuses.some((status) => status === "failed")) return "completed with failures";
+        return "completed";
+      }
+
+      function runPhaseLabel(run) {
+        if (run.counts.validation.total > 0) return "validation";
+        if (run.counts.eval.total > 0) return "evaluation";
+        return "training";
+      }
+
+      function canonicalRunId(runId) {
+        return String(runId || "")
+          .replace(/_validation$/, "")
+          .replace(/_eval$/, "");
+      }
+
+      function shortRunLabel(runId) {
+        const value = canonicalRunId(runId);
+        if (!value) return "run:unknown";
+        const parts = value.split("_").filter(Boolean);
+        const modelPart = parts.find((part) => /gemma|qwen|llama|mistral/i.test(part));
+        const idPart = parts.slice(-2).join("_");
+        return modelPart ? `${modelPart} ${idPart}` : shortHash(value);
       }
 
       function metaPill(value, className = "") {
@@ -1216,25 +1558,60 @@
         }).join("");
       }
 
-      function renderJobs(jobs) {
-        const latest = jobs.slice().reverse().slice(0, 16);
-        if (latest.length === 0) {
-          nodes.jobsTable.innerHTML = `<tr><td colspan="4" class="empty">No jobs published yet.</td></tr>`;
+      function renderJobs(runs) {
+        const visibleRuns = state.showPastRuns ? runs : runs.filter(runIsActive);
+        const rows = flattenJobRows(visibleRuns);
+        const totalPages = Math.max(1, Math.ceil(rows.length / state.jobsPerPage));
+        state.jobPage = Math.min(Math.max(1, state.jobPage), totalPages);
+        nodes.jobsPrev.disabled = state.jobPage <= 1;
+        nodes.jobsNext.disabled = state.jobPage >= totalPages;
+        nodes.jobsPageText.textContent = `page ${state.jobPage} / ${totalPages} · ${rows.length} rows`;
+
+        if (rows.length === 0) {
+          const message = state.showPastRuns
+            ? "No jobs published yet."
+            : "No active jobs. Show history to inspect completed runs.";
+          nodes.jobsTable.innerHTML = `<tr><td colspan="4" class="empty">${message}</td></tr>`;
           return;
         }
-        nodes.jobsTable.innerHTML = latest.map((entry) => {
+        const start = (state.jobPage - 1) * state.jobsPerPage;
+        const pageRows = rows.slice(start, start + state.jobsPerPage);
+        nodes.jobsTable.innerHTML = pageRows.map((row) => row.kind === "divider" ? renderRunDivider(row.run) : renderJobRow(row.entry)).join("");
+      }
+
+      function flattenJobRows(runs) {
+        const rows = [];
+        for (const run of runs) {
+          rows.push({ kind: "divider", run });
+          for (const entry of run.jobs.slice().reverse()) {
+            rows.push({ kind: "job", entry });
+          }
+        }
+        return rows;
+      }
+
+      function renderRunDivider(run) {
+        return `<tr class="run-divider"><td colspan="4">${html(run.shortName)} <span>${html(run.model || "model unset")} · ${html(run.key)}</span></td></tr>`;
+      }
+
+      function renderJobRow(entry) {
           const job = entry.job || {};
           const artifact = entry.artifact || null;
           const detail = artifact
             ? `${artifact.artifact_type} ${shortHash(artifact.artifact_hash)}`
-            : job.worker_id || "unassigned";
+            : workerJobLabel(job);
           return `<tr>
             <td><strong>${html(job.job_id)}</strong><br><span>${html(job.run_id || "")}</span></td>
             <td>${html(job.job_type || "")}<br><span>${html(job.backend || "")}</span></td>
             <td><span class="pill ${statusClass(job.status)}">${html(job.status || "unknown")}</span></td>
             <td>${html(detail)}${progressMarkup(job)}${throughputMarkup(job, 0)}</td>
           </tr>`;
-        }).join("");
+      }
+
+      function workerJobLabel(job) {
+        if (!job.worker_id) return "unassigned";
+        if (job.peer_id) return shortPeerId(job.peer_id);
+        return shortWorkerLabel(job.worker_id);
       }
 
       function throughputSummary(summary) {

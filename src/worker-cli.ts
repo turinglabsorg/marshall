@@ -26,7 +26,7 @@ const worker = await WorkerPeer.create({
   listen: splitList(args.listen ?? process.env.MARSHALL_WORKER_LISTEN ?? "/ip4/0.0.0.0/tcp/0"),
   backend,
   supportedJobs: [jobType],
-  memoryGb: numberArg(args["memory-gb"] ?? process.env.MARSHALL_MEMORY_GB, 32),
+  memoryGb: positiveNumberArg(requiredArg("memory-gb", args["memory-gb"] ?? process.env.MARSHALL_MEMORY_GB)),
   tokensPerSecond: numberArg(args["tokens-per-second"] ?? process.env.MARSHALL_TOKENS_PER_SECOND, 1000),
   swarmToken: args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN,
 });
@@ -324,6 +324,13 @@ function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function requiredArg(name: string, value: string | undefined): string {
+  if (value == null || value.trim() === "") {
+    throw new Error(`--${name} is required`);
+  }
+  return value;
+}
+
 function controlAddrs(primary: string): ReturnType<typeof multiaddr>[] {
   const values = [
     ...splitList(primary),
@@ -357,6 +364,14 @@ function numberArg(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     throw new Error(`invalid number: ${value}`);
+  }
+  return parsed;
+}
+
+function positiveNumberArg(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
   }
   return parsed;
 }
