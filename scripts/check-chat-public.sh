@@ -60,6 +60,7 @@ if [ -z "$EXPECTED_IP" ]; then
 fi
 
 HOST="$(node -e 'console.log(new URL(process.argv[1]).hostname)' "$BASE_URL")"
+SCHEME="$(node -e 'console.log(new URL(process.argv[1]).protocol.replace(":", ""))' "$BASE_URL")"
 BASE_URL="${BASE_URL%/}"
 HEALTH_FILE="$(mktemp)"
 STREAM_FILE="$(mktemp)"
@@ -73,7 +74,21 @@ if ! printf "%s\n" "$DNS_IPS" | grep -Fx "$EXPECTED_IP" >/dev/null; then
 fi
 echo "dns ok: $HOST -> $EXPECTED_IP"
 
-curl -fsS --max-time "$TIMEOUT" "$BASE_URL/api/health" -o "$HEALTH_FILE"
+CURL_RESOLVE=()
+case "$SCHEME" in
+  http)
+    CURL_RESOLVE=(--resolve "$HOST:80:$EXPECTED_IP")
+    ;;
+  https)
+    CURL_RESOLVE=(--resolve "$HOST:443:$EXPECTED_IP")
+    ;;
+  *)
+    echo "Unsupported URL scheme: $SCHEME" >&2
+    exit 1
+    ;;
+esac
+
+curl -fsS --max-time "$TIMEOUT" "${CURL_RESOLVE[@]}" "$BASE_URL/api/health" -o "$HEALTH_FILE"
 node - "$HEALTH_FILE" <<'NODE'
 const { readFileSync } = require("node:fs");
 const file = process.argv[2];
@@ -106,6 +121,7 @@ process.stdout.write(JSON.stringify({
 NODE
 
 curl -fsS -N --max-time "$TIMEOUT" \
+  "${CURL_RESOLVE[@]}" \
   -X POST "$BASE_URL/api/chat/stream" \
   -H "content-type: application/json" \
   --data-binary "@$REQUEST_FILE" \

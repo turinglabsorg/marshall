@@ -425,7 +425,7 @@ scripts/check-chat-public.sh --url https://marshall.training/chat/ --expected-ip
 scripts/check-chat-public.sh --url https://marshall.chat --expected-ip 34.148.63.131
 ```
 
-The check verifies DNS, HTTPS health, a streamed P2P inference response, at least one ready worker, and that public `completed` SSE events do not expose the gateway-composed prompt or long-term memory context.
+The check verifies DNS, then pins `curl` to the expected IP to avoid stale local resolver caches while checking HTTPS health, a streamed P2P inference response, at least one ready worker, and that public `completed` SSE events do not expose the gateway-composed prompt or long-term memory context.
 
 ## Architecture
 
