@@ -89,6 +89,7 @@ export interface ModelRegistry {
 
 export interface CreateOptimizedModelPackageOptions {
   optimizedModel: OptimizedModelSelection;
+  runId?: string;
   metricsPath: string;
   adapterArtifactsDir: string;
   outputDir: string;
@@ -123,7 +124,7 @@ export async function createOptimizedModelPackage(
     strategy: values.optimizedModel.strategy,
     selection_policy: values.optimizedModel.selection_policy ?? null,
     created_at: createdAt,
-    run_id: metrics.run_id,
+    run_id: values.runId ?? metrics.run_id,
     base_model: metrics.model,
     adapter_id: selected.adapter_id,
     adapter_uri: modelArtifactUri(selected.adapter_id),

@@ -84,6 +84,12 @@ fi
 if [ -n "${MARSHALL_CHAT_CONVERSATION_TTL_DAYS:-}" ]; then
   ARGS+=(--conversation-ttl-days "$MARSHALL_CHAT_CONVERSATION_TTL_DAYS")
 fi
+if [ -n "${MARSHALL_MODEL_REGISTRY_PATH:-}" ]; then
+  ARGS+=(--model-registry-path "$MARSHALL_MODEL_REGISTRY_PATH")
+fi
+if [ -n "${MARSHALL_MODEL_REGISTRY_URL:-}" ]; then
+  ARGS+=(--model-registry-url "$MARSHALL_MODEL_REGISTRY_URL")
+fi
 if [ -n "${MARSHALL_CHAT_SYSTEM_PROMPT:-}" ]; then
   ARGS+=(--system-prompt "$MARSHALL_CHAT_SYSTEM_PROMPT")
 fi

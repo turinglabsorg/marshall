@@ -165,6 +165,7 @@ describe("round orchestrator CLI", () => {
     expect(summary.package.package_job_id).toBe("optimized_model_adapter_001");
 
     const modelPackage = JSON.parse(await readFile(join(packageDir, "model_package.json"), "utf8"));
+    expect(modelPackage.run_id).toBe("run_round_orchestrated_001");
     expect(modelPackage.adapter_path).toBe(adapterPath);
     expect(modelPackage.adapter_uri).toBe("marshall-artifact://adapter_001");
     expect(modelPackage.eval.accuracy).toBe(2 / 3);
@@ -184,6 +185,7 @@ describe("round orchestrator CLI", () => {
 
     const registry = JSON.parse(await readFile(join(tempDir, "index.json"), "utf8"));
     expect(registry.models[0]).toMatchObject({
+      run_id: "run_round_orchestrated_001",
       base_model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
       adapter_id: "adapter_001",
       adapter_uri: "marshall-artifact://adapter_001",

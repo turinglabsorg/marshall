@@ -261,6 +261,7 @@ async function selectModel(artifacts: CoordinatorArtifact[], options: RoundAdvan
         selection_policy: optimizedModel.selection_policy,
         selected: selection.selected,
       },
+      runId: options.runId,
       metricsPath: selection.selected.metrics_path,
       adapterArtifactsDir: args["adapter-artifacts-dir"] ?? process.env.MARSHALL_ADAPTER_ARTIFACTS_DIR ?? artifactStoreDir,
       outputDir: packageDir,

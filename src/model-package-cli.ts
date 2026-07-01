@@ -52,6 +52,7 @@ if (existingPackagePath != null && existingPackagePath !== "") {
       selection_policy: optimized.selection_policy ?? null,
       selected: optimized.selected,
     },
+    runId: args["run-id"] ?? process.env.MARSHALL_RUN_ID,
     metricsPath: optimized.selected.metrics_path,
     adapterArtifactsDir,
     outputDir,

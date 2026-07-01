@@ -13,6 +13,7 @@ marshall.training {
 
 	handle /models/index.json {
 		root * /var/lib/marshall/model-packages
+		rewrite * /index.json
 		file_server
 	}
 
