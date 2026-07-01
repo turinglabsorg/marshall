@@ -227,6 +227,30 @@ export const ArtifactManifestSchema = z.object({
   }).optional(),
 });
 
+export const InferenceRequestSchema = z.object({
+  type: z.literal("marshall_inference_request").optional(),
+  request_id: z.string().min(1).optional(),
+  prompt: z.string().min(1),
+  system_prompt: z.string().min(1).optional(),
+  max_tokens: z.number().int().positive().optional(),
+  temperature: z.number().finite().optional(),
+});
+
+export const InferenceResponseSchema = z.object({
+  type: z.literal("marshall_inference_response"),
+  accepted: z.boolean(),
+  peer_id: z.string().min(1),
+  worker_id: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  adapter_id: z.string().min(1).optional(),
+  adapter_hash: z.string().min(1).optional(),
+  prompt: z.string().min(1).optional(),
+  text: z.string().optional(),
+  raw_text: z.string().optional(),
+  elapsed_ms: z.number().nonnegative().optional(),
+  error: z.string().optional(),
+});
+
 export const TrainingArtifactManifestSchema = ArtifactManifestSchema.omit({
   peer_id: true,
   worker_id: true,
@@ -410,6 +434,8 @@ export type ArtifactFetchChunkRequest = z.infer<typeof ArtifactFetchChunkRequest
 export type ArtifactFetchRequest = z.infer<typeof ArtifactFetchRequestSchema>;
 export type ArtifactFetchManifestResponse = z.infer<typeof ArtifactFetchManifestResponseSchema>;
 export type ArtifactFetchChunkResponse = z.infer<typeof ArtifactFetchChunkResponseSchema>;
+export type InferenceRequest = z.infer<typeof InferenceRequestSchema>;
+export type InferenceResponse = z.infer<typeof InferenceResponseSchema>;
 export type ToyTrainingMetrics = z.infer<typeof ToyTrainingMetricsSchema>;
 export type MlxSmokeMetrics = z.infer<typeof MlxSmokeMetricsSchema>;
 export type MlxLoraMetrics = z.infer<typeof MlxLoraMetricsSchema>;

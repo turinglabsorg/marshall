@@ -83,7 +83,9 @@ Initial merge mode can remain `single_adapter`. Future merge modes may include w
 
 ## Phase 4: Replicated Distributed Inference
 
-`marshall.chat` should start as a replicated inference gateway.
+`marshall.chat` now has a first P2P inference prototype: an HTTP gateway can route a prompt to one explicit libp2p inference worker running the selected model package.
+
+The next product step is a replicated inference gateway.
 
 Workers advertise loaded models and adapters. A router receives a prompt, selects one capable worker, forwards the request, streams tokens back, and records runtime metrics.
 
@@ -100,7 +102,11 @@ Routing signals:
 
 This scales throughput by adding workers. It does not split one forward pass across random public machines.
 
-Required protocols:
+Implemented prototype protocol:
+
+- `/marshall/inference/generate/1.0.0` for gateway-to-worker generation requests.
+
+Required production protocols:
 
 - `serve_model` worker registration capability;
 - model cache manifest publication;
@@ -148,5 +154,6 @@ Cluster workers should still use Marshall identity, scheduling, artifact, and re
 4. Run a 1.5B or 3B adapter job with the current public job flow.
 5. Add automatic evaluation and validator job generation after training artifacts appear.
 6. Add a model package endpoint for the best accepted adapter.
-7. Add `serve_model` worker mode and a local inference gateway.
-8. Promote the gateway to `marshall.chat` after model package quality is validated.
+7. Add `serve_model` worker registration against the coordinator, including model package, queue depth, and live throughput.
+8. Add router selection across multiple inference workers instead of an explicit `--p2p-worker-addr`.
+9. Promote the gateway to `marshall.chat` after model package quality is validated.

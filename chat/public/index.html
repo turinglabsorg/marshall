@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>marshall.chat</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark" aria-hidden="true"></div>
+          <div>
+            <h1>marshall.chat</h1>
+            <span id="runtimeLabel">local inference</span>
+          </div>
+        </div>
+        <div class="statusline">
+          <span class="status-dot" id="readyDot"></span>
+          <span id="readyText">booting</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="chat-pane" aria-label="Chat">
+          <div class="terminal-title">
+            <span>session</span>
+            <span id="latencyLabel">idle</span>
+          </div>
+          <div class="transcript" id="transcript"></div>
+          <form class="composer" id="chatForm">
+            <textarea id="promptInput" rows="3" spellcheck="false" autocomplete="off" placeholder="Ask the current Marshall package something"></textarea>
+            <div class="composer-actions">
+              <label>
+                <span>tokens</span>
+                <input id="tokensInput" type="number" min="8" max="512" value="96">
+              </label>
+              <label>
+                <span>temp</span>
+                <input id="tempInput" type="number" min="0" max="2" step="0.1" value="0.2">
+              </label>
+              <button id="sendButton" type="submit">send</button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="side-pane" aria-label="Runtime">
+          <section class="model-panel">
+            <div class="terminal-title">
+              <span>package</span>
+              <span id="scoreLabel">score --</span>
+            </div>
+            <dl>
+              <dt>model</dt>
+              <dd id="modelLabel">--</dd>
+              <dt>adapter</dt>
+              <dd id="adapterLabel">--</dd>
+              <dt>hash</dt>
+              <dd id="hashLabel">--</dd>
+              <dt>eval</dt>
+              <dd id="evalLabel">--</dd>
+            </dl>
+          </section>
+
+          <section class="activity-panel">
+            <div class="terminal-title">
+              <span>activity</span>
+              <span id="clockLabel">--:--:--</span>
+            </div>
+            <div class="activity-log" id="activityLog"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

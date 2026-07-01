@@ -482,10 +482,10 @@ function Hero() {
         </div>
         <aside className="join-panel">
           <h3>worker bootstrap</h3>
-          <p>No join token. Fetch the live control address, start a worker, and let your Mac claim the next compatible job.</p>
+          <p>No join token. Fetch the live control address, start a model worker, and let your Mac claim training, evaluation, or validation work.</p>
           <code className="command">{`npm run worker:pool:compiled -- \\
   --control "$MARSHALL_CONTROL_ADDR" \\
-  --job-type train_adapter \\
+  --job-types train_adapter,evaluate_adapter,validate_artifact \\
   --backend mlx \\
   --concurrency 1 \\
   --max-jobs 1`}</code>

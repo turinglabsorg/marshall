@@ -93,23 +93,23 @@ The value should look like:
 
 ## Join Available Work
 
-Run the multi-role worker supervisor. It starts separate persistent pools for training, adapter evaluation, and artifact validation, so your Mac can keep participating as the round moves through phases.
+Run the model worker supervisor. A model worker is one persistent worker pool that can train adapters, evaluate adapters, and validate artifacts. Inference workers are a separate future role because they keep a selected model package hot for chat traffic.
 
 ```sh
 npm run worker:join:compiled -- \
   --control "$MARSHALL_CONTROL_ADDR" \
   --worker-id-base "$(hostname)" \
   --state-dir .marshall/public-worker \
-  --train-concurrency 1 \
-  --eval-concurrency 1 \
-  --validation-concurrency 2 \
+  --model-concurrency 2 \
+  --slot-memory-gb 16 \
   --memory-gb 32 \
   --python "$MARSHALL_PYTHON"
 ```
 
-Keep this process running. When one job finishes, the same role immediately asks for more compatible work. Keep train/eval concurrency at `1` until you know the machine has enough memory for parallel MLX runs; validation is CPU-light and can usually use more slots.
+Keep this process running. When one job finishes, the same model worker slot immediately asks for more compatible work across training, evaluation, and validation. Keep `--model-concurrency` low until you know the machine has enough memory for parallel MLX runs.
 For later restarts, keep the same `--worker-id-base` and `--state-dir` if you want to preserve the same worker identities and reputation.
 Set `--memory-gb` to the real unified memory or RAM available to the worker. Some jobs declare `resource_requirements.min_memory_gb`; workers below that threshold stay idle and should not claim the job.
+Set `--slot-memory-gb` to the memory budget per concurrent slot; the pool caps concurrency against `--memory-gb`.
 
 If you intentionally want to run only one role for debugging, use `npm run worker:pool:compiled` with an explicit `--job-type`, separate `--worker-id-prefix`, `--key-dir`, and role-specific cache/artifact directories.
 

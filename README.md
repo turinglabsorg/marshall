@@ -103,8 +103,8 @@ The worker flow is:
 3. install dependencies and build;
 4. install an MLX Python environment on Apple Silicon;
 5. fetch the live control address from `https://marshall.training/control.json`;
-6. start `worker:pool:compiled` with `--job-type train_adapter`;
-7. let the worker download only its assigned shard, verify hashes, train, and publish the artifact.
+6. start `worker:join:compiled` or `worker:pool:compiled` with `--job-types train_adapter,evaluate_adapter,validate_artifact`;
+7. let the worker download only assigned shards or artifacts, verify hashes, run the compatible phase, and publish the artifact.
 
 Generated worker state, dataset caches, model files, and artifacts stay under `.marshall/` and must not be committed.
 
@@ -148,7 +148,7 @@ Start a local worker:
 ```bash
 npm run worker:pool -- \
   --control /ip4/127.0.0.1/tcp/4001/p2p/<control-peer-id> \
-  --job-type train_adapter \
+  --job-types train_adapter,evaluate_adapter,validate_artifact \
   --backend mlx \
   --concurrency 1 \
   --dataset-cache-dir .marshall/cache/datasets \
@@ -276,21 +276,79 @@ npm run round:daemon:compiled -- \
 
 ## Multi-Mac Workers
 
-Use `worker:join:compiled` for a Mac that should remain available across train, evaluation, and validation phases. It fetches `/control.json`, starts separate persistent pools per role, and keeps role identities, caches, input artifacts, and outputs separated.
+Use `worker:join:compiled` for a Mac that should remain available across train, evaluation, and validation phases. It fetches `/control.json` and starts one persistent `model` worker pool whose slots can claim training, evaluation, or validation jobs as the run advances. Inference workers are separate because they keep selected model packages hot for chat traffic.
 
 ```bash
 npm run worker:join:compiled -- \
   --control-url https://marshall.training/control.json \
   --worker-id-base "$(hostname)" \
   --state-dir .marshall/public-worker \
-  --train-concurrency 1 \
-  --eval-concurrency 1 \
-  --validation-concurrency 2 \
+  --model-concurrency 2 \
+  --slot-memory-gb 16 \
   --memory-gb 32 \
   --python "$MARSHALL_PYTHON"
 ```
 
-Increase role concurrency only after confirming memory headroom on that Mac. Keep the same `--worker-id-base` and `--state-dir` across restarts to preserve worker identity and reputation.
+Increase `--model-concurrency` only after confirming memory headroom on that Mac. `--slot-memory-gb` is the per-slot budget used to cap effective concurrency against `--memory-gb`. Keep the same `--worker-id-base` and `--state-dir` across restarts to preserve worker identity and reputation.
+
+## P2P marshall.chat Prototype
+
+`marshall.chat` should be tested as a distributed path: an HTTP gateway serves the UI, but generation is performed by a separate libp2p inference worker. A local-process gateway is still available for debugging, but it is not the product proof.
+
+Start the inference worker on the machine that owns the model and adapter, for example an Apple Silicon MacBook:
+
+```bash
+npm run inference:worker -- \
+  --key .marshall/inference-worker.key \
+  --listen /ip4/0.0.0.0/tcp/8788 \
+  --worker-id "$(hostname)-inference-0001" \
+  --model mlx-community/gemma-3-1b-it-4bit \
+  --adapter-id job_dolly_gemma3_1b_public_shard_007 \
+  --adapter-path .marshall/input-artifacts/<worker-id>/job_dolly_gemma3_1b_public_shard_007/artifact \
+  --adapter-hash sha256:<adapter-root-hash> \
+  --python ~/.marshall/mlx-venv/bin/python
+```
+
+The worker prints libp2p multiaddrs. Start the gateway on the Mac Pro with one reachable worker address:
+
+```bash
+npm run chat:dev -- \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --runtime p2p_worker \
+  --p2p-key .marshall/chat-gateway.key \
+  --p2p-worker-addr "/ip4/<worker-ip>/tcp/8788/p2p/<worker-peer-id>" \
+  --model mlx-community/gemma-3-1b-it-4bit \
+  --adapter-id job_dolly_gemma3_1b_public_shard_007 \
+  --adapter-hash sha256:<adapter-root-hash>
+```
+
+Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health` and `POST /api/chat`; `/api/chat` sends `/marshall/inference/generate/1.0.0` to the worker over libp2p and returns the worker response.
+
+In the chat composer, `Enter` submits the prompt and `Shift+Enter` inserts a newline.
+
+For a single-process debugging run only:
+
+```bash
+npm run chat:dev -- \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --model-package .marshall/model-packages/<run-id>/model_package.json \
+  --python ~/.marshall/mlx-venv/bin/python
+```
+
+For a package whose adapter path is not valid on the current machine, pass explicit local values:
+
+```bash
+npm run chat:dev -- \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --model mlx-community/gemma-3-1b-it-4bit \
+  --adapter-id job_dolly_gemma3_1b_public_shard_007 \
+  --adapter-path .marshall/input-artifacts/<worker-id>/job_dolly_gemma3_1b_public_shard_007/artifact \
+  --adapter-hash sha256:<adapter-root-hash> \
+  --python ~/.marshall/mlx-venv/bin/python
+```
 
 ## Public Deployment
 
@@ -323,7 +381,9 @@ Core components:
 - `coordinator/ui/`: React source for the public dashboard; `coordinator/public/` contains the static assets embedded by Go;
 - `src/control-peer.ts`: libp2p control peer and worker protocol handlers;
 - `src/worker-peer.ts`: worker registration, heartbeat, claim, status, and artifact publication;
-- `src/worker-supervisor-cli.ts`: multi-role Mac worker supervisor for train/eval/validation pools;
+- `src/worker-supervisor-cli.ts`: persistent model worker supervisor for train/eval/validation work;
+- `src/inference-worker-cli.ts`: libp2p inference worker for selected model packages;
+- `src/chat-server-cli.ts`: `marshall.chat` gateway with local debug and P2P worker runtimes;
 - `src/round-daemon-cli.ts`: unattended train/eval/validation/selection round manager;
 - `src/training-runner.ts`: training, evaluation, and validation runner bridge;
 - `src/dataset-manifest.ts`: content-addressed dataset manifest generation;

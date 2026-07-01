@@ -5,7 +5,7 @@ Marshall is a permissionless distributed training network for small language mod
 ## Deployment Domains
 
 - Use `marshall.training` for the public training network surface: coordinator console, active jobs, worker onboarding, and participation instructions.
-- Keep `marshall.chat` reserved for future chat/inference demos after model quality and serving are validated.
+- Keep `marshall.chat` reserved for chat/inference demos after model quality and serving are validated. The current local milestone is a P2P prototype: Mac Pro HTTP gateway to an explicit libp2p inference worker.
 - Use `./scripts/deploy-gcp-micro.sh` for the current public trial deployment. It targets a dedicated GCP VM, keeps Redis local to the VM, runs the coordinator on internal `127.0.0.1:8080`, exposes Caddy on public `80/443`, exposes the libp2p control peer on public TCP `4001`, and stores generated admin secrets under ignored `.marshall/secrets/`.
 - Current public trial host: GCP project `iconic-elevator-394020`, instance `marshall-micro-1`, zone `us-east1-b`, machine type `e2-small`, static address `marshall-training-ip` (`34.148.63.131`). Redis must remain bound to `127.0.0.1:6379` on the VM. Keep a 2GB local swapfile enabled for coordinator/control bursts. Workers join permissionlessly through `/control.json`; do not require or document a public `MARSHALL_SWARM_TOKEN`.
 
@@ -39,6 +39,7 @@ Marshall is a permissionless distributed training network for small language mod
 /marshall/job/status/1.0.0
 /marshall/artifact/manifest/1.0.0
 /marshall/artifact/fetch/1.0.0
+/marshall/inference/generate/1.0.0
 ```
 
 ## Implemented Prototype
@@ -59,7 +60,7 @@ Marshall is a permissionless distributed training network for small language mod
 - `src/worker-cli.ts` materializes `marshall-artifact://<job_id>` job inputs from the control peer before `evaluate_adapter` or `validate_artifact` execution.
 - `src/worker-cli.ts` retries transient artifact manifest publication failures, including empty p2p stream payloads during control peer restarts, before marking a completed local run as failed.
 - `src/worker-pool-cli.ts` starts persistent concurrent worker slots against a control peer. Each slot runs a one-job worker process, then immediately claims more compatible work. Without `--max-jobs`, the pool keeps polling when the queue is empty; use `--max-jobs` and `--exit-when-idle` only for bounded tests or maintenance runs. Use this for product E2E proof instead of manual shell loops.
-- `src/worker-supervisor-cli.ts` starts persistent multi-role Mac worker pools for `train_adapter`, `evaluate_adapter`, and `validate_artifact` with separate role keys, caches, input artifacts, and output artifacts. Use this for public multi-Mac participation so a Mac can remain available across round phases.
+- `src/worker-supervisor-cli.ts` starts one persistent `model` worker pool that supports `train_adapter`, `evaluate_adapter`, and `validate_artifact` together. Use this for public multi-Mac participation so a Mac can remain available across the whole model-production pipeline. Inference workers are a separate future role because they serve selected model packages and must keep models hot.
 - Worker identity is the pair of `worker_id` and libp2p peer key. If a run reuses the same `--worker-id-prefix`, it must reuse the same `--key-dir`; otherwise the coordinator rejects registration with a peer mismatch to prevent identity takeover.
 - `src/artifact-transfer.ts` implements chunked artifact bundles. Every chunk carries a SHA-256 hash, receivers retry corrupted chunks, every file is hashed after download, and the final artifact root hash must match the manifest before the control peer publishes it.
 - `src/wire.ts` uses `MARSHALL_P2P_REQUEST_TIMEOUT_MS` for libp2p JSON request timeouts and defaults to 30 seconds so cold remote dials are not rejected by the old 5 second local-only timeout.
@@ -89,6 +90,10 @@ Marshall is a permissionless distributed training network for small language mod
 - `src/leaderboard-cli.ts` scans artifact stores for `adapter_evaluation` metrics, skips unrelated training/validation metrics, and writes `leaderboard.json`, `top_k.json`, and `optimized_model.json` with an explicit `selection_policy`. With `--coordinator-url --require-verdict accepted`, it filters model selection to coordinator-accepted artifacts only.
 - `src/model-package-cli.ts` packages the selected optimized model as base model + LoRA adapter metadata and emits an `optimized_model_package` manifest. Use `--adapter-artifacts-dir` so packages point at the control peer's verified local adapter copy instead of a worker-local path embedded in evaluation metrics.
 - `src/model-query-cli.ts` queries a packaged optimized model against a selected eval record and can fail unless the answer is correct.
+- `src/inference-worker-cli.ts` starts a libp2p inference worker for `marshall.chat`. The worker owns the base model + adapter paths, handles `/marshall/inference/generate/1.0.0`, and runs `training/mlx_lora_chat.py` locally to return a generation response.
+- `src/chat-server-cli.ts` serves the `marshall.chat` gateway. In `--runtime p2p_worker` mode it serves `chat/public`, exposes `GET /api/health` and `POST /api/chat`, and forwards prompts over libp2p to `--p2p-worker-addr`. Use this for real distributed inference tests. `local_process` mode remains available only for single-machine debugging.
+- `chat/public/app.js` submits the composer on `Enter` and preserves multiline input on `Shift+Enter`.
+- `tests/inference-p2p.test.ts` verifies the distributed chat path with two real libp2p peers: an HTTP gateway peer and an inference worker peer. Run it with Node.js 22+ outside restricted sandboxes because it opens TCP sockets.
 - `src/e2e-ag-news-cli.ts` runs the AG News product E2E path: training worker pool, p2p artifact upload to the control store, p2p adapter download for evaluation workers, evaluation artifact upload, optional p2p validation target download, accepted-only leaderboard selection, package from verified adapter storage, query, and optional coordinator persistence verification.
 - `src/dataset-manifest-cli.ts` builds private content-addressed dataset manifests from local JSONL inputs under `.marshall/`, with optional external `--base-uri` shard URLs for remote workers. It accepts existing `messages[]` chat records, `--text-field` plain text records, and instruction-tuning records through `--instruction-field`, `--response-field`, optional `--context-field`, and optional `--system-prompt`.
 - `src/dataset-run-cli.ts` is the product path for dataset-backed training work. It can build the manifest, generate the run bundle, write `jobs/train-adapters.json`, and publish those jobs to the coordinator when `--coordinator-url` is provided.
@@ -156,7 +161,7 @@ Product E2E validation should use this shape:
 npm run control:start -- --coordinator-url <coordinator-url> --coordinator-jobs true --artifact-store-dir <control-artifacts> --artifact-serve-dirs <control-artifacts>
 npm run dataset:run:prepare -- --dataset-dir <dataset-dir> --run-id <run-id> --run-dir .marshall/runs/<run-id> --job-count <n> --job-id-prefix <train-job-prefix> --model <base-model> --min-memory-gb <gb> --publish true --coordinator-url <coordinator-url>
 npm run round:daemon -- --coordinator-url <coordinator-url> --run-id <run-id> --round-id <round-id> --jobs-dir .marshall/runs/<run-id>/jobs --train-job-prefix <train-job-prefix> --eval-job-prefix <eval-job-prefix> --validation-job-prefix <validation-job-prefix> --eval-file <eval.jsonl> --eval-uri <worker-resolvable-eval-uri> --eval-kind instruction_terms --model <base-model> --max-examples <n> --max-tokens <n> --eval-min-memory-gb <gb> --validators-per-artifact 2 --quorum 2 --min-accuracy <n> --max-invalid-rate <n> --min-examples <n> --artifact-store-dir <control-artifacts> --leaderboard-dir <leaderboard-dir> --package-dir <package-dir> --top-k <n> --require-verdict accepted
-npm run worker:join -- --control <control-multiaddr> --worker-id-base <machine-id> --state-dir .marshall/public-worker --train-concurrency <n> --eval-concurrency <n> --validation-concurrency <n> --memory-gb <gb> --python <mlx-python>
+npm run worker:join -- --control <control-multiaddr> --worker-id-base <machine-id> --state-dir .marshall/public-worker --model-concurrency <n> --slot-memory-gb <gb-per-slot> --memory-gb <gb> --python <mlx-python>
 ```
 
 Prefer the single product runner when validating the whole AG News path:

@@ -1,0 +1,363 @@
+:root {
+  color-scheme: dark;
+  --bg: #020403;
+  --panel: #050a07;
+  --panel-2: #08110c;
+  --line: #173b24;
+  --line-hot: #38f173;
+  --text: #d7ffe1;
+  --muted: #7eaa8a;
+  --soft: #a7d5b3;
+  --danger: #ff5f78;
+  --warn: #f6d35d;
+  --shadow: rgba(24, 255, 112, 0.18);
+  --mono: "Berkeley Mono", "Iosevka Term", "JetBrains Mono", "SFMono-Regular", "Cascadia Code", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    linear-gradient(rgba(56, 241, 115, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 241, 115, 0.025) 1px, transparent 1px),
+    radial-gradient(circle at 18% 10%, rgba(56, 241, 115, 0.12), transparent 28rem),
+    var(--bg);
+  background-size: 18px 18px, 18px 18px, auto;
+  color: var(--text);
+  font-family: var(--mono);
+  letter-spacing: 0;
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+}
+
+.shell {
+  min-height: 100vh;
+  padding: 18px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 14px;
+}
+
+.topbar,
+.chat-pane,
+.model-panel,
+.activity-panel {
+  border: 1px solid var(--line);
+  background: rgba(5, 10, 7, 0.92);
+  box-shadow: 0 0 0 1px rgba(56, 241, 115, 0.04), 0 24px 80px rgba(0, 0, 0, 0.44);
+}
+
+.topbar {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mark {
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line-hot);
+  background:
+    linear-gradient(90deg, transparent 45%, rgba(56, 241, 115, 0.22) 46%, transparent 54%),
+    linear-gradient(transparent 45%, rgba(56, 241, 115, 0.22) 46%, transparent 54%),
+    var(--panel);
+  box-shadow: 0 0 28px var(--shadow), inset 0 0 18px rgba(56, 241, 115, 0.12);
+}
+
+h1 {
+  margin: 0;
+  color: #6cff94;
+  font-size: 22px;
+  line-height: 1.05;
+  text-transform: lowercase;
+}
+
+.brand span,
+.statusline,
+.terminal-title,
+dt,
+.composer-actions span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.statusline {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 16px rgba(246, 211, 93, 0.5);
+}
+
+.status-dot.ready {
+  background: var(--line-hot);
+  box-shadow: 0 0 18px var(--shadow);
+}
+
+.status-dot.bad {
+  background: var(--danger);
+  box-shadow: 0 0 18px rgba(255, 95, 120, 0.45);
+}
+
+.workspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 14px;
+}
+
+.chat-pane,
+.side-pane {
+  min-height: 0;
+}
+
+.chat-pane {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.side-pane {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 14px;
+}
+
+.terminal-title {
+  height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.terminal-title span:first-child::before {
+  content: "./";
+  color: var(--line-hot);
+}
+
+.transcript {
+  min-height: 380px;
+  max-height: calc(100vh - 238px);
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.message {
+  max-width: 88ch;
+  border-left: 2px solid var(--line);
+  padding: 3px 0 3px 12px;
+}
+
+.message.user {
+  border-left-color: #6cff94;
+}
+
+.message.assistant {
+  border-left-color: #79a8ff;
+}
+
+.message.error {
+  border-left-color: var(--danger);
+  color: #ffc7d0;
+}
+
+.message-role {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.message-text {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.composer {
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 86px;
+  resize: vertical;
+  color: var(--text);
+  background: #020503;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  outline: none;
+  padding: 12px;
+  line-height: 1.45;
+}
+
+textarea:focus,
+input:focus {
+  border-color: var(--line-hot);
+  box-shadow: 0 0 0 1px rgba(56, 241, 115, 0.28);
+}
+
+.composer-actions {
+  width: 138px;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 8px;
+}
+
+.composer-actions label {
+  display: grid;
+  gap: 4px;
+}
+
+input {
+  width: 100%;
+  color: var(--text);
+  background: #020503;
+  border: 1px solid var(--line);
+  padding: 8px;
+  border-radius: 0;
+}
+
+button {
+  border: 1px solid var(--line-hot);
+  background: #092513;
+  color: #8dffac;
+  border-radius: 0;
+  min-height: 40px;
+  padding: 0 14px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+button:hover:not(:disabled) {
+  background: #0d351b;
+  box-shadow: 0 0 22px var(--shadow);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.model-panel dl {
+  margin: 0;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px 12px;
+}
+
+dt,
+dd {
+  margin: 0;
+  min-width: 0;
+}
+
+dd {
+  color: var(--soft);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.activity-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.activity-log {
+  min-height: 160px;
+  max-height: calc(100vh - 366px);
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.event {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.event strong {
+  color: var(--line-hot);
+  font-weight: 600;
+}
+
+@media (max-width: 880px) {
+  .shell {
+    padding: 10px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .transcript,
+  .activity-log {
+    max-height: none;
+  }
+
+  .composer {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-actions {
+    width: 100%;
+    grid-template-columns: 1fr 1fr auto;
+    grid-template-rows: auto;
+    align-items: end;
+  }
+}
