@@ -11,14 +11,27 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import mlx.core as mx
 
 
 TRAIN_LOSS_RE = re.compile(r"train\s+loss\s+([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 VAL_LOSS_RE = re.compile(r"val\s+loss\s+([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
+ITER_RE = re.compile(r"\b(?:iter|iteration)\s*[:=]?\s*([0-9]+)(?:\s*/\s*([0-9]+))?", re.IGNORECASE)
+THROUGHPUT_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*(?:it/s|iter/s|iters/s|iterations/s)", re.IGNORECASE)
+PROGRESS_PREFIX = "MARSHALL_PROGRESS "
+
+
+@dataclass
+class ProcessResult:
+    returncode: int
+    stdout: str
+    stderr: str
 
 
 def main() -> None:
@@ -68,19 +81,16 @@ def main() -> None:
 
     env = os.environ.copy()
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
-    completed = subprocess.run(
+    stdout_path = output_dir / "mlx_lm_stdout.log"
+    stderr_path = output_dir / "mlx_lm_stderr.log"
+    completed = run_streaming_process(
         command,
         cwd=output_dir,
         env=env,
-        text=True,
-        capture_output=True,
-        check=False,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        total_iters=args.iters,
     )
-
-    stdout_path = output_dir / "mlx_lm_stdout.log"
-    stderr_path = output_dir / "mlx_lm_stderr.log"
-    stdout_path.write_text(completed.stdout, encoding="utf8")
-    stderr_path.write_text(completed.stderr, encoding="utf8")
 
     if completed.returncode != 0:
         raise RuntimeError(
@@ -167,6 +177,90 @@ def lora_command() -> list[str]:
         return [str(venv_executable)]
 
     return [sys.executable, "-m", "mlx_lm.lora"]
+
+
+def run_streaming_process(
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    stdout_path: Path,
+    stderr_path: Path,
+    total_iters: int,
+) -> ProcessResult:
+    started_at = time.monotonic()
+    last_iter = 0
+    lock = threading.Lock()
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+    )
+
+    def pump(stream: TextIO | None, sink: TextIO, chunks: list[str]) -> None:
+        nonlocal last_iter
+        if stream is None:
+            return
+        try:
+            for line in stream:
+                sink.write(line)
+                sink.flush()
+                chunks.append(line)
+                progress = progress_from_line(line, total_iters, started_at)
+                if progress is None:
+                    continue
+                with lock:
+                    iteration = int(progress["work_units_done"])
+                    if iteration < last_iter:
+                        continue
+                    last_iter = iteration
+                print(PROGRESS_PREFIX + json.dumps(progress, separators=(",", ":")), flush=True)
+        finally:
+            stream.close()
+
+    with stdout_path.open("w", encoding="utf8") as stdout_file, stderr_path.open("w", encoding="utf8") as stderr_file:
+        stdout_thread = threading.Thread(target=pump, args=(process.stdout, stdout_file, stdout_chunks), daemon=True)
+        stderr_thread = threading.Thread(target=pump, args=(process.stderr, stderr_file, stderr_chunks), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+        returncode = process.wait()
+        stdout_thread.join()
+        stderr_thread.join()
+
+    return ProcessResult(
+        returncode=returncode,
+        stdout="".join(stdout_chunks),
+        stderr="".join(stderr_chunks),
+    )
+
+
+def progress_from_line(line: str, total_iters: int, started_at: float) -> dict[str, Any] | None:
+    match = ITER_RE.search(line)
+    if match is None:
+        return None
+    iteration = int(match.group(1))
+    if iteration <= 0:
+        return None
+    observed_total = int(match.group(2)) if match.group(2) is not None else total_iters
+    total = max(total_iters, observed_total, iteration)
+    elapsed = max(time.monotonic() - started_at, 0.001)
+    throughput_match = THROUGHPUT_RE.search(line)
+    throughput = float(throughput_match.group(1)) if throughput_match is not None else iteration / elapsed
+    percent = max(0.0, min(100.0, (iteration / total) * 100.0))
+    return {
+        "progress_percent": percent,
+        "progress_label": f"training {iteration}/{total} iters",
+        "work_units_done": iteration,
+        "work_units_total": total,
+        "throughput_units_per_second": throughput,
+        "throughput_label": "iters/s",
+    }
 
 
 def count_jsonl(path: Path) -> int:

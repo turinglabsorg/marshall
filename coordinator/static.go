@@ -9,6 +9,9 @@ import (
 //go:embed public/index.html
 var indexHTML string
 
+//go:embed public/dashboard.js
+var dashboardJS string
+
 //go:embed public/AGENTS.md
 var participantAgentsMarkdown string
 
@@ -29,6 +32,12 @@ func (server *Server) participantAgents(response http.ResponseWriter, _ *http.Re
 	response.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	response.Header().Set("Cache-Control", "no-store")
 	_, _ = io.WriteString(response, participantAgentsMarkdown)
+}
+
+func (server *Server) dashboardJavaScript(response http.ResponseWriter, _ *http.Request) {
+	response.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(response, dashboardJS)
 }
 
 func (server *Server) favicon(response http.ResponseWriter, _ *http.Request) {

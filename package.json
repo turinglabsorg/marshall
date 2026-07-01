@@ -6,7 +6,8 @@
   "type": "module",
   "description": "Permissionless SLM training network for verifiable LoRA worker swarms",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run dashboard:build",
+    "dashboard:build": "esbuild coordinator/ui/main.jsx --bundle --format=esm --jsx=automatic --outfile=coordinator/public/dashboard.js --minify",
     "dataset:marshall:build": "python3 training/build_marshall_instruction_dataset.py --output-dir .marshall/datasets/marshall-instructions",
     "dataset:marshall:check": "python3 training/build_marshall_instruction_dataset.py --output-dir .marshall/datasets/marshall-instructions --check",
     "dataset:ag-news:build": "python3 training/build_ag_news_dataset.py --output-dir .marshall/datasets/ag-news",
@@ -60,6 +61,8 @@
     "it-length-prefixed": "^11.0.1",
     "it-pipe": "^3.0.1",
     "libp2p": "^3.3.4",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "uint8arrays": "^6.1.1",
     "zod": "^4.4.3"
   },

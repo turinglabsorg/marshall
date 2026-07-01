@@ -61,14 +61,14 @@ Workers never receive Redis credentials. Redis is private to the coordinator hos
 Implemented:
 
 - native Go coordinator with Redis state and append-only event stream;
-- terminal-style public dashboard at `marshall.training`;
+- React terminal-style public dashboard at `marshall.training`, served as static build assets by the Go coordinator;
 - permissionless libp2p control peer on public TCP `4001`;
 - public `/control.json` for worker discovery;
 - public `/AGENTS.md` worker onboarding;
 - TypeScript libp2p worker/control protocols;
 - persistent Ed25519 worker identities;
 - persistent worker pool CLI with stable concurrent slots;
-- MLX LoRA training runner;
+- MLX LoRA training runner with live progress telemetry from observed MLX-LM iteration output;
 - dataset manifest builder with HTTP/S shard URIs;
 - dataset cache with file size and SHA-256 verification;
 - chunked p2p artifact transfer with retry and final root hash checks;
@@ -311,7 +311,7 @@ Deploy:
 ./scripts/deploy-gcp-micro.sh
 ```
 
-The deploy script builds the TypeScript runtime and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery.
+The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery.
 
 ## Architecture
 
@@ -319,6 +319,7 @@ Core components:
 
 - `cmd/marshall-coordinator`: native Go coordinator daemon;
 - `coordinator/`: Redis-backed state, HTTP API, dashboard, reputation, validation votes;
+- `coordinator/ui/`: React source for the public dashboard; `coordinator/public/` contains the static assets embedded by Go;
 - `src/control-peer.ts`: libp2p control peer and worker protocol handlers;
 - `src/worker-peer.ts`: worker registration, heartbeat, claim, status, and artifact publication;
 - `src/worker-supervisor-cli.ts`: multi-role Mac worker supervisor for train/eval/validation pools;

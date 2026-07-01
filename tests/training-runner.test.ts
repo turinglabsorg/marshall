@@ -129,12 +129,19 @@ describe("training runner", () => {
           ],
         },
       };
+      const progressUpdates: Array<{ progress_percent: number; progress_label: string }> = [];
 
       const result = await runMlxLoraTraining(job, {
         projectRoot,
         outputRoot,
         datasetCacheRoot: cacheRoot,
         pythonBin: process.execPath,
+        onProgress: (progress) => {
+          progressUpdates.push({
+            progress_percent: progress.progress_percent,
+            progress_label: progress.progress_label,
+          });
+        },
       });
 
       const datasetInfo = await stat(result.metrics.dataset);
@@ -142,6 +149,16 @@ describe("training runner", () => {
       expect(result.metrics.dataset).toBe(join(cacheRoot, job.dataset_shard.hash.replace("sha256:", "")));
       expect(result.metrics.train_examples).toBe(1);
       expect(result.manifest.artifact_type).toBe("lora_adapter");
+      expect(progressUpdates).toEqual([
+        {
+          progress_percent: 50,
+          progress_label: "training 1/2 iters",
+        },
+        {
+          progress_percent: 100,
+          progress_label: "training 2/2 iters",
+        },
+      ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -204,7 +221,23 @@ if (!statSync(datasetDir).isDirectory()) {
 }
 readFileSync(trainPath, "utf8");
 mkdirSync(adapterDir, { recursive: true });
+console.log("MARSHALL_PROGRESS " + JSON.stringify({
+  progress_percent: 50,
+  progress_label: "training 1/2 iters",
+  work_units_done: 1,
+  work_units_total: 2,
+  throughput_units_per_second: 0.5,
+  throughput_label: "iters/s",
+}));
 writeFileSync(join(adapterDir, "adapter_config.json"), "{}\\n", "utf8");
+console.log("MARSHALL_PROGRESS " + JSON.stringify({
+  progress_percent: 100,
+  progress_label: "training 2/2 iters",
+  work_units_done: 2,
+  work_units_total: 2,
+  throughput_units_per_second: 1,
+  throughput_label: "iters/s",
+}));
 writeFileSync(join(outputDir, "stdout.log"), "ok\\n", "utf8");
 writeFileSync(join(outputDir, "stderr.log"), "\\n", "utf8");
 writeFileSync(join(outputDir, "metrics.json"), JSON.stringify({

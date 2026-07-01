@@ -40,6 +40,7 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 func (server *Server) routes() {
 	server.mux.HandleFunc("GET /", server.index)
 	server.mux.HandleFunc("GET /AGENTS.md", server.participantAgents)
+	server.mux.HandleFunc("GET /dashboard.js", server.dashboardJavaScript)
 	server.mux.HandleFunc("GET /favicon.svg", server.favicon)
 	server.mux.HandleFunc("GET /health", server.health)
 	server.mux.HandleFunc("GET /dashboard", server.dashboard)

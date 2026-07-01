@@ -22,7 +22,18 @@ import {
   type ToyTrainingMetrics,
   type TrainingArtifactManifest,
   type TrainingJob,
+  type WorkerHeartbeat,
 } from "./schemas.js";
+
+const PROGRESS_PREFIX = "MARSHALL_PROGRESS ";
+
+export type TrainingProgressUpdate = Partial<Pick<
+  WorkerHeartbeat,
+  "work_units_done" | "work_units_total" | "throughput_units_per_second" | "throughput_label"
+>> & {
+  progress_percent: number;
+  progress_label: string;
+};
 
 export interface ToyTrainingRunnerOptions {
   outputRoot: string;
@@ -72,6 +83,7 @@ export interface MlxLoraRunnerOptions {
   seed?: number;
   maskPrompt?: boolean;
   gradCheckpoint?: boolean;
+  onProgress?: (progress: TrainingProgressUpdate) => void;
 }
 
 export interface MlxLoraRun {
@@ -224,7 +236,9 @@ export async function runMlxLoraTraining(job: TrainingJob, options: MlxLoraRunne
     args.push("--grad-checkpoint");
   }
 
-  const result = await runProcess(options.pythonBin ?? "python3", args);
+  const result = await runProcess(options.pythonBin ?? "python3", args, {
+    onProgress: options.onProgress,
+  });
   const metrics = MlxLoraMetricsSchema.parse(JSON.parse(await readFile(metricsPath, "utf8")));
   const configHash = sha256Text(JSON.stringify({
     job_type: job.job_type,
@@ -703,7 +717,11 @@ function resolveArtifactUri(uri: string, projectRoot: string): string {
   return uri.startsWith("/") ? uri : resolve(projectRoot, uri);
 }
 
-async function runProcess(command: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+async function runProcess(
+  command: string,
+  args: string[],
+  options: { onProgress?: (progress: TrainingProgressUpdate) => void } = {},
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolveProcess, reject) => {
     const child = spawn(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -711,17 +729,38 @@ async function runProcess(command: string, args: string[]): Promise<{ stdout: st
 
     let stdout = "";
     let stderr = "";
+    let stdoutPending = "";
+    let stderrPending = "";
+    let progressError: unknown;
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
+      stdoutPending = consumeProgressLines(stdoutPending + chunk, options.onProgress, (error) => {
+        progressError = error;
+        child.kill();
+      });
     });
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
+      stderrPending = consumeProgressLines(stderrPending + chunk, options.onProgress, (error) => {
+        progressError = error;
+        child.kill();
+      });
     });
     child.on("error", reject);
     child.on("close", (code) => {
+      consumeProgressLines(stdoutPending + "\n", options.onProgress, (error) => {
+        progressError = error;
+      });
+      consumeProgressLines(stderrPending + "\n", options.onProgress, (error) => {
+        progressError = error;
+      });
+      if (progressError != null) {
+        reject(progressError);
+        return;
+      }
       if (code === 0) {
         resolveProcess({ stdout, stderr });
         return;
@@ -730,6 +769,86 @@ async function runProcess(command: string, args: string[]): Promise<{ stdout: st
       reject(new Error(`training process exited with code ${code ?? "unknown"}\n${stderr}`));
     });
   });
+}
+
+function consumeProgressLines(
+  value: string,
+  onProgress: ((progress: TrainingProgressUpdate) => void) | undefined,
+  onError: (error: unknown) => void,
+): string {
+  const lines = value.split(/\r?\n/);
+  const pending = lines.pop() ?? "";
+  if (onProgress == null) {
+    return pending;
+  }
+  for (const line of lines) {
+    const progress = parseProgressLine(line);
+    if (progress == null) {
+      continue;
+    }
+    try {
+      onProgress(progress);
+    } catch (error) {
+      onError(error);
+    }
+  }
+  return pending;
+}
+
+function parseProgressLine(line: string): TrainingProgressUpdate | undefined {
+  const prefixIndex = line.indexOf(PROGRESS_PREFIX);
+  if (prefixIndex < 0) {
+    return undefined;
+  }
+  const payload = line.slice(prefixIndex + PROGRESS_PREFIX.length).trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed)) {
+    return undefined;
+  }
+  const progressPercent = optionalNumberField(parsed, "progress_percent");
+  const progressLabel = optionalStringField(parsed, "progress_label");
+  if (progressPercent == null || progressLabel == null || progressLabel === "") {
+    return undefined;
+  }
+  if (progressPercent < 0 || progressPercent > 100) {
+    return undefined;
+  }
+  const progress: TrainingProgressUpdate = {
+    progress_percent: progressPercent,
+    progress_label: progressLabel,
+  };
+  const workUnitsDone = optionalNumberField(parsed, "work_units_done");
+  if (workUnitsDone != null && workUnitsDone >= 0) {
+    progress.work_units_done = workUnitsDone;
+  }
+  const workUnitsTotal = optionalNumberField(parsed, "work_units_total");
+  if (workUnitsTotal != null && workUnitsTotal > 0) {
+    progress.work_units_total = workUnitsTotal;
+  }
+  const throughputUnitsPerSecond = optionalNumberField(parsed, "throughput_units_per_second");
+  if (throughputUnitsPerSecond != null && throughputUnitsPerSecond >= 0) {
+    progress.throughput_units_per_second = throughputUnitsPerSecond;
+  }
+  const throughputLabel = optionalStringField(parsed, "throughput_label");
+  if (throughputLabel != null && throughputLabel !== "") {
+    progress.throughput_label = throughputLabel;
+  }
+  return progress;
+}
+
+function optionalNumberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 async function sha256File(path: string): Promise<string> {

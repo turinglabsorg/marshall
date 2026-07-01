@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { multiaddr } from "@multiformats/multiaddr";
 import { defaultBackendForJob } from "./jobs.js";
 import type { Backend, JobType, MarshallJob, WorkerHeartbeat } from "./schemas.js";
-import { runAdapterEvaluation, runArtifactValidation, runMlxLoraTraining, runMlxSmokeTraining, runToyTraining } from "./training-runner.js";
+import { runAdapterEvaluation, runArtifactValidation, runMlxLoraTraining, runMlxSmokeTraining, runToyTraining, type TrainingProgressUpdate } from "./training-runner.js";
 import { WorkerPeer } from "./worker-peer.js";
 
 const args = parseArgs(process.argv.slice(2));
@@ -17,6 +17,7 @@ const jobType = jobTypeArg(args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? 
 const backend = backendArg(args.backend ?? process.env.MARSHALL_BACKEND ?? defaultBackendForJob(jobType));
 const jobLeaseSeconds = positiveIntegerArg(args["job-lease-seconds"] ?? process.env.MARSHALL_JOB_LEASE_SECONDS, 300);
 const heartbeatIntervalMs = positiveIntegerArg(args["heartbeat-interval-ms"] ?? process.env.MARSHALL_HEARTBEAT_INTERVAL_MS, 15_000);
+const progressHeartbeatMinIntervalMs = positiveIntegerArg(args["progress-heartbeat-min-interval-ms"] ?? process.env.MARSHALL_PROGRESS_HEARTBEAT_MIN_INTERVAL_MS, 2_000);
 const workerId = args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostname()}-${backend}`;
 const worker = await WorkerPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_WORKER_KEY ?? ".marshall/worker.key",
@@ -35,6 +36,8 @@ let claimedJob: MarshallJob | undefined;
 let stopHeartbeat = () => {};
 let artifactPublished = false;
 const heartbeatTelemetry = createHeartbeatTelemetry();
+let lastProgressHeartbeatAt = 0;
+let progressHeartbeatInFlight = false;
 
 try {
   await worker.register();
@@ -106,10 +109,32 @@ function createHeartbeatTelemetry() {
   const startedAt = Date.now();
   let progressPercent = 0;
   let progressLabel = "starting";
+  let workUnitsDone: number | undefined;
+  let workUnitsTotal: number | undefined;
+  let throughputUnitsPerSecond: number | undefined;
+  let throughputLabel: string | undefined;
+  const update = (nextPercent: number, nextLabel: string, telemetry: Partial<Pick<
+    WorkerHeartbeat,
+    "work_units_done" | "work_units_total" | "throughput_units_per_second" | "throughput_label"
+  >> = {}): void => {
+    progressPercent = Math.max(progressPercent, Math.min(100, nextPercent));
+    progressLabel = nextLabel;
+    workUnitsDone = telemetry.work_units_done ?? progressPercent;
+    workUnitsTotal = telemetry.work_units_total ?? 100;
+    throughputUnitsPerSecond = telemetry.throughput_units_per_second;
+    throughputLabel = telemetry.throughput_label;
+  };
   return {
-    update(nextPercent: number, nextLabel: string): void {
-      progressPercent = Math.max(progressPercent, Math.min(100, nextPercent));
-      progressLabel = nextLabel;
+    update,
+    updateRunner(progress: TrainingProgressUpdate, phaseStart: number, phaseEnd: number): void {
+      const phaseSpan = Math.max(0, phaseEnd - phaseStart);
+      const mappedPercent = phaseStart + (Math.min(100, Math.max(0, progress.progress_percent)) / 100) * phaseSpan;
+      update(mappedPercent, progress.progress_label, {
+        work_units_done: progress.work_units_done,
+        work_units_total: progress.work_units_total,
+        throughput_units_per_second: progress.throughput_units_per_second,
+        throughput_label: progress.throughput_label,
+      });
     },
     snapshot(): Partial<Pick<
       WorkerHeartbeat,
@@ -119,13 +144,29 @@ function createHeartbeatTelemetry() {
       return {
         progress_percent: progressPercent,
         progress_label: progressLabel,
-        work_units_done: progressPercent,
-        work_units_total: 100,
-        throughput_units_per_second: progressPercent / elapsedSeconds,
-        throughput_label: "job%/s",
+        work_units_done: workUnitsDone ?? progressPercent,
+        work_units_total: workUnitsTotal ?? 100,
+        throughput_units_per_second: throughputUnitsPerSecond ?? (progressPercent / elapsedSeconds),
+        throughput_label: throughputLabel ?? "job%/s",
       };
     },
   };
+}
+
+function sendProgressHeartbeat(jobId: string): void {
+  const now = Date.now();
+  if (progressHeartbeatInFlight || now - lastProgressHeartbeatAt < progressHeartbeatMinIntervalMs) {
+    return;
+  }
+  lastProgressHeartbeatAt = now;
+  progressHeartbeatInFlight = true;
+  void worker.heartbeat("working", jobId, jobLeaseSeconds, heartbeatTelemetry.snapshot())
+    .catch(() => {
+      // Periodic heartbeat is still running; progress heartbeat failures should not kill local training.
+    })
+    .finally(() => {
+      progressHeartbeatInFlight = false;
+    });
 }
 
 async function reportJobStatusWithRetry(status: Parameters<typeof worker.reportJobStatus>[0]): Promise<void> {
@@ -214,6 +255,10 @@ async function runClaimedJob(job: MarshallJob) {
         ? false
         : booleanArg(args["mask-prompt"] ?? process.env.MARSHALL_MASK_PROMPT, true)),
       gradCheckpoint: config?.grad_checkpoint ?? booleanArg(args["grad-checkpoint"] ?? process.env.MARSHALL_GRAD_CHECKPOINT, false),
+      onProgress: (progress) => {
+        heartbeatTelemetry.updateRunner(progress, 20, 92);
+        sendProgressHeartbeat(job.job_id);
+      },
     });
   }
   if (job.job_type === "train_mlx_smoke") {
