@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -207,12 +208,12 @@ func (store *RedisStore) Workers(ctx context.Context) ([]Worker, error) {
 	if err != nil {
 		return nil, err
 	}
+	hashes, err := store.hashes(ctx, prefixedKeys(store, "worker", ids))
+	if err != nil {
+		return nil, err
+	}
 	workers := make([]Worker, 0, len(ids))
-	for _, id := range ids {
-		fields, err := store.hash(ctx, store.key("worker", id))
-		if err != nil {
-			return nil, err
-		}
+	for _, fields := range hashes {
 		if fields["worker_id"] != "" {
 			workers = append(workers, workerFromFields(fields))
 		}
@@ -301,12 +302,12 @@ func (store *RedisStore) Jobs(ctx context.Context) ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	hashes, err := store.hashes(ctx, prefixedKeys(store, "job", ids))
+	if err != nil {
+		return nil, err
+	}
 	jobs := make([]Job, 0, len(ids))
-	for _, id := range ids {
-		fields, err := store.hash(ctx, store.key("job", id))
-		if err != nil {
-			return nil, err
-		}
+	for _, fields := range hashes {
 		if fields["job_id"] != "" {
 			jobs = append(jobs, jobFromFields(fields))
 		}
@@ -532,7 +533,7 @@ func (store *RedisStore) GetArtifact(ctx context.Context, jobID string) (Artifac
 	if fields["job_id"] == "" {
 		return Artifact{}, fmt.Errorf("artifact not found")
 	}
-	return artifactFromFields(fields), nil
+	return store.artifactFromFields(ctx, fields)
 }
 
 func (store *RedisStore) Artifacts(ctx context.Context) ([]Artifact, error) {
@@ -540,15 +541,29 @@ func (store *RedisStore) Artifacts(ctx context.Context) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	hashes, err := store.hashes(ctx, prefixedKeys(store, "artifact", ids))
+	if err != nil {
+		return nil, err
+	}
 	artifacts := make([]Artifact, 0, len(ids))
-	for _, id := range ids {
-		fields, err := store.hash(ctx, store.key("artifact", id))
-		if err != nil {
-			return nil, err
-		}
+	for _, fields := range hashes {
 		if fields["job_id"] != "" {
 			artifacts = append(artifacts, artifactFromFields(fields))
 		}
+	}
+	if len(artifacts) == 0 {
+		return artifacts, nil
+	}
+	voteKeys := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		voteKeys = append(voteKeys, store.key("artifact", artifact.JobID, "verdict_votes"))
+	}
+	voteHashes, err := store.hashes(ctx, voteKeys)
+	if err != nil {
+		return nil, err
+	}
+	for index := range artifacts {
+		artifacts[index].VerdictValidators = sortedMapKeys(voteHashes[index])
 	}
 	return artifacts, nil
 }
@@ -932,6 +947,30 @@ func (store *RedisStore) hash(ctx context.Context, key string) (map[string]strin
 	return arrayFields(value), nil
 }
 
+func (store *RedisStore) hashes(ctx context.Context, keys []string) ([]map[string]string, error) {
+	commands := make([][]string, 0, len(keys))
+	for _, key := range keys {
+		commands = append(commands, []string{"HGETALL", key})
+	}
+	values, err := store.client.commands(ctx, commands...)
+	if err != nil {
+		return nil, err
+	}
+	hashes := make([]map[string]string, 0, len(values))
+	for _, value := range values {
+		hashes = append(hashes, arrayFields(value))
+	}
+	return hashes, nil
+}
+
+func prefixedKeys(store *RedisStore, prefix string, ids []string) []string {
+	keys := make([]string, 0, len(ids))
+	for _, id := range ids {
+		keys = append(keys, store.key(prefix, id))
+	}
+	return keys
+}
+
 func (store *RedisStore) members(ctx context.Context, key string) ([]string, error) {
 	value, err := store.client.command(ctx, "SMEMBERS", key)
 	if err != nil {
@@ -1294,4 +1333,26 @@ func artifactFromFields(fields map[string]string) Artifact {
 		VerdictVotes:  intField(fields, "verdict_votes", 0),
 		VerdictQuorum: intField(fields, "verdict_quorum", 0),
 	}
+}
+
+func (store *RedisStore) artifactFromFields(ctx context.Context, fields map[string]string) (Artifact, error) {
+	artifact := artifactFromFields(fields)
+	if artifact.JobID == "" {
+		return artifact, nil
+	}
+	votes, err := store.artifactVerdictVotes(ctx, artifact.JobID)
+	if err != nil {
+		return Artifact{}, err
+	}
+	artifact.VerdictValidators = sortedMapKeys(votes)
+	return artifact, nil
+}
+
+func sortedMapKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

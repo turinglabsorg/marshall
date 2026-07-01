@@ -308,9 +308,16 @@ export class ControlPeer {
     if (resourceError != null) {
       return resourceError;
     }
-    if (job.job_type !== "evaluate_adapter") {
-      return undefined;
+    if (job.job_type === "evaluate_adapter") {
+      return this.adapterEvaluationParticipationError(job, claim);
     }
+    if (job.job_type === "validate_artifact") {
+      return this.artifactValidationParticipationError(job, claim);
+    }
+    return undefined;
+  }
+
+  private async adapterEvaluationParticipationError(job: MarshallJob & { job_type: "evaluate_adapter" }, claim: JobClaim): Promise<string | undefined> {
     const sourceJobID = job.adapter.source_job_id;
     if (sourceJobID == null || sourceJobID === "") {
       return "evaluation job has no adapter source job";
@@ -328,6 +335,39 @@ export class ControlPeer {
     }
     if (workerAlternationKey(producer.worker_id) === workerAlternationKey(claim.worker_id)) {
       return "adapter evaluation must alternate worker slots";
+    }
+    return undefined;
+  }
+
+  private async artifactValidationParticipationError(job: MarshallJob & { job_type: "validate_artifact" }, claim: JobClaim): Promise<string | undefined> {
+    if (job.target.worker_id === claim.worker_id) {
+      return "artifact target worker cannot validate its own artifact";
+    }
+    if (job.target.peer_id != null && job.target.peer_id !== "" && job.target.peer_id === claim.peer_id) {
+      return "artifact target peer cannot validate its own artifact";
+    }
+    if (workerAlternationKey(job.target.worker_id) === workerAlternationKey(claim.worker_id)) {
+      return "artifact validation must alternate worker slots";
+    }
+    if (this.coordinator != null) {
+      let target: Awaited<ReturnType<CoordinatorClient["getArtifact"]>>;
+      try {
+        target = await this.coordinator.getArtifact(job.target.job_id);
+      } catch (error) {
+        if (isCoordinatorMissing(error)) {
+          return `validation target artifact unavailable for ${job.target.job_id}`;
+        }
+        throw error;
+      }
+      if (target.verdict != null && target.verdict !== "") {
+        return "artifact validation already finalized";
+      }
+      if (target.verdict_validators?.includes(claim.worker_id)) {
+        return "validator already voted for artifact";
+      }
+      if (target.verdict_validators?.some((validatorID) => workerAlternationKey(validatorID) === workerAlternationKey(claim.worker_id))) {
+        return "validator slot already voted for artifact";
+      }
     }
     return undefined;
   }
@@ -411,6 +451,9 @@ export class ControlPeer {
     }
 
     this.state.statuses.push(status);
+    if (this.coordinator != null && isTerminalJobStatus(status.status)) {
+      this.state.assignedJobs.delete(status.job_id);
+    }
     await writeJson(stream, AckSchema.parse({ accepted: true }));
   }
 
@@ -645,6 +688,10 @@ function workerAlternationKey(workerID: string): string {
     return `${match[1]}:${Number(match[2])}`;
   }
   return workerID;
+}
+
+function isTerminalJobStatus(status: JobStatus["status"]): boolean {
+  return status === "completed" || status === "failed";
 }
 
 function isMissingFile(error: unknown): boolean {

@@ -9,6 +9,43 @@ import { TrainingJobSchema } from "../src/schemas.js";
 const execFileAsync = promisify(execFile);
 
 describe("dataset run CLI", () => {
+  it("rejects adapter runs without an explicit model", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "marshall-dataset-run-cli-model-test-"));
+    try {
+      const inputPath = join(tempDir, "input.jsonl");
+      const datasetDir = join(tempDir, "dataset");
+      const runDir = join(tempDir, "run");
+      await writeFile(inputPath, [
+        JSON.stringify({ instruction: "Name the protocol.", response: "Marshall uses libp2p." }),
+        JSON.stringify({ instruction: "Name the validator output.", response: "Validators publish artifact_validation manifests." }),
+        "",
+      ].join("\n"), "utf8");
+
+      await expect(execFileAsync(process.execPath, [
+        join(process.cwd(), "node_modules/.bin/tsx"),
+        "src/dataset-run-cli.ts",
+        "--input-jsonl", inputPath,
+        "--dataset-dir", datasetDir,
+        "--dataset-id", "dataset-run-requires-model",
+        "--run-id", "run_dataset_requires_model",
+        "--run-dir", runDir,
+        "--shard-count", "2",
+        "--job-count", "2",
+        "--min-memory-gb", "24",
+        "--instruction-field", "instruction",
+        "--response-field", "response",
+      ], {
+        cwd: process.cwd(),
+        env: { ...process.env, MARSHALL_MODEL: "mlx-community/should-not-be-used" },
+        maxBuffer: 1024 * 1024,
+      })).rejects.toMatchObject({
+        stderr: expect.stringContaining("--model is required"),
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("prepares a manifest-backed training run bundle from instruction records", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "marshall-dataset-run-cli-test-"));
     try {

@@ -55,6 +55,10 @@ install -m 0644 /tmp/marshall-deploy/marshall-redis.service /etc/systemd/system/
 install -m 0644 /tmp/marshall-deploy/marshall-coordinator.service /etc/systemd/system/marshall-coordinator.service
 install -m 0644 /tmp/marshall-deploy/marshall-caddy.service /etc/systemd/system/marshall-caddy.service
 install -m 0644 /tmp/marshall-deploy/marshall-control.service /etc/systemd/system/marshall-control.service
+install -m 0644 /tmp/marshall-deploy/marshall-round-daemon.service /etc/systemd/system/marshall-round-daemon.service
+if [ -f /tmp/marshall-deploy/round-daemon.env ]; then
+  install -m 0640 -o root -g marshall /tmp/marshall-deploy/round-daemon.env /etc/marshall/round-daemon.env
+fi
 
 systemctl daemon-reload
 systemctl enable --now marshall-redis.service
@@ -64,8 +68,17 @@ systemctl restart marshall-caddy.service
 systemctl enable marshall-caddy.service
 systemctl restart marshall-control.service
 systemctl enable marshall-control.service
+if [ -f /etc/marshall/round-daemon.env ]; then
+  systemctl restart marshall-round-daemon.service
+  systemctl enable marshall-round-daemon.service
+else
+  systemctl disable --now marshall-round-daemon.service 2>/dev/null || true
+fi
 
 curl -fsS http://127.0.0.1:8080/dashboard >/dev/null
 systemctl --no-pager --full status marshall-coordinator.service
 systemctl --no-pager --full status marshall-caddy.service
 systemctl --no-pager --full status marshall-control.service
+if [ -f /etc/marshall/round-daemon.env ]; then
+  systemctl --no-pager --full status marshall-round-daemon.service
+fi

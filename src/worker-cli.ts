@@ -13,20 +13,20 @@ if (controlAddr == null) {
   throw new Error("--control or MARSHALL_CONTROL_ADDR is required");
 }
 
-const jobType = jobTypeArg(args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? "train_toy_model");
-const backend = backendArg(args.backend ?? process.env.MARSHALL_BACKEND ?? defaultBackendForJob(jobType));
+const supportedJobTypes = jobTypesArg(args["job-types"] ?? process.env.MARSHALL_JOB_TYPES ?? args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? "train_toy_model");
+const registrationBackend = backendArg(args.backend ?? process.env.MARSHALL_BACKEND ?? defaultBackendForJob(supportedJobTypes[0]));
 const jobLeaseSeconds = positiveIntegerArg(args["job-lease-seconds"] ?? process.env.MARSHALL_JOB_LEASE_SECONDS, 300);
 const heartbeatIntervalMs = positiveIntegerArg(args["heartbeat-interval-ms"] ?? process.env.MARSHALL_HEARTBEAT_INTERVAL_MS, 15_000);
 const progressHeartbeatMinIntervalMs = positiveIntegerArg(args["progress-heartbeat-min-interval-ms"] ?? process.env.MARSHALL_PROGRESS_HEARTBEAT_MIN_INTERVAL_MS, 2_000);
-const workerId = args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostname()}-${backend}`;
+const workerId = args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostname()}-${registrationBackend}`;
 const worker = await WorkerPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_WORKER_KEY ?? ".marshall/worker.key",
   workerId,
   controlAddr: controlAddrs(controlAddr)[0],
   controlAddrs: controlAddrs(controlAddr),
   listen: splitList(args.listen ?? process.env.MARSHALL_WORKER_LISTEN ?? "/ip4/0.0.0.0/tcp/0"),
-  backend,
-  supportedJobs: [jobType],
+  backend: registrationBackend,
+  supportedJobs: supportedJobTypes,
   memoryGb: positiveNumberArg(requiredArg("memory-gb", args["memory-gb"] ?? process.env.MARSHALL_MEMORY_GB)),
   tokensPerSecond: numberArg(args["tokens-per-second"] ?? process.env.MARSHALL_TOKENS_PER_SECOND, 1000),
   swarmToken: args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN,
@@ -42,7 +42,7 @@ let progressHeartbeatInFlight = false;
 try {
   await worker.register();
   await worker.heartbeat("idle");
-  const claim = await worker.claimJob(jobType, maxTokensForJob(jobType));
+  const claim = await claimNextCompatibleJob();
 
   if (!claim.accepted || claim.job == null) {
     throw new Error(`no job assigned: ${claim.reason ?? "unknown reason"}`);
@@ -320,6 +320,24 @@ async function materializeJobInputs(job: MarshallJob): Promise<MarshallJob> {
   return job;
 }
 
+async function claimNextCompatibleJob() {
+  const reasons: string[] = [];
+  for (const nextJobType of supportedJobTypes) {
+    const claim = await worker.claimJob(nextJobType, maxTokensForJob(nextJobType), claimBackendForJob(nextJobType));
+    if (claim.accepted && claim.job != null) {
+      return claim;
+    }
+    if (claim.reason != null && claim.reason !== "") {
+      reasons.push(`${nextJobType}: ${claim.reason}`);
+    }
+  }
+  return {
+    accepted: false,
+    job: null,
+    reason: reasons.length > 0 ? reasons.join("; ") : "no compatible job available",
+  };
+}
+
 function isMarshallArtifactUri(value: string): boolean {
   return value.startsWith("marshall-artifact://") || value.startsWith("marshall-artifact:");
 }
@@ -344,6 +362,13 @@ function maxTokensForJob(value: JobType): number {
     return 2_000;
   }
   return 2_000;
+}
+
+function claimBackendForJob(value: JobType): Backend {
+  if (value === "validate_artifact") {
+    return "cpu";
+  }
+  return backendArg(args.backend ?? process.env.MARSHALL_BACKEND ?? defaultBackendForJob(value));
 }
 
 function parseArgs(values: string[]): Record<string, string> {
@@ -393,6 +418,14 @@ function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_
     return value;
   }
   throw new Error(`unsupported worker CLI job type: ${value}`);
+}
+
+function jobTypesArg(value: string): Array<Extract<JobType, "train_toy_model" | "train_mlx_smoke" | "train_adapter" | "evaluate_adapter" | "validate_artifact">> {
+  const values = splitList(value);
+  if (values.length === 0) {
+    throw new Error("--job-types must include at least one job type");
+  }
+  return [...new Set(values.map(jobTypeArg))];
 }
 
 function backendArg(value: string): Backend {

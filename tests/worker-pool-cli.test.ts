@@ -111,4 +111,69 @@ process.exit(1);
     expect(summary.failed).toBe(0);
     expect(summary.idle_claims).toBe(1);
   });
+
+  it("passes multi-job capabilities and caps concurrency by memory budget", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "marshall-worker-pool-capability-"));
+    const logPath = join(tempDir, "workers.log");
+    const fakeWorker = join(tempDir, "fake-capability-worker.mjs");
+    await writeFile(fakeWorker, `
+import { appendFileSync } from "node:fs";
+
+appendFileSync(process.env.FAKE_WORKER_LOG, JSON.stringify({
+  worker_id: value("--worker-id"),
+  job_types: value("--job-types"),
+  memory_gb: value("--memory-gb"),
+}) + "\\n");
+
+function value(flag) {
+  const index = process.argv.indexOf(flag);
+  if (index === -1) {
+    throw new Error("missing " + flag);
+  }
+  return process.argv[index + 1];
+}
+`, "utf8");
+
+    const { stdout } = await execFileAsync(
+      join(process.cwd(), "node_modules/.bin/tsx"),
+      [
+        "src/worker-pool-cli.ts",
+        "--control",
+        "/ip4/127.0.0.1/tcp/1/p2p/test",
+        "--job-types",
+        "train_adapter,evaluate_adapter,validate_artifact",
+        "--backend",
+        "mlx",
+        "--concurrency",
+        "4",
+        "--max-jobs",
+        "2",
+        "--memory-gb",
+        "32",
+        "--slot-memory-gb",
+        "16",
+        "--worker-id-prefix",
+        "pool",
+        "--key-dir",
+        join(tempDir, "keys"),
+        "--worker-script",
+        fakeWorker,
+      ],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, FAKE_WORKER_LOG: logPath },
+        timeout: 10_000,
+      },
+    );
+
+    const summary = JSON.parse(stdout);
+    expect(summary.requested_concurrency).toBe(4);
+    expect(summary.concurrency).toBe(2);
+    expect(summary.job_types).toEqual(["train_adapter", "evaluate_adapter", "validate_artifact"]);
+
+    const workerRuns = (await readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    expect(workerRuns).toHaveLength(2);
+    expect(workerRuns.every((run) => run.job_types === "train_adapter,evaluate_adapter,validate_artifact")).toBe(true);
+    expect(workerRuns.every((run) => run.memory_gb === "16")).toBe(true);
+  });
 });

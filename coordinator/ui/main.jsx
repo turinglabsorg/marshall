@@ -417,7 +417,7 @@ function App() {
 
   const summary = dashboard?.summary || {};
   const runs = useMemo(() => summarizeRuns(dashboard?.jobs || []), [dashboard]);
-  const selectedRun = useMemo(() => runs.find(runIsActive) || null, [runs]);
+  const selectedRun = useMemo(() => runs.find(runIsActive) || runs[0] || null, [runs]);
   const pastRuns = runs.filter((run) => !runIsActive(run));
 
   const toggleHistory = () => {
@@ -640,17 +640,18 @@ function ProgressPanel({ jobs, selectedRun }) {
     phaseProgress(scopedJobs, "validate_artifact", "validation"),
   ];
   const totals = phases.reduce((total, phase) => ({
-    total: total.total + phase.total,
+    jobs: total.jobs + phase.total,
     terminal: total.terminal + phase.terminal,
     remaining: total.remaining + phase.remaining,
-  }), { total: 0, terminal: 0, remaining: 0 });
-  const percent = percentValue(totals.terminal, totals.total);
+    phaseWorkDone: total.phaseWorkDone + phase.percent / 100,
+  }), { jobs: 0, terminal: 0, remaining: 0, phaseWorkDone: 0 });
+  const percent = percentValue(totals.phaseWorkDone, phases.length);
   return (
     <section className="progress-panel" aria-label="End-to-end work completion">
       <div className="progress-total">
         <div className="progress-label">{selectedRun ? `${selectedRun.shortName} completion` : "active run completion"}</div>
-        <div className="progress-value">{totals.total === 0 ? "0%" : `${percent}%`}</div>
-        <div className="progress-detail">{totals.total === 0 ? "no active run jobs" : `${totals.terminal} / ${totals.total} terminal jobs · ${totals.remaining} remaining`}</div>
+        <div className="progress-value">{selectedRun == null ? "0.0%" : `${formatPercent(percent)}%`}</div>
+        <div className="progress-detail">{selectedRun == null ? "no active run jobs" : `${formatWorkDone(totals.phaseWorkDone)} / ${phases.length} pipeline phases · ${totals.terminal}/${totals.jobs} terminal jobs`}</div>
         <div className="progress-track" aria-hidden="true"><div className="progress-fill" style={{ width: `${percent}%` }} /></div>
       </div>
       <div className="progress-phases">
@@ -661,12 +662,12 @@ function ProgressPanel({ jobs, selectedRun }) {
 }
 
 function PhaseProgress({ phase }) {
-  const percent = percentValue(phase.terminal, phase.total);
+  const percent = phase.percent;
   return (
     <div className={`phase ${phase.total === 0 ? "empty" : ""}`}>
-      <div className="phase-head"><span>{phase.label}</span><span className="phase-percent">{phase.total === 0 ? "--" : `${percent}%`}</span></div>
+      <div className="phase-head"><span>{phase.label}</span><span className="phase-percent">{phase.total === 0 ? "--" : `${formatPercent(percent)}%`}</span></div>
       <div className="phase-counts">
-        {phase.total === 0 ? "not scheduled" : `${phase.terminal}/${phase.total} terminal · ${phase.remaining} left`}
+        {phase.total === 0 ? "not scheduled" : `${formatWorkDone(phase.workDone)}/${phase.total} effective · ${phase.terminal} terminal · ${phase.remaining} left`}
         {phase.total > 0 && <><br /><span>{phase.running} active · {phase.failed} failed</span></>}
       </div>
       <div className="phase-track" aria-hidden="true"><div className="phase-fill" style={{ width: `${percent}%` }} /></div>
@@ -869,7 +870,7 @@ function summarizeRuns(jobs) {
   }
   const output = Array.from(runs.values());
   for (const run of output) {
-    run.statusLabel = runStatusLabel(run.jobs);
+    run.statusLabel = runPipelineStatusLabel(run);
     run.phaseLabel = runPhaseLabel(run);
   }
   return output.sort((left, right) => {
@@ -929,9 +930,29 @@ function runStatusLabel(jobs) {
 }
 
 function runPhaseLabel(run) {
-  if (run.counts.validation.total > 0) return "validation";
-  if (run.counts.eval.total > 0) return "evaluation";
-  return "training";
+  if (run.counts.train.total === 0 || pipelinePhasePercent(run.counts.train) < 100) return "training";
+  if (run.counts.eval.total === 0 || pipelinePhasePercent(run.counts.eval) < 100) return "evaluation";
+  if (run.counts.validation.total === 0 || pipelinePhasePercent(run.counts.validation) < 100) return "validation";
+  return "complete";
+}
+
+function runPipelineStatusLabel(run) {
+  const statusLabel = runStatusLabel(run.jobs);
+  if (statusLabel === "running" || statusLabel === "queued" || statusLabel === "completed with failures") {
+    return statusLabel;
+  }
+  if (run.counts.train.total === 0) return "waiting training";
+  if (run.counts.eval.total === 0) return "waiting evaluation";
+  if (run.counts.validation.total === 0) return "waiting validation";
+  if (pipelinePhasePercent(run.counts.validation) < 100) return "validation";
+  return "completed";
+}
+
+function pipelinePhasePercent(counts) {
+  if (counts.total === 0) {
+    return 0;
+  }
+  return percentValue(counts.completed + counts.failed, counts.total);
 }
 
 function canonicalRunId(runId) {
@@ -950,10 +971,14 @@ function shortRunLabel(runId) {
 function phaseProgress(jobs, jobType, label) {
   const phaseJobs = jobs.filter((entry) => (entry.job || {}).job_type === jobType);
   const terminal = phaseJobs.filter((entry) => isTerminalStatus((entry.job || {}).status)).length;
+  const workDone = phaseJobs.reduce((total, entry) => total + jobProgressValue(entry.job || {}), 0);
+  const percent = percentValue(workDone, phaseJobs.length);
   return {
     label,
     total: phaseJobs.length,
     terminal,
+    workDone,
+    percent,
     remaining: phaseJobs.length - terminal,
     running: phaseJobs.filter((entry) => ["running", "claimed"].includes((entry.job || {}).status)).length,
     failed: phaseJobs.filter((entry) => (entry.job || {}).status === "failed").length,
@@ -965,7 +990,27 @@ function isTerminalStatus(status) {
 }
 
 function percentValue(part, total) {
-  return total ? Math.round((part / total) * 100) : 0;
+  return total ? clamp((part / total) * 100, 0, 100) : 0;
+}
+
+function jobProgressValue(job) {
+  if (isTerminalStatus(job.status)) return 1;
+  if (!["running", "claimed"].includes(job.status || "")) return 0;
+  const percent = Number(job.progress_percent);
+  if (!Number.isFinite(percent)) return 0;
+  return clamp(percent / 100, 0, 0.999);
+}
+
+function formatPercent(value) {
+  return clamp(value, 0, 100).toFixed(1);
+}
+
+function formatWorkDone(value) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function flattenJobRows(runs) {

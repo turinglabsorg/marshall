@@ -1,0 +1,16 @@
+[Unit]
+Description=Marshall automatic round daemon
+After=docker.service marshall-coordinator.service marshall-control.service
+Requires=docker.service marshall-coordinator.service
+ConditionPathExists=/etc/marshall/round-daemon.env
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f marshall-round-daemon
+ExecStart=/usr/bin/docker run --name marshall-round-daemon --pull=always --network host --env-file /etc/marshall/coordinator.env --env-file /etc/marshall/round-daemon.env -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/round-daemon-cli.js
+ExecStop=/usr/bin/docker stop marshall-round-daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

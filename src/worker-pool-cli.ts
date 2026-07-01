@@ -6,22 +6,23 @@ import { fileURLToPath } from "node:url";
 
 const args = parseArgs(process.argv.slice(2));
 const control = args.control ?? process.env.MARSHALL_CONTROL_ADDR;
-const jobType = args["job-type"] ?? process.env.MARSHALL_JOB_TYPE;
+const jobTypes = jobTypesArg(args["job-types"] ?? process.env.MARSHALL_JOB_TYPES ?? args["job-type"] ?? process.env.MARSHALL_JOB_TYPE);
 
 if (control == null) {
   throw new Error("--control or MARSHALL_CONTROL_ADDR is required");
 }
-if (jobType == null) {
-  throw new Error("--job-type or MARSHALL_JOB_TYPE is required");
-}
 
-const concurrency = numberArg(args.concurrency ?? process.env.MARSHALL_WORKER_POOL_CONCURRENCY, 1);
+const requestedConcurrency = numberArg(args.concurrency ?? process.env.MARSHALL_WORKER_POOL_CONCURRENCY, 1);
 const maxJobs = optionalNumberArg(args["max-jobs"] ?? process.env.MARSHALL_WORKER_POOL_MAX_JOBS);
 const idleBackoffMs = numberArg(args["idle-backoff-ms"] ?? process.env.MARSHALL_WORKER_POOL_IDLE_BACKOFF_MS, 5_000);
 const exitWhenIdle = booleanArg(args["exit-when-idle"] ?? process.env.MARSHALL_WORKER_POOL_EXIT_WHEN_IDLE, false);
 const workerPrefix = args["worker-id-prefix"] ?? process.env.MARSHALL_WORKER_ID_PREFIX ?? "marshall-worker";
 const keyDir = args["key-dir"] ?? process.env.MARSHALL_WORKER_KEY_DIR ?? ".marshall/worker-pool-keys";
 const workerScript = args["worker-script"] ?? siblingScript("worker-cli");
+const memoryGb = optionalPositiveNumberArg(args["memory-gb"] ?? process.env.MARSHALL_MEMORY_GB);
+const slotMemoryGb = optionalPositiveNumberArg(args["slot-memory-gb"] ?? process.env.MARSHALL_WORKER_SLOT_MEMORY_GB);
+const concurrency = effectiveConcurrency(requestedConcurrency, memoryGb, slotMemoryGb);
+const workerMemoryGb = slotMemoryGb ?? memoryGb;
 
 await mkdir(keyDir, { recursive: true });
 
@@ -35,9 +36,13 @@ await Promise.all(Array.from({ length: concurrency }, (_value, index) => runSlot
 
 console.log(JSON.stringify({
   type: "marshall_worker_pool_completed",
-  job_type: jobType,
+  job_type: jobTypes.join(","),
+  job_types: jobTypes,
   control,
   concurrency,
+  requested_concurrency: requestedConcurrency,
+  memory_gb: memoryGb ?? null,
+  slot_memory_gb: slotMemoryGb ?? null,
   max_jobs: maxJobs ?? null,
   completed,
   failed,
@@ -88,8 +93,8 @@ async function runWorker(slot: number): Promise<"completed" | "failed" | "idle">
     workerScript,
     "--control",
     control!,
-    "--job-type",
-    jobType!,
+    "--job-types",
+    jobTypes.join(","),
     "--backend",
     args.backend ?? process.env.MARSHALL_BACKEND ?? "mlx",
     "--worker-id",
@@ -97,6 +102,7 @@ async function runWorker(slot: number): Promise<"completed" | "failed" | "idle">
     "--key",
     resolve(keyDir, `${workerPrefix}-${suffix}.key`),
     ...passThroughArgs(args),
+    ...optionalValueArg("--memory-gb", workerMemoryGb),
   ];
 
   await mkdir(dirname(resolve(keyDir, `${workerPrefix}-${suffix}.key`)), { recursive: true });
@@ -130,7 +136,6 @@ function passThroughArgs(values: Record<string, string>): string[] {
     "mask-prompt",
     "no-mask-prompt",
     "grad-checkpoint",
-    "memory-gb",
     "tokens-per-second",
     "swarm-token",
     "job-lease-seconds",
@@ -215,6 +220,31 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function jobTypesArg(value: string | undefined): string[] {
+  if (value == null || value.trim() === "") {
+    throw new Error("--job-types or MARSHALL_JOB_TYPES is required");
+  }
+  const values = value.split(",").map((item) => item.trim()).filter(Boolean);
+  if (values.length === 0) {
+    throw new Error("--job-types must include at least one job type");
+  }
+  return [...new Set(values)];
+}
+
+function effectiveConcurrency(requested: number, totalMemoryGb: number | undefined, perSlotMemoryGb: number | undefined): number {
+  if (totalMemoryGb == null || perSlotMemoryGb == null) {
+    return requested;
+  }
+  return Math.max(1, Math.min(requested, Math.floor(totalMemoryGb / perSlotMemoryGb)));
+}
+
+function optionalValueArg(flag: string, value: number | string | undefined): string[] {
+  if (value == null) {
+    return [];
+  }
+  return [flag, String(value)];
+}
+
 function numberArg(value: string | undefined, fallback: number): number {
   if (value == null) {
     return fallback;
@@ -231,6 +261,17 @@ function optionalNumberArg(value: string | undefined): number | undefined {
     return undefined;
   }
   return numberArg(value, 1);
+}
+
+function optionalPositiveNumberArg(value: string | undefined): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
+  }
+  return parsed;
 }
 
 function booleanArg(value: string | undefined, fallback: boolean): boolean {

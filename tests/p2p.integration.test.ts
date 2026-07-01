@@ -8,7 +8,7 @@ import { ControlPeer } from "../src/control-peer.js";
 import { createTrainingJobs } from "../src/jobs.js";
 import { runToyTraining } from "../src/training-runner.js";
 import { WorkerPeer } from "../src/worker-peer.js";
-import type { AdapterEvaluationJob } from "../src/schemas.js";
+import type { AdapterEvaluationJob, ArtifactValidationJob } from "../src/schemas.js";
 
 describe("Marshall p2p substrate", () => {
   let tempDir: string;
@@ -318,6 +318,62 @@ describe("Marshall p2p substrate", () => {
     const acceptedClaim = await alternateSlotWorker.claimJob("evaluate_adapter", 2_000);
     expect(acceptedClaim.accepted).toBe(true);
     expect(acceptedClaim.job?.job_id).toBe(evalJob.job_id);
+  }, 15_000);
+
+  it("prevents workers from validating artifacts produced by the same worker slot", async () => {
+    const validationJob: ArtifactValidationJob = {
+      job_id: "job_validate_dolly_adapter_000001_vote_001",
+      run_id: "run_validation_slot_test",
+      round_id: "round_001",
+      job_type: "validate_artifact",
+      backend: "cpu",
+      target: {
+        job_id: "job_eval_dolly_adapter_000001",
+        worker_id: "MacBookPro.homenet.telecomitalia.it-marshall-eval-0001",
+        peer_id: "12D3KooWProducerPeer",
+        artifact_type: "adapter_evaluation",
+        artifact_uri: "file:///tmp/marshall-test-eval-metrics.json",
+        artifact_hash: "sha256:evaluation-slot-test",
+        config_hash: "sha256:config-slot-test",
+        metrics_uri: "file:///tmp/marshall-test-eval-metrics.json",
+      },
+      policy: {
+        min_accuracy: 0.5,
+        max_invalid_rate: 0.1,
+        min_examples: 1,
+        quorum: 2,
+      },
+    };
+
+    control = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "control.key"),
+      jobs: [validationJob],
+    });
+    const sameSlotWorker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "same-slot-validation-worker.key"),
+      workerId: "MacBookPro.homenet.telecomitalia.it-marshall-validation-0001",
+      controlAddr: control.multiaddrs[0],
+      backend: "cpu",
+      supportedJobs: ["validate_artifact"],
+    });
+    const alternateSlotWorker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "alternate-slot-validation-worker.key"),
+      workerId: "MacBookPro.homenet.telecomitalia.it-marshall-validation-0002",
+      controlAddr: control.multiaddrs[0],
+      backend: "cpu",
+      supportedJobs: ["validate_artifact"],
+    });
+    workers.push(sameSlotWorker, alternateSlotWorker);
+
+    await sameSlotWorker.register();
+    await alternateSlotWorker.register();
+    const rejectedClaim = await sameSlotWorker.claimJob("validate_artifact", 2_000);
+    expect(rejectedClaim.accepted).toBe(false);
+    expect(rejectedClaim.reason).toContain("alternate worker slots");
+
+    const acceptedClaim = await alternateSlotWorker.claimJob("validate_artifact", 2_000);
+    expect(acceptedClaim.accepted).toBe(true);
+    expect(acceptedClaim.job?.job_id).toBe(validationJob.job_id);
   }, 15_000);
 
   it("rejects workers that do not present the configured swarm token", async () => {

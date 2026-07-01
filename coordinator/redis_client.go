@@ -30,11 +30,24 @@ func newRedisClient(addr string) *redisClient {
 }
 
 func (client *redisClient) command(ctx context.Context, args ...string) (redisValue, error) {
-	var zero redisValue
+	values, err := client.commands(ctx, args)
+	if err != nil {
+		return redisValue{}, err
+	}
+	if len(values) != 1 {
+		return redisValue{}, fmt.Errorf("unexpected Redis response count")
+	}
+	return values[0], nil
+}
+
+func (client *redisClient) commands(ctx context.Context, argsList ...[]string) ([]redisValue, error) {
+	if len(argsList) == 0 {
+		return []redisValue{}, nil
+	}
 	dialer := net.Dialer{Timeout: client.timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", client.addr)
 	if err != nil {
-		return zero, err
+		return nil, err
 	}
 	defer conn.Close()
 
@@ -44,18 +57,27 @@ func (client *redisClient) command(ctx context.Context, args ...string) (redisVa
 		_ = conn.SetDeadline(time.Now().Add(client.timeout))
 	}
 
-	if _, err := conn.Write(encodeRESP(args)); err != nil {
-		return zero, err
+	var payload []byte
+	for _, args := range argsList {
+		payload = append(payload, encodeRESP(args)...)
+	}
+	if _, err := conn.Write(payload); err != nil {
+		return nil, err
 	}
 
-	value, err := readRESP(bufio.NewReader(conn))
-	if err != nil {
-		return zero, err
+	reader := bufio.NewReader(conn)
+	values := make([]redisValue, 0, len(argsList))
+	for range argsList {
+		value, err := readRESP(reader)
+		if err != nil {
+			return nil, err
+		}
+		if value.kind == '-' {
+			return nil, errors.New(value.str)
+		}
+		values = append(values, value)
 	}
-	if value.kind == '-' {
-		return zero, errors.New(value.str)
-	}
-	return value, nil
+	return values, nil
 }
 
 func encodeRESP(args []string) []byte {

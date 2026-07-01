@@ -126,14 +126,14 @@ export class WorkerPeer {
     }
   }
 
-  async claimJob(jobType: JobType, maxTokens = 2_000): Promise<JobClaimResponse> {
+  async claimJob(jobType: JobType, maxTokens = 2_000, backend: Backend = this.options.backend ?? "cpu"): Promise<JobClaimResponse> {
     return JobClaimResponseSchema.parse(
       await this.requestControlJson(PROTOCOLS.jobClaim, {
         ...this.authPayload(),
         peer_id: this.peerId,
         worker_id: this.options.workerId,
         job_type: jobType,
-        backend: this.options.backend ?? "cpu",
+        backend,
         max_tokens: maxTokens,
       }),
     );

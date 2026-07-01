@@ -51,7 +51,7 @@ const resourceRequirements = {
   min_memory_gb: requiredPositiveNumberArg("min-memory-gb", args["min-memory-gb"] ?? process.env.MARSHALL_MIN_MEMORY_GB),
 };
 const adapterTrainingConfig = {
-  model: args.model ?? process.env.MARSHALL_MODEL ?? "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+  model: requiredArg("model", args.model),
   iters: positiveIntegerArg(args.iters ?? process.env.MARSHALL_ITERS, 20),
   batch_size: positiveIntegerArg(args["batch-size"] ?? process.env.MARSHALL_BATCH_SIZE, 1),
   learning_rate: positiveNumberArg(args["learning-rate"] ?? process.env.MARSHALL_LEARNING_RATE, 1e-5),

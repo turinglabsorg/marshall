@@ -93,6 +93,40 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
     ]));
   }, 20_000);
 
+  it("releases coordinator-backed local assignments after failed job status", async () => {
+    const suffix = Date.now().toString(36);
+    const workerId = `mac-worker-failed-release-${suffix}`;
+    const job: TrainingJob = createTrainingJob("train_toy_model", {
+      jobId: `job_failed_release_${suffix}`,
+      runId: `run_failed_release_${suffix}`,
+      roundId: "round_001",
+    });
+
+    control = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "control.key"),
+      coordinatorUrl,
+      jobs: [job],
+    });
+    worker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "worker.key"),
+      workerId,
+      controlAddr: control.multiaddrs[0],
+    });
+
+    await worker.register();
+    const claim = await worker.claimToyTrainingJob(2_000);
+    expect(claim.accepted).toBe(true);
+    expect(control.state.assignedJobs.get(job.job_id)).toBe(workerId);
+
+    await worker.reportJobStatus({
+      job_id: job.job_id,
+      status: "failed",
+      message: "simulated worker failure",
+    });
+
+    expect(control.state.assignedJobs.has(job.job_id)).toBe(false);
+  }, 20_000);
+
   it("persists evaluate_adapter job specs and artifacts in the coordinator", async () => {
     const suffix = Date.now().toString(36);
     const workerId = `mac-worker-eval-bridge-${suffix}`;
@@ -297,6 +331,11 @@ describeWithCoordinator("Marshall p2p coordinator bridge", () => {
       expect(pendingTargetArtifact.verdict).toBeUndefined();
       expect(pendingTargetArtifact.verdict_status).toBe("pending");
       expect(pendingTargetArtifact.verdict_votes).toBe(1);
+      expect(pendingTargetArtifact.verdict_validators).toEqual([firstValidatorWorkerId]);
+
+      const duplicateValidationClaim = await firstValidatorWorker.claimJob("validate_artifact", 2_000);
+      expect(duplicateValidationClaim.accepted).toBe(false);
+      expect(duplicateValidationClaim.reason).toContain("already voted");
 
       await secondValidatorWorker.register();
       const secondValidationClaim = await secondValidatorWorker.claimJob("validate_artifact", 2_000);

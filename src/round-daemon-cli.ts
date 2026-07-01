@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CoordinatorClient, type CoordinatorArtifact, type CoordinatorJob } from "./coordinator-client.js";
+import { createValidationTopUpJobs } from "./validation-top-up.js";
 
 const args = parseArgs(process.argv.slice(2));
 const coordinatorUrl = requiredArg("coordinator-url", args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL);
@@ -12,6 +13,7 @@ const coordinator = new CoordinatorClient(coordinatorUrl, { token: coordinatorTo
 
 const runId = requiredArg("run-id", args["run-id"] ?? process.env.MARSHALL_RUN_ID);
 const roundId = requiredArg("round-id", args["round-id"] ?? process.env.MARSHALL_ROUND_ID);
+const validationRunId = args["validation-run-id"] ?? process.env.MARSHALL_VALIDATION_RUN_ID ?? `${runId}_validation`;
 const jobsDir = resolve(requiredArg("jobs-dir", args["jobs-dir"] ?? process.env.MARSHALL_JOBS_DIR));
 const trainJobPrefix = requiredArg("train-job-prefix", args["train-job-prefix"] ?? process.env.MARSHALL_TRAIN_JOB_PREFIX);
 const evalJobPrefix = requiredArg("eval-job-prefix", args["eval-job-prefix"] ?? process.env.MARSHALL_EVAL_JOB_PREFIX);
@@ -44,7 +46,7 @@ async function tick() {
   const validationJobs = jobsByPrefix(jobs, validationJobPrefix, "validate_artifact");
   const loraArtifacts = artifactsByPrefix(artifacts, trainJobPrefix, "lora_adapter");
   const evalArtifacts = artifactsByPrefix(artifacts, evalJobPrefix, "adapter_evaluation");
-  const finalizedEvalArtifacts = evalArtifacts.filter((artifact) => artifact.verdict_status === "finalized" || artifact.verdict != null);
+  const finalizedEvalArtifacts = evalArtifacts.filter(isFinalizedArtifact);
 
   if (evalJobs.length === 0) {
     if (activeJobs(trainJobs).length > 0 || loraArtifacts.length === 0) {
@@ -91,7 +93,7 @@ async function tick() {
       "--jobs-dir", jobsDir,
       "--run-id", runId,
       "--round-id", roundId,
-      "--validation-run-id", args["validation-run-id"] ?? `${runId}_validation`,
+      "--validation-run-id", validationRunId,
       "--validation-job-prefix", validationJobPrefix,
       "--validators-per-artifact", requiredArg("validators-per-artifact", args["validators-per-artifact"] ?? process.env.MARSHALL_VALIDATORS_PER_ARTIFACT),
       "--quorum", requiredArg("quorum", args.quorum ?? process.env.MARSHALL_VALIDATION_QUORUM),
@@ -104,9 +106,45 @@ async function tick() {
     return daemonAction("scheduled_validation", jobs, artifacts, { result });
   }
 
-  if (activeJobs(validationJobs).length > 0 || finalizedEvalArtifacts.length < evalArtifacts.length || evalArtifacts.length === 0) {
+  const activeValidationJobs = activeJobs(validationJobs);
+  if (activeValidationJobs.length > 0 || evalArtifacts.length === 0) {
     return daemonAction("wait_validation", jobs, artifacts, {
-      reason: "validation jobs are still active or evaluation verdicts are not finalized",
+      reason: "validation jobs are still active or no evaluation artifacts are available",
+      validation_jobs: summarizeJobs(validationJobs),
+      eval_artifacts: evalArtifacts.length,
+      finalized_eval_artifacts: finalizedEvalArtifacts.length,
+    });
+  }
+  const unfinalizedEvalArtifacts = evalArtifacts.filter((artifact) => !isFinalizedArtifact(artifact));
+  if (unfinalizedEvalArtifacts.length > 0) {
+    const policy = validationPolicyArgs();
+    const topUpJobs = createValidationTopUpJobs({
+      artifacts: unfinalizedEvalArtifacts,
+      validationJobs,
+      runId: validationRunId,
+      roundId,
+      jobPrefix: validationJobPrefix,
+      quorum: policy.quorum,
+      minMemoryGb: optionalPositiveNumberArg(args["validation-min-memory-gb"] ?? process.env.MARSHALL_VALIDATION_MIN_MEMORY_GB),
+      policy,
+    });
+    if (topUpJobs.length === 0) {
+      return daemonAction("wait_validation", jobs, artifacts, {
+        reason: "evaluation verdicts are not finalized but no validation top-up jobs are available",
+        validation_jobs: summarizeJobs(validationJobs),
+        eval_artifacts: evalArtifacts.length,
+        finalized_eval_artifacts: finalizedEvalArtifacts.length,
+      });
+    }
+    const outputFile = join(jobsDir, `validate-artifacts-top-up-${String(iterations).padStart(6, "0")}.json`);
+    await mkdir(dirname(outputFile), { recursive: true });
+    await writeFile(outputFile, JSON.stringify(topUpJobs, null, 2) + "\n", "utf8");
+    await coordinator.initializeJobs(topUpJobs);
+    return daemonAction("scheduled_validation_top_up", jobs, artifacts, {
+      reason: "evaluation verdicts need additional validator quorum votes",
+      jobs_file: outputFile,
+      published_jobs: topUpJobs.length,
+      pending_eval_artifacts: unfinalizedEvalArtifacts.length,
       validation_jobs: summarizeJobs(validationJobs),
       eval_artifacts: evalArtifacts.length,
       finalized_eval_artifacts: finalizedEvalArtifacts.length,
@@ -147,6 +185,10 @@ function activeJobs(jobs: CoordinatorJob[]): CoordinatorJob[] {
     const status = job.status ?? "";
     return status === "" || status === "queued" || status === "claimed" || status === "running";
   });
+}
+
+function isFinalizedArtifact(artifact: CoordinatorArtifact): boolean {
+  return artifact.verdict_status === "finalized" || (artifact.verdict != null && artifact.verdict !== "");
 }
 
 function summarizeJobs(jobs: CoordinatorJob[]) {
@@ -266,6 +308,35 @@ function optionalValueArg(name: string, value: string | undefined): string[] {
     return [];
   }
   return [name, value];
+}
+
+function validationPolicyArgs() {
+  const quorum = positiveIntegerArg(requiredArg("quorum", args.quorum ?? process.env.MARSHALL_VALIDATION_QUORUM));
+  return {
+    min_accuracy: numberArg(requiredArg("min-accuracy", args["min-accuracy"] ?? process.env.MARSHALL_VALIDATION_MIN_ACCURACY)),
+    max_invalid_rate: numberArg(requiredArg("max-invalid-rate", args["max-invalid-rate"] ?? process.env.MARSHALL_VALIDATION_MAX_INVALID_RATE)),
+    min_examples: positiveIntegerArg(requiredArg("min-examples", args["min-examples"] ?? process.env.MARSHALL_VALIDATION_MIN_EXAMPLES)),
+    quorum,
+  };
+}
+
+function optionalPositiveNumberArg(value: string | undefined): number | undefined {
+  if (value == null || value.trim() === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
+  }
+  return parsed;
+}
+
+function numberArg(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`invalid number: ${value}`);
+  }
+  return parsed;
 }
 
 function positiveIntegerArg(value: string): number {

@@ -133,9 +133,17 @@ gcloud compute scp \
   "$ROOT_DIR/deploy/gcp-micro/marshall-coordinator.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-caddy.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-control.service" \
+  "$ROOT_DIR/deploy/gcp-micro/marshall-round-daemon.service" \
   "$INSTANCE:/tmp/marshall-deploy/" \
   --zone "$ZONE" \
   --project "$PROJECT"
+if [ -f "$SECRETS_DIR/round-daemon.env" ]; then
+  gcloud compute scp \
+    "$SECRETS_DIR/round-daemon.env" \
+    "$INSTANCE:/tmp/marshall-deploy/round-daemon.env" \
+    --zone "$ZONE" \
+    --project "$PROJECT"
+fi
 gcloud compute scp \
   --recurse \
   "$APP_DEPLOY_DIR" \

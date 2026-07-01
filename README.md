@@ -222,7 +222,7 @@ Evaluation jobs that load the same base model should use the same memory gate as
 - schedules quorum `validate_artifact` jobs from unvalidated `adapter_evaluation` artifacts;
 - writes accepted-only leaderboard files and an optional verified model package after validation is finalized.
 
-For unattended runs, use `round:daemon`. It polls live coordinator jobs/artifacts, waits for each phase to finish, writes filtered artifact snapshots for the active run, schedules evaluation and validation jobs, and writes the final leaderboard/model package after quorum verdicts are finalized. It is the operational path for public multi-Mac runs.
+For unattended runs, use `round:daemon`. It polls live coordinator jobs/artifacts, waits for each phase to finish, writes filtered artifact snapshots for the active run, schedules evaluation and validation jobs, publishes validation top-up jobs when quorum votes are missing or tied, and writes the final leaderboard/model package after quorum verdicts are finalized. It is the operational path for public multi-Mac runs.
 
 Example one-shot phase advancement:
 
@@ -303,6 +303,7 @@ The current public trial deploy target is a small GCP VM:
 - HTTPS proxy: Caddy;
 - coordinator: Go service on `127.0.0.1:8080`;
 - control peer: Node.js libp2p service on TCP `4001`, serving live coordinator jobs with `--coordinator-jobs true`;
+- round daemon: optional Node.js service that starts when `/etc/marshall/round-daemon.env` exists and automatically advances the configured run from training to evaluation, validation, and selection;
 - Redis: local-only on the VM.
 
 Deploy:

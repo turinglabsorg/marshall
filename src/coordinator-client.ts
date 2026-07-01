@@ -50,6 +50,7 @@ const CoordinatorArtifactSchema = z.object({
   verdict_status: z.string().optional(),
   verdict_votes: z.number().optional(),
   verdict_quorum: z.number().optional(),
+  verdict_validators: z.array(z.string()).optional(),
 });
 
 const RequeueResultSchema = z.object({

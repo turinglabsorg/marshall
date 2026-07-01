@@ -89,20 +89,21 @@ type JobStatus struct {
 }
 
 type Artifact struct {
-	JobID         string `json:"job_id"`
-	WorkerID      string `json:"worker_id"`
-	PeerID        string `json:"peer_id"`
-	ArtifactType  string `json:"artifact_type"`
-	ArtifactURI   string `json:"artifact_uri"`
-	ArtifactHash  string `json:"artifact_hash"`
-	ConfigHash    string `json:"config_hash"`
-	MetricsURI    string `json:"metrics_uri,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	Verdict       string `json:"verdict,omitempty"`
-	VerdictAt     string `json:"verdict_at,omitempty"`
-	VerdictStatus string `json:"verdict_status,omitempty"`
-	VerdictVotes  int    `json:"verdict_votes,omitempty"`
-	VerdictQuorum int    `json:"verdict_quorum,omitempty"`
+	JobID             string   `json:"job_id"`
+	WorkerID          string   `json:"worker_id"`
+	PeerID            string   `json:"peer_id"`
+	ArtifactType      string   `json:"artifact_type"`
+	ArtifactURI       string   `json:"artifact_uri"`
+	ArtifactHash      string   `json:"artifact_hash"`
+	ConfigHash        string   `json:"config_hash"`
+	MetricsURI        string   `json:"metrics_uri,omitempty"`
+	CreatedAt         string   `json:"created_at,omitempty"`
+	Verdict           string   `json:"verdict,omitempty"`
+	VerdictAt         string   `json:"verdict_at,omitempty"`
+	VerdictStatus     string   `json:"verdict_status,omitempty"`
+	VerdictVotes      int      `json:"verdict_votes,omitempty"`
+	VerdictQuorum     int      `json:"verdict_quorum,omitempty"`
+	VerdictValidators []string `json:"verdict_validators,omitempty"`
 }
 
 type WorkerReputation struct {
