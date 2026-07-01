@@ -15,6 +15,9 @@ const server = await createChatServer({
   p2pListen: optionalSplitList(args["p2p-listen"] ?? process.env.MARSHALL_CHAT_P2P_LISTEN),
   p2pWorkerAddr: args["p2p-worker-addr"] ?? process.env.MARSHALL_CHAT_P2P_WORKER_ADDR,
   p2pRequestTimeoutMs: optionalPositiveIntegerArg(args["p2p-timeout-ms"] ?? process.env.MARSHALL_CHAT_P2P_TIMEOUT_MS),
+  conversationDir: args["conversation-dir"] ?? process.env.MARSHALL_CHAT_CONVERSATION_DIR,
+  conversationTtlDays: optionalPositiveNumberArg(args["conversation-ttl-days"] ?? process.env.MARSHALL_CHAT_CONVERSATION_TTL_DAYS),
+  maxContextMessages: optionalPositiveIntegerArg(args["max-context-messages"] ?? process.env.MARSHALL_CHAT_MAX_CONTEXT_MESSAGES),
   modelPackagePath: args["model-package"] ?? args.package ?? process.env.MARSHALL_MODEL_PACKAGE,
   model: args.model ?? process.env.MARSHALL_MODEL,
   adapterPath: args["adapter-path"] ?? process.env.MARSHALL_ADAPTER_PATH,
@@ -34,6 +37,7 @@ server.listen(port, host, () => {
     runtime: args.runtime ?? process.env.MARSHALL_CHAT_RUNTIME ?? "local_process",
     public_dir: publicDir,
     runner: runnerPath,
+    conversation_dir: args["conversation-dir"] ?? process.env.MARSHALL_CHAT_CONVERSATION_DIR ?? null,
   }, null, 2));
 });
 
@@ -95,4 +99,15 @@ function optionalPositiveIntegerArg(value: string | undefined): number | undefin
     return undefined;
   }
   return positiveIntegerArg(value);
+}
+
+function optionalPositiveNumberArg(value: string | undefined): number | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+  const parsed = numberArg(value);
+  if (parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
+  }
+  return parsed;
 }

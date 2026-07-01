@@ -318,14 +318,18 @@ npm run chat:dev -- \
   --runtime p2p_worker \
   --p2p-key .marshall/chat-gateway.key \
   --p2p-worker-addr "/ip4/<worker-ip>/tcp/8788/p2p/<worker-peer-id>" \
+  --conversation-dir .marshall/chat/conversations \
+  --max-context-messages 18 \
   --model mlx-community/gemma-3-1b-it-4bit \
   --adapter-id job_dolly_gemma3_1b_public_shard_007 \
   --adapter-hash sha256:<adapter-root-hash>
 ```
 
-Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health` and `POST /api/chat`; `/api/chat` sends `/marshall/inference/generate/1.0.0` to the worker over libp2p and returns the worker response.
+Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/conversation?conversation_id=<id>`, and `POST /api/chat`; `/api/chat` stores the user turn under a durable `conversation_id`, builds the bounded context window, sends `/marshall/inference/generate/1.0.0` to the worker over libp2p, stores the assistant turn, and returns the updated conversation.
 
 In the chat composer, `Enter` submits the prompt and `Shift+Enter` inserts a newline.
+
+Conversation memory belongs to the gateway, not to inference workers. The current durable store is file-backed under `.marshall/chat/conversations` by default. Workers stay stateless: they receive only the context window needed for the current turn. Use `--conversation-ttl-days <n>` to expire old files and `--max-context-messages <n>` to cap the prompt sent to a worker. Future long-term memory should add summarization and semantic retrieval in the gateway or a private memory service, while the coordinator remains limited to routing, worker capacity, reputation, and public job metadata.
 
 For a single-process debugging run only:
 
@@ -334,6 +338,7 @@ npm run chat:dev -- \
   --host 127.0.0.1 \
   --port 8787 \
   --model-package .marshall/model-packages/<run-id>/model_package.json \
+  --conversation-dir .marshall/chat/conversations \
   --python ~/.marshall/mlx-venv/bin/python
 ```
 

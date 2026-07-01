@@ -85,6 +85,7 @@ function value(flag) {
       systemPrompt: "You are Marshall.",
       maxTokens: 64,
       temperature: 0.1,
+      conversationDir: join(tempDir, "conversations"),
     });
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const address = server.address() as AddressInfo;
@@ -103,15 +104,16 @@ function value(flag) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt: "ping" }),
-    }).then((response) => response.json());
+    }).then((response) => response.json()) as any;
 
     expect(chat).toMatchObject({
       type: "marshall_chat_response",
       runtime: "p2p_worker",
       adapter_id: "job_test_adapter",
       adapter_hash: "sha256:test-adapter",
-      text: "p2p answer: ping",
+      text: "p2p answer: user: ping\nassistant:",
       elapsed_ms: 11,
     });
+    expect(chat.conversation_id).toMatch(/^conv_/);
   }, 15_000);
 });

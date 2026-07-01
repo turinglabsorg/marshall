@@ -85,6 +85,8 @@ Initial merge mode can remain `single_adapter`. Future merge modes may include w
 
 `marshall.chat` now has a first P2P inference prototype: an HTTP gateway can route a prompt to one explicit libp2p inference worker running the selected model package.
 
+It also has durable gateway-owned conversation memory. The gateway persists `conversation_id`, message history, model package metadata, and a summary field under `.marshall/chat/conversations`, then sends only a bounded context window to the selected worker. Inference workers must remain stateless for privacy and routing resilience; a conversation can move between workers because the gateway carries the context.
+
 The next product step is a replicated inference gateway.
 
 Workers advertise loaded models and adapters. A router receives a prompt, selects one capable worker, forwards the request, streams tokens back, and records runtime metrics.
@@ -114,6 +116,14 @@ Required production protocols:
 - inference benchmark jobs;
 - timeout and retry policy;
 - output audit logs with hashes and model package identifiers.
+
+Long-term memory roadmap:
+
+- summary compaction when message history exceeds the context budget;
+- semantic memory retrieval scoped by conversation and user;
+- encrypted or private-store persistence for hosted `marshall.chat`;
+- sticky routing as an optimization only, never as the source of conversational truth;
+- explicit user controls for memory reset, export, and retention.
 
 ## Phase 5: Trusted Cluster Modes
 

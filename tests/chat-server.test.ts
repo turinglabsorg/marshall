@@ -21,6 +21,7 @@ describe("marshall.chat local server", () => {
     const publicDir = join(tempDir, "public");
     const adapterPath = join(tempDir, "adapter");
     const runnerPath = join(tempDir, "fake-runner.mjs");
+    const conversationDir = join(tempDir, "conversations");
     await mkdir(publicDir);
     await mkdir(adapterPath);
     await writeFile(join(publicDir, "index.html"), "<!doctype html><title>marshall.chat</title>", "utf8");
@@ -58,6 +59,7 @@ function value(flag) {
       systemPrompt: "You are Marshall.",
       maxTokens: 64,
       temperature: 0.1,
+      conversationDir,
     });
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const address = server.address() as AddressInfo;
@@ -80,7 +82,7 @@ function value(flag) {
           { role: "user", content: "When did Virgin Australia start operating?" },
         ],
       }),
-    }).then((response) => response.json());
+    }).then((response) => response.json()) as any;
 
     expect(chat).toMatchObject({
       type: "marshall_chat_response",
@@ -88,5 +90,27 @@ function value(flag) {
       text: "answer: user: When did Virgin Australia start operating?\nassistant:",
       elapsed_ms: 7,
     });
+    expect(chat.conversation_id).toMatch(/^conv_/);
+    expect(chat.conversation.messages).toHaveLength(2);
+    expect(chat.conversation.messages[0]).toMatchObject({
+      role: "user",
+      content: "When did Virgin Australia start operating?",
+    });
+
+    const persisted = await fetch(`${baseUrl}/api/conversation?conversation_id=${encodeURIComponent(chat.conversation_id)}`).then((response) => response.json()) as any;
+    expect(persisted.conversation.messages).toHaveLength(2);
+
+    const followUp = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: chat.conversation_id,
+        prompt: "Answer again.",
+      }),
+    }).then((response) => response.json()) as any;
+
+    expect(followUp.conversation.messages).toHaveLength(4);
+    expect(followUp.text).toContain("assistant: answer: user: When did Virgin Australia start operating?");
+    expect(followUp.text).toContain("user: Answer again.");
   });
 });

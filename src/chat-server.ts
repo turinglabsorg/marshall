@@ -6,6 +6,12 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { Libp2p } from "@libp2p/interface";
 import { multiaddr } from "@multiformats/multiaddr";
+import {
+  defaultConversationDir,
+  FileConversationStore,
+  publicConversation,
+  ttlDaysToMs,
+} from "./chat-memory.js";
 import { createMarshallNode } from "./node.js";
 import { PROTOCOLS } from "./protocols.js";
 import { InferenceResponseSchema } from "./schemas.js";
@@ -22,6 +28,9 @@ export interface ChatServerConfig {
   p2pListen?: string[];
   p2pWorkerAddr?: string;
   p2pRequestTimeoutMs?: number;
+  conversationDir?: string;
+  conversationTtlDays?: number;
+  maxContextMessages?: number;
   modelPackagePath?: string;
   model?: string;
   adapterPath?: string;
@@ -55,7 +64,12 @@ export interface ResolvedChatServerConfig extends ChatServerConfig {
   p2pNode?: Libp2p;
 }
 
+interface RuntimeChatServerConfig extends ResolvedChatServerConfig {
+  conversations: FileConversationStore;
+}
+
 interface ChatRequest {
+  conversation_id?: unknown;
   prompt?: unknown;
   messages?: unknown;
   max_tokens?: unknown;
@@ -117,15 +131,20 @@ export async function resolveChatConfig(config: ChatServerConfig): Promise<Resol
 
 export async function createChatServer(config: ChatServerConfig): Promise<Server> {
   const resolved = await resolveChatConfig(config);
+  const conversations = new FileConversationStore({
+    dir: resolved.conversationDir ?? defaultConversationDir(),
+    ttlMs: resolved.conversationTtlDays == null ? undefined : ttlDaysToMs(resolved.conversationTtlDays),
+  });
   const p2pNode = resolved.runtime === "p2p_worker"
     ? await createMarshallNode({
       privateKeyPath: resolved.p2pPrivateKeyPath!,
       listen: resolved.p2pListen ?? ["/ip4/127.0.0.1/tcp/0"],
     })
     : undefined;
-  const runtimeConfig: ResolvedChatServerConfig = {
+  const runtimeConfig: RuntimeChatServerConfig = {
     ...resolved,
     p2pNode,
+    conversations,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -143,10 +162,14 @@ export async function createChatServer(config: ChatServerConfig): Promise<Server
   return server;
 }
 
-async function handleRequest(request: IncomingMessage, response: ServerResponse, config: ResolvedChatServerConfig): Promise<void> {
+async function handleRequest(request: IncomingMessage, response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
   const url = new URL(request.url ?? "/", "http://marshall.chat");
   if (request.method === "GET" && url.pathname === "/api/health") {
     await handleHealth(response, config);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/conversation") {
+    await handleConversation(url, response, config);
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/chat") {
@@ -160,7 +183,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   sendJson(response, 405, { type: "marshall_chat_method_not_allowed" });
 }
 
-async function handleHealth(response: ServerResponse, config: ResolvedChatServerConfig): Promise<void> {
+async function handleHealth(response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
   const adapterStat = config.runtime === "local_process" && config.adapterPath != null
     ? await stat(config.adapterPath).catch(() => null)
     : null;
@@ -174,30 +197,67 @@ async function handleHealth(response: ServerResponse, config: ResolvedChatServer
     adapter_hash: config.adapterArtifactHash,
     p2p_worker_addr: config.p2pWorkerAddr ?? null,
     p2p_gateway_peer_id: config.p2pNode?.peerId.toString() ?? null,
+    memory: {
+      backend: "file",
+      conversation_dir: config.conversationDir ?? defaultConversationDir(),
+      max_context_messages: config.maxContextMessages ?? 18,
+      ttl_days: config.conversationTtlDays ?? null,
+    },
     package_path: config.modelPackagePath ?? null,
     eval: config.packageInfo?.eval ?? null,
   });
 }
 
-async function handleChat(request: IncomingMessage, response: ServerResponse, config: ResolvedChatServerConfig): Promise<void> {
+async function handleConversation(url: URL, response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
+  const conversationId = url.searchParams.get("conversation_id");
+  if (conversationId == null || conversationId === "") {
+    sendJson(response, 400, { type: "marshall_chat_conversation_error", error: "conversation_id is required" });
+    return;
+  }
+  const conversation = await config.conversations.get(conversationId);
+  if (conversation == null) {
+    sendJson(response, 404, { type: "marshall_chat_conversation_not_found" });
+    return;
+  }
+  sendJson(response, 200, {
+    type: "marshall_chat_conversation",
+    conversation: publicConversation(conversation),
+  });
+}
+
+async function handleChat(request: IncomingMessage, response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
   const body = await readJsonBody<ChatRequest>(request);
-  const prompt = chatPrompt(body);
+  const userContent = userPrompt(body);
+  const context = await config.conversations.context(
+    conversationId(body),
+    userContent,
+    conversationMetadata(config),
+    { maxMessages: config.maxContextMessages },
+  );
   const maxTokens = positiveInteger(body.max_tokens, config.maxTokens, "max_tokens");
   const temperature = finiteNumber(body.temperature, config.temperature, "temperature");
   const promptSystem = systemPrompt(body, config.systemPrompt);
   const result = config.runtime === "p2p_worker"
-    ? await runP2pInference(config, prompt, promptSystem, maxTokens, temperature)
-    : await runLocalInference(config, prompt, promptSystem, maxTokens, temperature);
+    ? await runP2pInference(config, context.prompt, promptSystem, maxTokens, temperature)
+    : await runLocalInference(config, context.prompt, promptSystem, maxTokens, temperature);
+  const updatedConversation = await config.conversations.appendTurn(
+    context.conversation,
+    userContent,
+    result.text ?? result.raw_text ?? "",
+    conversationMetadata(config),
+  );
   sendJson(response, 200, {
     type: "marshall_chat_response",
     runtime: config.runtime,
     model: result.model ?? config.model,
     adapter_id: result.adapter_id ?? config.adapterId,
     adapter_hash: result.adapter_hash ?? config.adapterArtifactHash,
-    prompt,
+    conversation_id: updatedConversation.conversation_id,
+    prompt: userContent,
     text: result.text ?? "",
     raw_text: result.raw_text ?? "",
     elapsed_ms: result.elapsed_ms ?? 0,
+    conversation: publicConversation(updatedConversation),
   });
 }
 
@@ -355,7 +415,7 @@ function readJsonBody<T>(request: IncomingMessage): Promise<T> {
   });
 }
 
-function chatPrompt(body: ChatRequest): string {
+function userPrompt(body: ChatRequest): string {
   if (typeof body.prompt === "string" && body.prompt.trim() !== "") {
     return body.prompt.trim();
   }
@@ -363,10 +423,25 @@ function chatPrompt(body: ChatRequest): string {
     const messages = parseMessages(body.messages);
     const lastUser = messages.filter((message) => message.role === "user").at(-1);
     if (lastUser != null) {
-      return transcriptPrompt(messages, lastUser.content);
+      return lastUser.content;
     }
   }
   throw new Error("prompt or messages with a user message is required");
+}
+
+function conversationId(body: ChatRequest): string | undefined {
+  if (body.conversation_id == null || body.conversation_id === "") {
+    return undefined;
+  }
+  return stringValue(body.conversation_id, "conversation_id");
+}
+
+function conversationMetadata(config: ResolvedChatServerConfig) {
+  return {
+    model: config.model,
+    adapterId: config.adapterId,
+    adapterHash: config.adapterArtifactHash,
+  };
 }
 
 function systemPrompt(body: ChatRequest, fallback: string): string {
@@ -375,15 +450,6 @@ function systemPrompt(body: ChatRequest, fallback: string): string {
   }
   const messages = parseMessages(body.messages);
   return messages.find((message) => message.role === "system")?.content ?? fallback;
-}
-
-function transcriptPrompt(messages: ChatMessage[], lastUserContent: string): string {
-  const history = messages
-    .filter((message) => message.role !== "system")
-    .slice(-8)
-    .map((message) => `${message.role}: ${message.content}`)
-    .join("\n");
-  return history === "" ? lastUserContent : `${history}\nassistant:`;
 }
 
 function parseMessages(value: unknown[]): ChatMessage[] {

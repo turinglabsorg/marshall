@@ -1,10 +1,6 @@
 const state = {
-  messages: [
-    {
-      role: "assistant",
-      content: "marshall.chat session ready.",
-    },
-  ],
+  conversationId: existingConversationId(),
+  messages: [],
   busy: false,
   health: null,
 };
@@ -29,6 +25,7 @@ const clockLabel = document.getElementById("clockLabel");
 
 render();
 refreshHealth();
+loadConversation();
 setInterval(refreshHealth, 5000);
 setInterval(() => {
   clockLabel.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -62,7 +59,8 @@ form.addEventListener("submit", async (event) => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        messages: state.messages,
+        conversation_id: state.conversationId,
+        prompt,
         max_tokens: Number(tokensInput.value),
         temperature: Number(tempInput.value),
       }),
@@ -71,7 +69,12 @@ form.addEventListener("submit", async (event) => {
     if (!response.ok) {
       throw new Error(payload.error || `request failed ${response.status}`);
     }
-    state.messages.push({ role: "assistant", content: payload.text || payload.raw_text || "" });
+    state.conversationId = payload.conversation_id || state.conversationId;
+    localStorage.setItem("marshall.chat.conversation_id", state.conversationId);
+    state.messages = payload.conversation?.messages || [
+      ...state.messages,
+      { role: "assistant", content: payload.text || payload.raw_text || "" },
+    ];
     latencyLabel.textContent = `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms`;
     logEvent("response", `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms`);
   } catch (error) {
@@ -84,6 +87,27 @@ form.addEventListener("submit", async (event) => {
     render();
   }
 });
+
+async function loadConversation() {
+  if (!state.conversationId) {
+    return;
+  }
+  try {
+    const response = await fetch(`/api/conversation?conversation_id=${encodeURIComponent(state.conversationId)}`, { cache: "no-store" });
+    if (response.status === 404) {
+      return;
+    }
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || `conversation failed ${response.status}`);
+    }
+    state.messages = payload.conversation?.messages || [];
+    render();
+    logEvent("memory", `${state.messages.length} persisted messages`);
+  } catch (error) {
+    logEvent("memory_error", error instanceof Error ? error.message : String(error));
+  }
+}
 
 async function refreshHealth() {
   try {
@@ -106,7 +130,10 @@ async function refreshHealth() {
 
 function render() {
   transcript.innerHTML = "";
-  for (const message of state.messages) {
+  const messages = state.messages.length === 0
+    ? [{ role: "assistant", content: "marshall.chat session ready." }]
+    : state.messages;
+  for (const message of messages) {
     const item = document.createElement("div");
     item.className = `message ${message.role}`;
     const role = document.createElement("div");
@@ -160,4 +187,14 @@ function evalText(evalInfo) {
   const accuracy = Number(evalInfo.accuracy).toFixed(3);
   const correct = evalInfo.correct == null || evalInfo.examples == null ? "" : ` ${evalInfo.correct}/${evalInfo.examples}`;
   return `${accuracy}${correct}`;
+}
+
+function existingConversationId() {
+  const existing = localStorage.getItem("marshall.chat.conversation_id");
+  if (existing) {
+    return existing;
+  }
+  const next = `conv_${crypto.randomUUID()}`;
+  localStorage.setItem("marshall.chat.conversation_id", next);
+  return next;
 }
