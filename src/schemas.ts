@@ -262,6 +262,47 @@ export const InferenceHelloResponseSchema = z.discriminatedUnion("accepted", [
   }),
 ]);
 
+export const InferenceStreamEventSchema = z.discriminatedUnion("event", [
+  z.object({
+    type: z.literal("marshall_inference_stream_event"),
+    event: z.literal("started"),
+    peer_id: z.string().min(1).optional(),
+    worker_id: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    adapter_id: z.string().min(1).optional(),
+    adapter_hash: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal("marshall_inference_stream_event"),
+    event: z.literal("chunk"),
+    peer_id: z.string().min(1).optional(),
+    worker_id: z.string().min(1).optional(),
+    text: z.string(),
+    raw_text: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("marshall_inference_stream_event"),
+    event: z.literal("completed"),
+    peer_id: z.string().min(1).optional(),
+    worker_id: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    adapter_id: z.string().min(1).optional(),
+    adapter_hash: z.string().min(1).optional(),
+    prompt: z.string().min(1).optional(),
+    text: z.string(),
+    raw_text: z.string(),
+    elapsed_ms: z.number().nonnegative(),
+  }),
+  z.object({
+    type: z.literal("marshall_inference_stream_event"),
+    event: z.literal("error"),
+    peer_id: z.string().min(1).optional(),
+    worker_id: z.string().min(1).optional(),
+    error: z.string().min(1),
+    elapsed_ms: z.number().nonnegative().optional(),
+  }),
+]);
+
 export const InferenceResponseSchema = z.object({
   type: z.literal("marshall_inference_response"),
   accepted: z.boolean(),
@@ -463,6 +504,7 @@ export type ArtifactFetchChunkResponse = z.infer<typeof ArtifactFetchChunkRespon
 export type InferenceRequest = z.infer<typeof InferenceRequestSchema>;
 export type InferenceHelloRequest = z.infer<typeof InferenceHelloRequestSchema>;
 export type InferenceHelloResponse = z.infer<typeof InferenceHelloResponseSchema>;
+export type InferenceStreamEvent = z.infer<typeof InferenceStreamEventSchema>;
 export type InferenceResponse = z.infer<typeof InferenceResponseSchema>;
 export type ToyTrainingMetrics = z.infer<typeof ToyTrainingMetricsSchema>;
 export type MlxSmokeMetrics = z.infer<typeof MlxSmokeMetricsSchema>;

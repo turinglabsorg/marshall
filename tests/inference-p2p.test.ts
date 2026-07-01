@@ -37,6 +37,20 @@ describe("marshall.chat p2p inference", () => {
 const prompt = value("--prompt");
 const model = value("--model");
 const adapterPath = value("--adapter-path");
+if (process.argv.includes("--stream-jsonl")) {
+  emit({ type: "marshall_inference_stream_event", event: "started", model });
+  emit({ type: "marshall_inference_stream_event", event: "chunk", text: "p2p stream chunk", raw_text: "p2p stream chunk" });
+  emit({
+    type: "marshall_inference_stream_event",
+    event: "completed",
+    model,
+    prompt,
+    text: "p2p stream answer: " + prompt,
+    raw_text: "p2p stream answer: " + prompt,
+    elapsed_ms: 12
+  });
+  process.exit(0);
+}
 console.log(JSON.stringify({
   type: "marshall_chat_completion",
   model,
@@ -53,6 +67,10 @@ function value(flag) {
     throw new Error("missing " + flag);
   }
   return process.argv[index + 1];
+}
+
+function emit(payload) {
+  console.log(JSON.stringify(payload));
 }
 `, "utf8");
 
@@ -117,6 +135,23 @@ function value(flag) {
       worker_id: "macbook-inference-test",
     });
     expect(chat.conversation_id).toMatch(/^conv_/);
+
+    const streamText = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "stream ping" }),
+    }).then((response) => response.text());
+    const streamEvents = eventsFromSse(streamText);
+    expect(streamEvents.map((event) => event.name)).toEqual(["accepted", "started", "chunk", "completed", "done"]);
+    expect(streamEvents.find((event) => event.name === "chunk")?.data).toMatchObject({
+      worker_id: "macbook-inference-test",
+      text: "p2p stream chunk",
+    });
+    expect(streamEvents.at(-1)?.data).toMatchObject({
+      type: "marshall_chat_response",
+      worker_id: "macbook-inference-test",
+      text: "p2p stream answer: user: stream ping\nassistant:",
+    });
   }, 15_000);
 
   it("selects compatible workers and fails over when the first generation fails", async () => {
@@ -237,3 +272,15 @@ function value(flag) {
     });
   }, 20_000);
 });
+
+function eventsFromSse(value: string): Array<{ name: string; data: unknown }> {
+  return value.trim().split("\n\n").map((block) => {
+    const lines = block.split("\n");
+    const eventLine = lines.find((line) => line.startsWith("event:"));
+    const dataLine = lines.find((line) => line.startsWith("data:"));
+    return {
+      name: eventLine?.slice("event:".length).trim() ?? "message",
+      data: JSON.parse(dataLine?.slice("data:".length).trim() ?? "{}"),
+    };
+  });
+}

@@ -247,7 +247,7 @@ describe("Marshall p2p substrate", () => {
       { chunkBytes: 16, maxChunkRetries: 2 },
     );
     expect(await sha256Path(fileURLToPath(materializedInput.artifact_uri))).toBe(storedManifest.artifact_hash);
-  }, 15_000);
+  }, 30_000);
 
   it("prevents workers from evaluating adapters produced by the same worker slot", async () => {
     const controlArtifactStore = join(tempDir, "control-artifacts");

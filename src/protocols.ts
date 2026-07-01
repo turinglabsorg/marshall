@@ -8,6 +8,7 @@ export const PROTOCOLS = {
   artifactFetch: "/marshall/artifact/fetch/1.0.0",
   inferenceHello: "/marshall/inference/hello/1.0.0",
   inferenceGenerate: "/marshall/inference/generate/1.0.0",
+  inferenceGenerateStream: "/marshall/inference/generate_stream/1.0.0",
 } as const;
 
 export type ProtocolName = (typeof PROTOCOLS)[keyof typeof PROTOCOLS];

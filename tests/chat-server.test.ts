@@ -29,6 +29,20 @@ describe("marshall.chat local server", () => {
 const prompt = value("--prompt");
 const model = value("--model");
 const adapterPath = value("--adapter-path");
+if (process.argv.includes("--stream-jsonl")) {
+  emit({ type: "marshall_inference_stream_event", event: "started", model });
+  emit({ type: "marshall_inference_stream_event", event: "chunk", text: "stream chunk", raw_text: "stream chunk" });
+  emit({
+    type: "marshall_inference_stream_event",
+    event: "completed",
+    model,
+    prompt,
+    text: "stream answer: " + prompt,
+    raw_text: "stream answer: " + prompt,
+    elapsed_ms: 9
+  });
+  process.exit(0);
+}
 console.log(JSON.stringify({
   type: "marshall_chat_completion",
   model,
@@ -45,6 +59,10 @@ function value(flag) {
     throw new Error("missing " + flag);
   }
   return process.argv[index + 1];
+}
+
+function emit(payload) {
+  console.log(JSON.stringify(payload));
 }
 `, "utf8");
 
@@ -112,5 +130,31 @@ function value(flag) {
     expect(followUp.conversation.messages).toHaveLength(4);
     expect(followUp.text).toContain("assistant: answer: user: When did Virgin Australia start operating?");
     expect(followUp.text).toContain("user: Answer again.");
+
+    const streamText = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: chat.conversation_id,
+        prompt: "Stream answer.",
+      }),
+    }).then((response) => response.text());
+    const streamEvents = eventsFromSse(streamText);
+    expect(streamEvents.map((event) => event.name)).toEqual(["accepted", "started", "chunk", "completed", "done"]);
+    const done = streamEvents.at(-1)?.data as any;
+    expect(done.text).toContain("stream answer:");
+    expect(done.conversation.messages).toHaveLength(6);
   });
 });
+
+function eventsFromSse(value: string): Array<{ name: string; data: unknown }> {
+  return value.trim().split("\n\n").map((block) => {
+    const lines = block.split("\n");
+    const eventLine = lines.find((line) => line.startsWith("event:"));
+    const dataLine = lines.find((line) => line.startsWith("data:"));
+    return {
+      name: eventLine?.slice("event:".length).trim() ?? "message",
+      data: JSON.parse(dataLine?.slice("data:".length).trim() ?? "{}"),
+    };
+  });
+}

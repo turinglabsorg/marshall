@@ -13,7 +13,7 @@ import {
 } from "./chat-memory.js";
 import { InferenceRouter } from "./inference-router.js";
 import { createMarshallNode } from "./node.js";
-import type { InferenceRequest } from "./schemas.js";
+import { InferenceStreamEventSchema, type InferenceRequest, type InferenceStreamEvent } from "./schemas.js";
 
 export type ChatRuntime = "local_process" | "p2p_worker";
 
@@ -200,6 +200,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     await handleChat(request, response, config);
     return;
   }
+  if (request.method === "POST" && url.pathname === "/api/chat/stream") {
+    await handleChatStream(request, response, config);
+    return;
+  }
   if (request.method === "GET") {
     await serveStatic(response, config.publicDir, url.pathname);
     return;
@@ -307,6 +311,60 @@ async function handleChat(request: IncomingMessage, response: ServerResponse, co
   });
 }
 
+async function handleChatStream(request: IncomingMessage, response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
+  writeSseHead(response);
+  try {
+    const body = await readJsonBody<ChatRequest>(request);
+    const userContent = userPrompt(body);
+    const context = await config.conversations.context(
+      conversationId(body),
+      userContent,
+      conversationMetadata(config),
+      { maxMessages: config.maxContextMessages },
+    );
+    const maxTokens = positiveInteger(body.max_tokens, config.maxTokens, "max_tokens");
+    const temperature = finiteNumber(body.temperature, config.temperature, "temperature");
+    const promptSystem = systemPrompt(body, config.systemPrompt);
+    sendSse(response, "accepted", {
+      conversation_id: context.conversation.conversation_id,
+      model: config.model,
+      adapter_id: config.adapterId,
+      adapter_hash: config.adapterArtifactHash,
+    });
+    const result = config.runtime === "p2p_worker"
+      ? await runP2pInferenceStream(config, context.prompt, promptSystem, maxTokens, temperature, (event) => sendInferenceSse(response, event, config))
+      : await runLocalInferenceStream(config, context.prompt, promptSystem, maxTokens, temperature, (event) => sendInferenceSse(response, event, config));
+    const updatedConversation = await config.conversations.appendTurn(
+      context.conversation,
+      userContent,
+      result.text ?? result.raw_text ?? "",
+      conversationMetadata(config),
+    );
+    sendSse(response, "done", {
+      type: "marshall_chat_response",
+      runtime: config.runtime,
+      model: result.model ?? config.model,
+      adapter_id: result.adapter_id ?? config.adapterId,
+      adapter_hash: result.adapter_hash ?? config.adapterArtifactHash,
+      worker_id: result.worker_id ?? null,
+      worker_peer_id: result.peer_id ?? null,
+      conversation_id: updatedConversation.conversation_id,
+      prompt: userContent,
+      text: result.text ?? "",
+      raw_text: result.raw_text ?? "",
+      elapsed_ms: result.elapsed_ms ?? 0,
+      conversation: publicConversation(updatedConversation),
+    });
+  } catch (error) {
+    sendSse(response, "error", {
+      type: "marshall_chat_stream_error",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    response.end();
+  }
+}
+
 async function runLocalInference(
   config: ResolvedChatServerConfig,
   prompt: string,
@@ -334,6 +392,35 @@ async function runLocalInference(
   };
 }
 
+async function runLocalInferenceStream(
+  config: ResolvedChatServerConfig,
+  prompt: string,
+  promptSystem: string,
+  maxTokens: number,
+  temperature: number,
+  onEvent: (event: InferenceStreamEvent) => void,
+) {
+  if (config.adapterPath == null || config.adapterPath === "") {
+    throw new Error("local_process runtime requires adapterPath");
+  }
+  const result = await runInferenceStream({
+    runnerPath: config.runnerPath,
+    pythonBin: config.pythonBin,
+    model: config.model,
+    adapterPath: config.adapterPath,
+    systemPrompt: promptSystem,
+    prompt,
+    maxTokens,
+    temperature,
+    onEvent,
+  });
+  return {
+    ...result,
+    adapter_id: config.adapterId,
+    adapter_hash: config.adapterArtifactHash,
+  };
+}
+
 async function runP2pInference(
   config: RuntimeChatServerConfig,
   prompt: string,
@@ -352,6 +439,52 @@ async function runP2pInference(
     temperature,
   };
   return config.inferenceRouter.generate(request);
+}
+
+async function runP2pInferenceStream(
+  config: RuntimeChatServerConfig,
+  prompt: string,
+  promptSystem: string,
+  maxTokens: number,
+  temperature: number,
+  onEvent: (event: InferenceStreamEvent) => void,
+) {
+  if (config.inferenceRouter == null) {
+    throw new Error("p2p_worker runtime requires an active inference router");
+  }
+  const request: InferenceRequest = {
+    type: "marshall_inference_request",
+    prompt,
+    system_prompt: promptSystem,
+    max_tokens: maxTokens,
+    temperature,
+  };
+  try {
+    return await config.inferenceRouter.generateStream(request, onEvent);
+  } catch {
+    onEvent({
+      type: "marshall_inference_stream_event",
+      event: "started",
+      model: config.model,
+      adapter_id: config.adapterId,
+      adapter_hash: config.adapterArtifactHash,
+    });
+    const response = await config.inferenceRouter.generate(request);
+    onEvent({
+      type: "marshall_inference_stream_event",
+      event: "completed",
+      peer_id: response.peer_id,
+      worker_id: response.worker_id,
+      model: response.model ?? config.model,
+      adapter_id: response.adapter_id ?? config.adapterId,
+      adapter_hash: response.adapter_hash ?? config.adapterArtifactHash,
+      prompt: response.prompt ?? prompt,
+      text: response.text ?? response.raw_text ?? "",
+      raw_text: response.raw_text ?? response.text ?? "",
+      elapsed_ms: response.elapsed_ms ?? 0,
+    });
+    return response;
+  }
 }
 
 export async function runInference(options: {
@@ -384,6 +517,39 @@ export async function runInference(options: {
     throw new Error(parsed.error);
   }
   return parsed as InferenceResult;
+}
+
+export async function runInferenceStream(options: {
+  runnerPath: string;
+  pythonBin: string;
+  model: string;
+  adapterPath: string;
+  systemPrompt: string;
+  prompt: string;
+  maxTokens: number;
+  temperature: number;
+  onEvent: (event: InferenceStreamEvent) => void;
+}): Promise<InferenceResult> {
+  const stdout = await runProcessStreaming(options.pythonBin, [
+    options.runnerPath,
+    "--model",
+    options.model,
+    "--adapter-path",
+    options.adapterPath,
+    "--system-prompt",
+    options.systemPrompt,
+    "--prompt",
+    options.prompt,
+    "--max-tokens",
+    String(options.maxTokens),
+    "--temp",
+    String(options.temperature),
+    "--stream-jsonl",
+  ], options.onEvent);
+  if (stdout == null) {
+    throw new Error("streaming inference completed without final event");
+  }
+  return stdout;
 }
 
 export async function loadModelPackage(path: string): Promise<LoadedModelPackage> {
@@ -543,6 +709,114 @@ function runProcess(command: string, values: string[]): Promise<string> {
       reject(new Error(stderr.trim() || stdout.trim() || `inference process exited ${exitCode ?? "unknown"}`));
     });
   });
+}
+
+function runProcessStreaming(
+  command: string,
+  values: string[],
+  onEvent: (event: InferenceStreamEvent) => void,
+): Promise<InferenceResult | null> {
+  return new Promise((resolveProcess, reject) => {
+    const child = spawn(command, values, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let buffer = "";
+    let completed: InferenceResult | null = null;
+    let streamError: string | undefined;
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+      buffer += chunk.toString("utf8");
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex !== -1) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        if (line !== "") {
+          const event = InferenceStreamEventSchema.parse(JSON.parse(line));
+          onEvent(event);
+          if (event.event === "completed") {
+            completed = {
+              type: "marshall_chat_completion",
+              model: event.model ?? "",
+              adapter_path: null,
+              peer_id: event.peer_id,
+              worker_id: event.worker_id,
+              prompt: event.prompt ?? "",
+              text: event.text,
+              raw_text: event.raw_text,
+              elapsed_ms: event.elapsed_ms,
+            };
+          }
+          if (event.event === "error") {
+            streamError = event.error;
+          }
+        }
+        newlineIndex = buffer.indexOf("\n");
+      }
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (exitCode) => {
+      try {
+        const tail = buffer.trim();
+        if (tail !== "") {
+          const event = InferenceStreamEventSchema.parse(JSON.parse(tail));
+          onEvent(event);
+          if (event.event === "completed") {
+            completed = {
+              type: "marshall_chat_completion",
+              model: event.model ?? "",
+              adapter_path: null,
+              peer_id: event.peer_id,
+              worker_id: event.worker_id,
+              prompt: event.prompt ?? "",
+              text: event.text,
+              raw_text: event.raw_text,
+              elapsed_ms: event.elapsed_ms,
+            };
+          }
+          if (event.event === "error") {
+            streamError = event.error;
+          }
+        }
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      if (exitCode === 0) {
+        resolveProcess(completed);
+        return;
+      }
+      reject(new Error(streamError ?? (stderr.trim() || stdout.trim() || `inference process exited ${exitCode ?? "unknown"}`)));
+    });
+  });
+}
+
+function writeSseHead(response: ServerResponse): void {
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-store",
+    "connection": "keep-alive",
+    "x-accel-buffering": "no",
+  });
+}
+
+function sendInferenceSse(response: ServerResponse, event: InferenceStreamEvent, config: ResolvedChatServerConfig): void {
+  sendSse(response, event.event, {
+    ...event,
+    model: event.event === "started" || event.event === "completed" ? event.model ?? config.model : undefined,
+    adapter_id: event.event === "started" || event.event === "completed" ? event.adapter_id ?? config.adapterId : undefined,
+    adapter_hash: event.event === "started" || event.event === "completed" ? event.adapter_hash ?? config.adapterArtifactHash : undefined,
+  });
+}
+
+function sendSse(response: ServerResponse, event: string, value: unknown): void {
+  response.write(`event: ${event}\n`);
+  response.write(`data: ${JSON.stringify(value)}\n\n`);
 }
 
 function sendJson(response: ServerResponse, statusCode: number, value: unknown): void {

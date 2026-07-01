@@ -4,11 +4,13 @@ import { PROTOCOLS } from "./protocols.js";
 import {
   InferenceHelloResponseSchema,
   InferenceResponseSchema,
+  InferenceStreamEventSchema,
   type InferenceHelloResponse,
   type InferenceRequest,
   type InferenceResponse,
+  type InferenceStreamEvent,
 } from "./schemas.js";
-import { requestJson } from "./wire.js";
+import { readJsonLines, requestJson, writeJson } from "./wire.js";
 
 type InferenceWorkerStatus = "unknown" | "ready" | "incompatible" | "offline";
 type AcceptedHello = Extract<InferenceHelloResponse, { accepted: true }>;
@@ -147,6 +149,44 @@ export class InferenceRouter {
     throw new Error(`no inference worker completed request: ${errors.join("; ")}`);
   }
 
+  async generateStream(
+    payload: InferenceRequest,
+    onEvent: (event: InferenceStreamEvent) => void,
+  ): Promise<InferenceResponse> {
+    await this.refresh();
+    let candidates = this.selectCandidates();
+    if (candidates.length === 0) {
+      await this.refresh({ force: true });
+      candidates = this.selectCandidates();
+    }
+    if (candidates.length === 0) {
+      throw new Error("no compatible inference workers are ready");
+    }
+
+    const attempts = this.maxAttempts == null
+      ? candidates.length
+      : Math.min(this.maxAttempts, candidates.length);
+    const errors: string[] = [];
+
+    for (const candidate of candidates.slice(0, attempts)) {
+      const startedAt = Date.now();
+      candidate.inFlight += 1;
+      try {
+        const response = await this.streamFromCandidate(candidate, payload, onEvent);
+        markSuccess(candidate, Date.now() - startedAt);
+        return response;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`slot ${candidate.slot}: ${message}`);
+        markFailure(candidate, message);
+      } finally {
+        candidate.inFlight -= 1;
+      }
+    }
+
+    throw new Error(`no inference worker completed streaming request: ${errors.join("; ")}`);
+  }
+
   private selectCandidates(): InferenceWorkerCandidate[] {
     return this.candidates
       .filter((candidate) => candidate.status === "ready" && isCompatible(candidate.capabilities, this.model, this.adapterId, this.adapterHash))
@@ -191,6 +231,44 @@ export class InferenceRouter {
       candidate.status = "offline";
       candidate.lastError = error instanceof Error ? error.message : String(error);
     }
+  }
+
+  private async streamFromCandidate(
+    candidate: InferenceWorkerCandidate,
+    payload: InferenceRequest,
+    onEvent: (event: InferenceStreamEvent) => void,
+  ): Promise<InferenceResponse> {
+    const stream = await this.node.dialProtocol(candidate.addr, PROTOCOLS.inferenceGenerateStream, {
+      signal: AbortSignal.timeout(this.requestTimeoutMs),
+    });
+    await writeJson(stream, payload);
+    let completed: InferenceResponse | null = null;
+    for await (const value of readJsonLines(stream)) {
+      const event = InferenceStreamEventSchema.parse(value);
+      onEvent(event);
+      if (event.event === "error") {
+        throw new Error(event.error);
+      }
+      if (event.event === "completed") {
+        completed = {
+          type: "marshall_inference_response",
+          accepted: true,
+          peer_id: event.peer_id ?? candidate.capabilities?.peer_id ?? "",
+          worker_id: event.worker_id ?? candidate.capabilities?.worker_id,
+          model: event.model ?? candidate.capabilities?.model,
+          adapter_id: event.adapter_id ?? candidate.capabilities?.adapter_id,
+          adapter_hash: event.adapter_hash ?? candidate.capabilities?.adapter_hash,
+          prompt: event.prompt,
+          text: event.text,
+          raw_text: event.raw_text,
+          elapsed_ms: event.elapsed_ms,
+        };
+      }
+    }
+    if (completed == null) {
+      throw new Error("worker stream closed without completed event");
+    }
+    return InferenceResponseSchema.parse(completed);
   }
 }
 

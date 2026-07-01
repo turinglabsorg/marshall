@@ -51,37 +51,32 @@ form.addEventListener("submit", async (event) => {
     return;
   }
   input.value = "";
-  state.messages.push({ role: "user", content: prompt });
+  const assistantMessage = { role: "assistant", content: "" };
+  state.messages.push({ role: "user", content: prompt }, assistantMessage);
   state.busy = true;
   render();
   logEvent("request", short(prompt, 64));
   const startedAt = performance.now();
   try {
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        conversation_id: state.conversationId,
-        prompt,
-        max_tokens: Number(tokensInput.value),
-        temperature: Number(tempInput.value),
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || `request failed ${response.status}`);
-    }
+    const payload = await streamChat({
+      conversation_id: state.conversationId,
+      prompt,
+      max_tokens: Number(tokensInput.value),
+      temperature: Number(tempInput.value),
+    }, assistantMessage, startedAt);
     state.conversationId = payload.conversation_id || state.conversationId;
     localStorage.setItem("marshall.chat.conversation_id", state.conversationId);
     state.messages = payload.conversation?.messages || [
       ...state.messages,
-      { role: "assistant", content: payload.text || payload.raw_text || "" },
     ];
     latencyLabel.textContent = `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms`;
     const selectedWorker = payload.worker_id || payload.worker_peer_id || "";
     selectedWorkerLabel.textContent = selectedWorker ? short(selectedWorker, 32) : "--";
     logEvent("response", `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms ${selectedWorker ? `via ${short(selectedWorker, 40)}` : ""}`.trim());
   } catch (error) {
+    if (assistantMessage.content === "") {
+      state.messages = state.messages.filter((message) => message !== assistantMessage);
+    }
     state.messages.push({ role: "error", content: error instanceof Error ? error.message : String(error) });
     readyDot.className = "status-dot bad";
     readyText.textContent = "error";
@@ -91,6 +86,104 @@ form.addEventListener("submit", async (event) => {
     render();
   }
 });
+
+async function streamChat(body, assistantMessage, startedAt) {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || `request failed ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalPayload = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+      let separatorIndex = buffer.indexOf("\n\n");
+      while (separatorIndex !== -1) {
+        const block = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        const event = parseSseBlock(block);
+        if (event) {
+          const result = handleStreamEvent(event.name, event.data, assistantMessage, startedAt);
+          if (event.name === "done") {
+            finalPayload = result;
+          }
+        }
+        separatorIndex = buffer.indexOf("\n\n");
+      }
+    }
+    if (done) {
+      break;
+    }
+  }
+
+  if (finalPayload == null) {
+    throw new Error("stream ended without final response");
+  }
+  return finalPayload;
+}
+
+function parseSseBlock(block) {
+  const lines = block.split("\n");
+  let name = "message";
+  const dataLines = [];
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      name = line.slice("event:".length).trim();
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+  if (dataLines.length === 0) {
+    return null;
+  }
+  return {
+    name,
+    data: JSON.parse(dataLines.join("\n")),
+  };
+}
+
+function handleStreamEvent(name, payload, assistantMessage, startedAt) {
+  if (name === "accepted") {
+    state.conversationId = payload.conversation_id || state.conversationId;
+    logEvent("accepted", `${payload.model || ""} ${payload.adapter_id || ""}`.trim());
+    return null;
+  }
+  if (name === "started") {
+    const selectedWorker = payload.worker_id || payload.peer_id || "";
+    selectedWorkerLabel.textContent = selectedWorker ? short(selectedWorker, 32) : "--";
+    logEvent("started", selectedWorker ? `worker ${short(selectedWorker, 40)}` : "local");
+    return null;
+  }
+  if (name === "chunk") {
+    assistantMessage.content += payload.text || "";
+    render();
+    return null;
+  }
+  if (name === "completed") {
+    assistantMessage.content = payload.text || assistantMessage.content;
+    latencyLabel.textContent = `${payload.elapsed_ms || Math.round(performance.now() - startedAt)}ms`;
+    render();
+    return null;
+  }
+  if (name === "error") {
+    throw new Error(payload.error || "stream failed");
+  }
+  if (name === "done") {
+    return payload;
+  }
+  return null;
+}
 
 async function loadConversation() {
   if (!state.conversationId) {

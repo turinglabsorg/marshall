@@ -25,6 +25,32 @@ export async function writeJson(stream: Stream, payload: unknown): Promise<void>
   await stream.close();
 }
 
+export async function writeJsonLine(stream: Stream, payload: unknown): Promise<void> {
+  stream.send(fromString(`${JSON.stringify(payload)}\n`));
+}
+
+export async function* readJsonLines(stream: Stream): AsyncGenerator<unknown> {
+  let buffer = "";
+
+  for await (const chunk of stream) {
+    buffer += toString(chunk instanceof Uint8Array ? chunk : chunk.slice());
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line !== "") {
+        yield JSON.parse(line);
+      }
+      newlineIndex = buffer.indexOf("\n");
+    }
+  }
+
+  const tail = buffer.trim();
+  if (tail !== "") {
+    yield JSON.parse(tail);
+  }
+}
+
 export async function requestJson(
   node: Libp2p,
   target: DialTarget,

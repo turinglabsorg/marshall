@@ -109,13 +109,14 @@ This scales throughput by adding workers. It does not split one forward pass acr
 Implemented prototype protocol:
 
 - `/marshall/inference/hello/1.0.0` for worker capability probes;
-- `/marshall/inference/generate/1.0.0` for gateway-to-worker generation requests.
+- `/marshall/inference/generate/1.0.0` for gateway-to-worker generation requests;
+- `/marshall/inference/generate_stream/1.0.0` for gateway-to-worker JSONL stream events, bridged to browser SSE through `POST /api/chat/stream`.
 
 Required production protocols:
 
 - `serve_model` worker registration capability;
 - model cache manifest publication;
-- inference request and streamed response protocol;
+- token-level streaming from model APIs where supported;
 - inference benchmark jobs;
 - timeout and retry policy with reputation-aware scoring;
 - output audit logs with hashes and model package identifiers.

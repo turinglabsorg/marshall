@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -32,6 +34,10 @@ def main() -> None:
     ]
     if args.adapter_path is not None:
         command.extend(["--adapter-path", str(args.adapter_path)])
+
+    if args.stream_jsonl:
+        stream_generate(args, command, started_at)
+        return
 
     completed = subprocess.run(command, text=True, capture_output=True, check=False)
     if completed.returncode != 0:
@@ -62,6 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--max-tokens", type=int, default=160)
     parser.add_argument("--temp", type=float, default=0.2)
+    parser.add_argument("--stream-jsonl", action="store_true")
     return parser.parse_args()
 
 
@@ -96,6 +103,71 @@ def clean_chat_text(output: str) -> str:
     text = re.sub(r"<\|[^>]+?\|>", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def stream_generate(args: argparse.Namespace, command: list[str], started_at: float) -> None:
+    emit({
+        "type": "marshall_inference_stream_event",
+        "event": "started",
+        "model": args.model,
+    })
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert process.stdout is not None
+    assert process.stderr is not None
+
+    raw_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    stdout_fd = process.stdout.fileno()
+    stderr_fd = process.stderr.fileno()
+    open_fds = {stdout_fd, stderr_fd}
+
+    while open_fds:
+        readable, _, _ = select.select(list(open_fds), [], [], 0.1)
+        if not readable and process.poll() is not None:
+            readable = list(open_fds)
+        for fd in readable:
+            data = os.read(fd, 4096)
+            if not data:
+                open_fds.discard(fd)
+                continue
+            text = data.decode("utf-8", errors="replace")
+            if fd == stdout_fd:
+                raw_chunks.append(text)
+                emit({
+                    "type": "marshall_inference_stream_event",
+                    "event": "chunk",
+                    "text": text,
+                    "raw_text": text,
+                })
+            else:
+                stderr_chunks.append(text)
+
+    exit_code = process.wait()
+    raw_output = clean_generate_output("".join(raw_chunks))
+    elapsed_ms = int((time.time() - started_at) * 1000)
+    if exit_code != 0:
+        error = "".join(stderr_chunks).strip() or raw_output.strip() or f"mlx_lm.generate exited {exit_code}"
+        emit({
+            "type": "marshall_inference_stream_event",
+            "event": "error",
+            "error": error,
+            "elapsed_ms": elapsed_ms,
+        })
+        raise SystemExit(exit_code)
+
+    emit({
+        "type": "marshall_inference_stream_event",
+        "event": "completed",
+        "model": args.model,
+        "prompt": args.prompt,
+        "text": clean_chat_text(raw_output),
+        "raw_text": raw_output,
+        "elapsed_ms": elapsed_ms,
+    })
+
+
+def emit(event: dict) -> None:
+    print(json.dumps(event, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":

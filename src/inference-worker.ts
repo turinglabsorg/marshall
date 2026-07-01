@@ -2,16 +2,17 @@ import type { Libp2p, Stream } from "@libp2p/interface";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import { createMarshallNode } from "./node.js";
 import { PROTOCOLS } from "./protocols.js";
-import { InferenceHelloRequestSchema, InferenceHelloResponseSchema, InferenceRequestSchema, InferenceResponseSchema } from "./schemas.js";
+import { InferenceHelloRequestSchema, InferenceHelloResponseSchema, InferenceRequestSchema, InferenceResponseSchema, InferenceStreamEventSchema } from "./schemas.js";
 import {
   defaultChatPublicDir,
   defaultChatRunnerPath,
   resolveChatConfig,
   runInference,
+  runInferenceStream,
   type ChatServerConfig,
   type ResolvedChatServerConfig,
 } from "./chat-server.js";
-import { readJson, writeJson } from "./wire.js";
+import { readJson, writeJson, writeJsonLine } from "./wire.js";
 
 export interface InferenceWorkerOptions {
   privateKeyPath: string;
@@ -78,6 +79,7 @@ export class InferenceWorkerPeer {
   private async registerHandlers(): Promise<void> {
     await this.node.handle(PROTOCOLS.inferenceHello, (stream) => this.handleHello(stream));
     await this.node.handle(PROTOCOLS.inferenceGenerate, (stream) => this.handleGenerate(stream));
+    await this.node.handle(PROTOCOLS.inferenceGenerateStream, (stream) => this.handleGenerateStream(stream));
   }
 
   private async handleHello(stream: Stream): Promise<void> {
@@ -145,6 +147,53 @@ export class InferenceWorkerPeer {
         elapsed_ms: Date.now() - startedAt,
         error: error instanceof Error ? error.message : "inference worker failed",
       }));
+    }
+  }
+
+  private async handleGenerateStream(stream: Stream): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      const request = InferenceRequestSchema.parse(await readJson(stream));
+      await runInferenceStream({
+        runnerPath: this.config.runnerPath,
+        pythonBin: this.config.pythonBin,
+        model: this.config.model,
+        adapterPath: this.config.adapterPath!,
+        systemPrompt: request.system_prompt ?? this.config.systemPrompt,
+        prompt: request.prompt,
+        maxTokens: request.max_tokens ?? this.config.maxTokens,
+        temperature: request.temperature ?? this.config.temperature,
+        onEvent: (event) => {
+          const payload = event.event === "started" || event.event === "completed"
+            ? {
+              ...event,
+              peer_id: this.peerId,
+              worker_id: this.workerId,
+              model: this.config.model,
+              adapter_id: this.config.adapterId,
+              adapter_hash: this.config.adapterArtifactHash,
+            }
+            : {
+              ...event,
+              peer_id: this.peerId,
+              worker_id: this.workerId,
+            };
+          void writeJsonLine(stream, InferenceStreamEventSchema.parse({
+            ...payload,
+          }));
+        },
+      });
+      await stream.close();
+    } catch (error) {
+      await writeJsonLine(stream, InferenceStreamEventSchema.parse({
+        type: "marshall_inference_stream_event",
+        event: "error",
+        peer_id: this.peerId,
+        worker_id: this.workerId,
+        error: error instanceof Error ? error.message : "inference worker stream failed",
+        elapsed_ms: Date.now() - startedAt,
+      }));
+      await stream.close();
     }
   }
 }

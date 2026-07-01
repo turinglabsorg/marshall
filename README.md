@@ -327,7 +327,7 @@ npm run chat:dev -- \
   --adapter-hash sha256:<adapter-root-hash>
 ```
 
-Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/inference/workers`, `GET /api/conversation?conversation_id=<id>`, and `POST /api/chat`. The gateway probes workers with `/marshall/inference/hello/1.0.0`, filters for the requested model and adapter, routes `/marshall/inference/generate/1.0.0` to a ready worker, and retries another compatible worker when generation fails. `/api/chat` stores the user turn under a durable `conversation_id`, builds the bounded context window, sends the request over libp2p, stores the assistant turn, and returns the updated conversation plus the selected `worker_id` and `worker_peer_id`.
+Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/inference/workers`, `GET /api/conversation?conversation_id=<id>`, `POST /api/chat`, and streaming `POST /api/chat/stream`. The gateway probes workers with `/marshall/inference/hello/1.0.0`, filters for the requested model and adapter, routes `/marshall/inference/generate_stream/1.0.0` or `/marshall/inference/generate/1.0.0` to a ready worker, and retries another compatible worker when generation fails. `/api/chat` and `/api/chat/stream` store the user turn under a durable `conversation_id`, build the bounded context window, send the request over libp2p, store the assistant turn, and return the updated conversation plus the selected `worker_id` and `worker_peer_id`.
 
 In the chat composer, `Enter` submits the prompt and `Shift+Enter` inserts a newline.
 
