@@ -335,6 +335,22 @@ In the chat composer, `Enter` submits the prompt and `Shift+Enter` inserts a new
 
 Conversation memory belongs to the gateway, not to inference workers. The current durable store is file-backed under `.marshall/chat/conversations` by default. Each conversation file contains message history plus structured long-term memory: `summary`, `facts`, `preferences`, `goals`, `open_tasks`, and `plans`. The browser UI can edit and persist this memory through `POST /api/conversation/memory`; `GET /api/conversation` returns it with the conversation. Workers stay stateless: they receive only a bounded prompt assembled by the gateway. Use `--conversation-ttl-days <n>` to expire old files, `--max-context-messages <n>` to cap recent turns, and `--max-memory-items <n>` to cap long-term memory items included in the worker prompt. Future memory should add automatic summarization, semantic retrieval, encryption, and retention controls in the gateway or a private memory service, while the coordinator remains limited to routing, worker capacity, reputation, and public job metadata.
 
+For the current Mac Pro hosted prototype, use the operational scripts instead of hand-written tmux commands:
+
+```bash
+scripts/run-chat-gateway-local.sh
+scripts/run-chat-tunnel-gcp.sh
+```
+
+Both scripts read required configuration from an ignored local env file, `.marshall/secrets/chat-gateway.env` by default, and fail fast when required values are missing. `scripts/run-chat-gateway-local.sh` requires Node.js 22+ and starts the P2P chat gateway from the compiled `dist/src/chat-server-cli.js`. `scripts/run-chat-tunnel-gcp.sh` keeps the VM-local `127.0.0.1:8787` port connected back to the Mac Pro gateway through a reverse SSH tunnel. On macOS, install or remove persistent user LaunchAgents with:
+
+```bash
+scripts/install-macos-chat-launchd.sh
+scripts/uninstall-macos-chat-launchd.sh
+```
+
+The installer writes generated plists under `~/Library/LaunchAgents`, stores logs under `.marshall/logs`, and keeps both gateway and tunnel alive with `KeepAlive`.
+
 For a single-process debugging run only:
 
 ```bash
@@ -380,7 +396,7 @@ Deploy:
 ./scripts/deploy-gcp-micro.sh
 ```
 
-The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config has a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`; for the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
+The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config has a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`; for the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
 
 ## Architecture
 
@@ -395,6 +411,9 @@ Core components:
 - `src/inference-worker-cli.ts`: libp2p inference worker for selected model packages;
 - `src/chat-server-cli.ts`: `marshall.chat` gateway with local debug and P2P worker runtimes;
 - `src/chat-memory.ts`: file-backed conversation memory and structured long-term plans owned by the gateway;
+- `scripts/run-chat-gateway-local.sh`: Mac Pro gateway runner backed by an ignored local env file;
+- `scripts/run-chat-tunnel-gcp.sh`: reverse SSH tunnel runner from the GCP VM to the local gateway;
+- `scripts/install-macos-chat-launchd.sh`: macOS LaunchAgent installer for persistent gateway and tunnel processes;
 - `src/round-daemon-cli.ts`: unattended train/eval/validation/selection round manager;
 - `src/training-runner.ts`: training, evaluation, and validation runner bridge;
 - `src/dataset-manifest.ts`: content-addressed dataset manifest generation;
