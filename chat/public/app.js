@@ -5,6 +5,7 @@ const state = {
   memoryDirty: false,
   busy: false,
   health: null,
+  models: [],
 };
 
 const baseUrl = new URL("./", window.location.href);
@@ -25,6 +26,8 @@ const evalLabel = document.getElementById("evalLabel");
 const scoreLabel = document.getElementById("scoreLabel");
 const workersLabel = document.getElementById("workersLabel");
 const selectedWorkerLabel = document.getElementById("selectedWorkerLabel");
+const modelCountLabel = document.getElementById("modelCountLabel");
+const modelsList = document.getElementById("modelsList");
 const activityLog = document.getElementById("activityLog");
 const clockLabel = document.getElementById("clockLabel");
 const memorySaveButton = document.getElementById("memorySaveButton");
@@ -36,8 +39,10 @@ const memoryTasksInput = document.getElementById("memoryTasksInput");
 render();
 renderMemory();
 refreshHealth();
+refreshModels();
 loadConversation();
 setInterval(refreshHealth, 5000);
+setInterval(refreshModels, 10000);
 setInterval(() => {
   clockLabel.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }, 1000);
@@ -281,6 +286,29 @@ async function refreshHealth() {
   }
 }
 
+async function refreshModels() {
+  try {
+    const response = await fetch(appUrl("api/models"), { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || `models failed ${response.status}`);
+    }
+    state.models = Array.isArray(payload.serving) && payload.serving.length > 0
+      ? payload.serving
+      : payload.current
+      ? [payload.current]
+      : [];
+    renderModels();
+  } catch (error) {
+    modelCountLabel.textContent = "offline";
+    modelsList.innerHTML = "";
+    const item = document.createElement("div");
+    item.className = "model-row muted";
+    item.textContent = error instanceof Error ? short(error.message, 80) : "model registry unavailable";
+    modelsList.append(item);
+  }
+}
+
 function render() {
   transcript.innerHTML = "";
   const messages = state.messages.length === 0
@@ -312,6 +340,41 @@ function renderMemory() {
     memoryTasksInput.value = itemsToLines(memory.open_tasks);
   }
   memorySaveButton.textContent = state.memoryDirty ? "save" : "saved";
+}
+
+function renderModels() {
+  modelsList.innerHTML = "";
+  modelCountLabel.textContent = `${state.models.length} ready`;
+  if (state.models.length === 0) {
+    const item = document.createElement("div");
+    item.className = "model-row muted";
+    item.textContent = "no ready packages";
+    modelsList.append(item);
+    return;
+  }
+  for (const model of state.models.slice(0, 6)) {
+    const item = document.createElement("div");
+    item.className = `model-row ${model.selected ? "selected" : ""}`;
+    const head = document.createElement("div");
+    head.className = "model-row-head";
+    const title = document.createElement("strong");
+    title.textContent = short(model.base_model || "unknown-model", 48);
+    const status = document.createElement("span");
+    const readyWorkers = model.ready_workers ?? (model.status === "ready" ? 1 : 0);
+    status.textContent = model.selected ? "serving" : `${readyWorkers} workers`;
+    head.append(title, status);
+
+    const meta = document.createElement("div");
+    meta.className = "model-row-meta";
+    meta.textContent = [
+      short(model.adapter_id || "--", 34),
+      model.eval?.score == null ? "score --" : `score ${Number(model.eval.score).toFixed(3)}`,
+      shortHash(model.package_artifact_hash || model.adapter_artifact_hash),
+      "p2p hash-checked chunks",
+    ].filter(Boolean).join(" · ");
+    item.append(head, meta);
+    modelsList.append(item);
+  }
 }
 
 function collectMemory() {

@@ -162,10 +162,40 @@ describe("round orchestrator CLI", () => {
     expect(summary.evaluated_adapters).toBe(1);
     expect(summary.skipped_metrics).toBe(1);
     expect(summary.selected.adapter_id).toBe("adapter_001");
+    expect(summary.package.package_job_id).toBe("optimized_model_adapter_001");
 
     const modelPackage = JSON.parse(await readFile(join(packageDir, "model_package.json"), "utf8"));
     expect(modelPackage.adapter_path).toBe(adapterPath);
+    expect(modelPackage.adapter_uri).toBe("marshall-artifact://adapter_001");
     expect(modelPackage.eval.accuracy).toBe(2 / 3);
+
+    const packageManifest = JSON.parse(await readFile(join(packageDir, "manifest.json"), "utf8"));
+    expect(packageManifest.job_id).toBe("optimized_model_adapter_001");
+    expect(packageManifest.artifact_type).toBe("optimized_model_package");
+
+    const storedPackageManifest = JSON.parse(await readFile(join(artifactStore, "optimized_model_adapter_001", "manifest.json"), "utf8"));
+    expect(storedPackageManifest).toMatchObject({
+      worker_id: "marshall-control",
+      peer_id: "marshall-control",
+      job_id: "optimized_model_adapter_001",
+      artifact_type: "optimized_model_package",
+      artifact_hash: packageManifest.artifact_hash,
+    });
+
+    const registry = JSON.parse(await readFile(join(tempDir, "index.json"), "utf8"));
+    expect(registry.models[0]).toMatchObject({
+      base_model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      adapter_id: "adapter_001",
+      adapter_uri: "marshall-artifact://adapter_001",
+      package_job_id: "optimized_model_adapter_001",
+      package_uri: "marshall-artifact://optimized_model_adapter_001",
+      transfer: {
+        protocol: "/marshall/artifact/fetch/1.0.0",
+        chunked: true,
+        hash_verified: true,
+        https_payload: false,
+      },
+    });
   });
 });
 

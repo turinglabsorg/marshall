@@ -22,9 +22,45 @@ describe("marshall.chat local server", () => {
     const adapterPath = join(tempDir, "adapter");
     const runnerPath = join(tempDir, "fake-runner.mjs");
     const conversationDir = join(tempDir, "conversations");
+    const registryPath = join(tempDir, "models", "index.json");
     await mkdir(publicDir);
     await mkdir(adapterPath);
+    await mkdir(join(tempDir, "models"));
     await writeFile(join(publicDir, "index.html"), "<!doctype html><title>marshall.chat</title>", "utf8");
+    await writeFile(registryPath, JSON.stringify({
+      type: "marshall_model_registry",
+      version: 1,
+      updated_at: "2026-07-01T00:00:00.000Z",
+      models: [{
+        status: "ready",
+        run_id: "run_chat_registry_test",
+        created_at: "2026-07-01T00:00:00.000Z",
+        base_model: "mlx-community/gemma-3-1b-it-4bit",
+        adapter_id: "job_test_adapter",
+        adapter_uri: "marshall-artifact://job_test_adapter",
+        adapter_artifact_hash: "sha256:test-adapter",
+        package_job_id: "optimized_model_job_test_adapter",
+        package_uri: "marshall-artifact://optimized_model_job_test_adapter",
+        package_artifact_hash: "sha256:test-package",
+        eval: {
+          job_id: "job_eval_test",
+          eval_shard_id: "instruction_terms_jsonl",
+          examples: 4,
+          correct: 3,
+          accuracy: 0.75,
+          invalid: 0,
+          invalid_rate: 0,
+          score: 0.75,
+          metrics_path: "/tmp/metrics.json",
+        },
+        transfer: {
+          protocol: "/marshall/artifact/fetch/1.0.0",
+          chunked: true,
+          hash_verified: true,
+          https_payload: false,
+        },
+      }],
+    }), "utf8");
     await writeFile(runnerPath, `
 const prompt = value("--prompt");
 const model = value("--model");
@@ -78,6 +114,7 @@ function emit(payload) {
       maxTokens: 64,
       temperature: 0.1,
       conversationDir,
+      modelRegistryPath: registryPath,
     });
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
     const address = server.address() as AddressInfo;
@@ -91,6 +128,18 @@ function emit(payload) {
       adapter_id: "job_test_adapter",
       adapter_hash: "sha256:test-adapter",
     });
+
+    const models = await fetch(`${baseUrl}/api/models`).then((response) => response.json()) as any;
+    expect(models.models[0]).toMatchObject({
+      base_model: "mlx-community/gemma-3-1b-it-4bit",
+      adapter_id: "job_test_adapter",
+      package_uri: "marshall-artifact://optimized_model_job_test_adapter",
+      transfer: {
+        protocol: "/marshall/artifact/fetch/1.0.0",
+        https_payload: false,
+      },
+    });
+    expect(models.serving[0].selected).toBe(true);
 
     const chat = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",

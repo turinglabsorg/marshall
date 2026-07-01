@@ -294,6 +294,40 @@ npm run worker:join:compiled -- \
 
 Increase `--model-concurrency` only after confirming memory headroom on that Mac. `--slot-memory-gb` is the per-slot budget used to cap effective concurrency against `--memory-gb`. Keep the same `--worker-id-base` and `--state-dir` across restarts to preserve worker identity and reputation.
 
+## Ready Model Packages
+
+When validation reaches quorum and selection runs, Marshall now finalizes the selected model automatically:
+
+- `model_package.json` describes the base model plus selected adapter;
+- `manifest.json` describes the package as an `optimized_model_package` artifact;
+- the control artifact store gets a full manifest under `<artifact-store>/<package-job-id>/manifest.json`;
+- the model registry gets a metadata-only entry with `package_uri: marshall-artifact://<package-job-id>` and `adapter_uri: marshall-artifact://<adapter-id>`.
+
+HTTP may serve the registry metadata, for example `https://marshall.training/models/index.json`, but model payloads are not downloaded over HTTPS. Workers fetch the package and adapter from the control peer through `/marshall/artifact/fetch/1.0.0`, with chunk, file, and root hash verification.
+
+Publish or republish an existing finalized package into the control artifact store and registry:
+
+```bash
+npm run model:package -- \
+  --package /var/lib/marshall/model-packages/<run-id>/model_package.json \
+  --manifest /var/lib/marshall/model-packages/<run-id>/manifest.json \
+  --run-id <run-id> \
+  --artifact-store-dir /var/lib/marshall/artifacts/control \
+  --registry-path /var/lib/marshall/model-packages/index.json
+```
+
+Promote a ready package onto a worker machine over P2P:
+
+```bash
+npm run model:promote -- \
+  --control "/dns4/marshall.training/tcp/4001/p2p/<control-peer-id>" \
+  --package-job-id optimized_model_<adapter-id> \
+  --package-hash sha256:<package-hash> \
+  --output-root .marshall/model-promotions
+```
+
+The command writes `.marshall/model-promotions/ready/<run-id>/model_package.json`. Point `MARSHALL_MODEL_PACKAGE` or `--model-package` at that promoted file when starting an inference worker.
+
 ## P2P marshall.chat Prototype
 
 `marshall.chat` should be tested as a distributed path: an HTTP gateway serves the UI, but generation is performed by a separate libp2p inference worker. A local-process gateway is still available for debugging, but it is not the product proof.
@@ -330,7 +364,7 @@ npm run chat:dev -- \
   --adapter-hash sha256:<adapter-root-hash>
 ```
 
-Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/inference/workers`, `GET /api/conversation?conversation_id=<id>`, `POST /api/chat`, and streaming `POST /api/chat/stream`. The gateway probes workers with `/marshall/inference/hello/1.0.0`, filters for the requested model and adapter, routes `/marshall/inference/generate_stream/1.0.0` or `/marshall/inference/generate/1.0.0` to a ready worker, and retries another compatible worker when generation fails. `/api/chat` and `/api/chat/stream` store the user turn under a durable `conversation_id`, build the bounded context window, send the request over libp2p, store the assistant turn, and return the updated conversation plus the selected `worker_id` and `worker_peer_id`.
+Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/models`, `GET /api/inference/workers`, `GET /api/conversation?conversation_id=<id>`, `POST /api/chat`, and streaming `POST /api/chat/stream`. The gateway probes workers with `/marshall/inference/hello/1.0.0`, filters for the requested model and adapter, routes `/marshall/inference/generate_stream/1.0.0` or `/marshall/inference/generate/1.0.0` to a ready worker, and retries another compatible worker when generation fails. `/api/models` returns current package metadata, registry entries, and ready worker counts without proxying model payloads. `/api/chat` and `/api/chat/stream` store the user turn under a durable `conversation_id`, build the bounded context window, send the request over libp2p, store the assistant turn, and return the updated conversation plus the selected `worker_id` and `worker_peer_id`.
 
 In the chat composer, `Enter` submits the prompt and `Shift+Enter` inserts a newline.
 
@@ -360,7 +394,7 @@ MARSHALL_INFERENCE_KEY=.marshall/inference-worker.key
 MARSHALL_INFERENCE_LISTEN=/ip4/0.0.0.0/tcp/8788
 MARSHALL_INFERENCE_WORKER_ID=<stable-worker-id>
 MARSHALL_PYTHON=/absolute/path/to/mlx-python
-MARSHALL_MODEL_PACKAGE=.marshall/runs/<run-id>/model-package/model_package.json
+MARSHALL_MODEL_PACKAGE=.marshall/model-promotions/ready/<run-id>/model_package.json
 ```
 
 Then install the worker LaunchAgent from that machine:
@@ -416,7 +450,7 @@ Deploy:
 ./scripts/deploy-gcp-micro.sh
 ```
 
-The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config exposes the chat gateway in two ways: `https://marshall.training/chat/` as the public fallback path, and a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`. For the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
+The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config exposes `/models/index.json` as metadata-only model registry, exposes the chat gateway at `https://marshall.training/chat/` as the public fallback path, and serves a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`. For the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
 
 Use the public chat readiness check before calling inference operational:
 
@@ -437,6 +471,8 @@ Core components:
 - `src/control-peer.ts`: libp2p control peer and worker protocol handlers;
 - `src/worker-peer.ts`: worker registration, heartbeat, claim, status, and artifact publication;
 - `src/worker-supervisor-cli.ts`: persistent model worker supervisor for train/eval/validation work;
+- `src/model-package.ts`: optimized model package creation, P2P artifact publication, and metadata registry updates;
+- `src/model-promote-cli.ts`: worker-side P2P package promotion with chunk/file/root hash verification;
 - `src/inference-worker-cli.ts`: libp2p inference worker for selected model packages;
 - `src/chat-server-cli.ts`: `marshall.chat` gateway with local debug and P2P worker runtimes;
 - `src/chat-memory.ts`: file-backed conversation memory and structured long-term plans owned by the gateway;

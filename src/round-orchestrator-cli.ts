@@ -1,17 +1,14 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { artifactStoreManifestPath } from "./artifact-transfer.js";
+import { pathToFileURL } from "node:url";
 import { CoordinatorClient, type CoordinatorArtifact } from "./coordinator-client.js";
 import { hashDatasetPath } from "./dataset-cache.js";
 import { rankAdapterEvaluations, type AdapterEvaluationCandidate } from "./model-selection.js";
+import { createOptimizedModelPackage } from "./model-package.js";
 import {
   AdapterEvaluationJobSchema,
   AdapterEvaluationMetricsSchema,
-  ArtifactManifestSchema,
   ArtifactValidationJobSchema,
-  TrainingArtifactManifestSchema,
   type AdapterEvaluationJob,
   type ArtifactValidationJob,
   type MarshallJob,
@@ -258,15 +255,19 @@ async function selectModel(artifacts: CoordinatorArtifact[], options: RoundAdvan
   const packageDir = args["package-dir"] ?? process.env.MARSHALL_MODEL_PACKAGE_DIR;
   let packageResult = null;
   if (packageDir != null && packageDir !== "" && selection.selected != null) {
-    packageResult = await writeModelPackage({
+    packageResult = await createOptimizedModelPackage({
       optimizedModel: {
-        ...optimizedModel,
+        strategy: optimizedModel.strategy,
+        selection_policy: optimizedModel.selection_policy,
         selected: selection.selected,
       },
-      optimizedModelPath,
       metricsPath: selection.selected.metrics_path,
       adapterArtifactsDir: args["adapter-artifacts-dir"] ?? process.env.MARSHALL_ADAPTER_ARTIFACTS_DIR ?? artifactStoreDir,
       outputDir: packageDir,
+      artifactStoreDir,
+      registryPath: args["model-registry-path"] ?? process.env.MARSHALL_MODEL_REGISTRY_PATH,
+      publisherPeerId: args["publisher-peer-id"] ?? process.env.MARSHALL_MODEL_PUBLISHER_PEER_ID,
+      publisherWorkerId: args["publisher-worker-id"] ?? process.env.MARSHALL_MODEL_PUBLISHER_WORKER_ID,
     });
   }
 
@@ -314,82 +315,6 @@ async function writeAndPublishJobs(values: {
   };
 }
 
-async function writeModelPackage(values: {
-  optimizedModel: {
-    type: string;
-    strategy: string;
-    selection_policy: unknown;
-    selected: NonNullable<ReturnType<typeof rankAdapterEvaluations>["selected"]>;
-  };
-  optimizedModelPath: string;
-  metricsPath: string;
-  adapterArtifactsDir: string;
-  outputDir: string;
-}) {
-  const selected = values.optimizedModel.selected;
-  const metrics = AdapterEvaluationMetricsSchema.parse(JSON.parse(await readFile(values.metricsPath, "utf8")));
-  const adapterPath = await storedAdapterPath(values.adapterArtifactsDir, selected.adapter_id, selected.adapter_artifact_hash);
-  const packagePath = join(values.outputDir, "model_package.json");
-  const manifestPath = join(values.outputDir, "manifest.json");
-  const createdAt = new Date().toISOString();
-  await mkdir(values.outputDir, { recursive: true });
-
-  await writeFile(packagePath, JSON.stringify({
-    type: "marshall_optimized_model_package",
-    strategy: values.optimizedModel.strategy,
-    selection_policy: values.optimizedModel.selection_policy,
-    created_at: createdAt,
-    base_model: metrics.model,
-    adapter_id: selected.adapter_id,
-    adapter_path: adapterPath,
-    adapter_artifact_hash: selected.adapter_artifact_hash,
-    eval: {
-      job_id: selected.job_id,
-      eval_shard_id: selected.eval_shard_id,
-      examples: selected.examples,
-      correct: selected.correct,
-      accuracy: selected.accuracy,
-      invalid: selected.invalid,
-      invalid_rate: selected.invalid_rate,
-      score: selected.score,
-      metrics_path: selected.metrics_path,
-    },
-  }, null, 2) + "\n", "utf8");
-
-  const manifest = TrainingArtifactManifestSchema.parse({
-    job_id: `optimized_model_${selected.adapter_id}`,
-    artifact_type: "optimized_model_package",
-    artifact_uri: pathToFileURL(resolve(packagePath)).toString(),
-    artifact_hash: await sha256File(packagePath),
-    config_hash: sha256Text(JSON.stringify({
-      strategy: values.optimizedModel.strategy,
-      selection_policy: values.optimizedModel.selection_policy,
-      adapter_id: selected.adapter_id,
-      adapter_artifact_hash: selected.adapter_artifact_hash,
-      adapter_path: adapterPath,
-      metrics_path: selected.metrics_path,
-    })),
-    created_at: createdAt,
-    metrics_uri: pathToFileURL(resolve(selected.metrics_path)).toString(),
-  });
-  await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
-
-  return {
-    output_dir: values.outputDir,
-    package_path: packagePath,
-    manifest_path: manifestPath,
-    adapter_id: selected.adapter_id,
-  };
-}
-
-async function storedAdapterPath(artifactsDir: string, adapterId: string, adapterHash: string): Promise<string> {
-  const manifest = ArtifactManifestSchema.parse(JSON.parse(await readFile(artifactStoreManifestPath(artifactsDir, adapterId), "utf8")));
-  if (manifest.artifact_hash !== adapterHash) {
-    throw new Error(`stored adapter ${adapterId} hash mismatch: expected ${adapterHash}, got ${manifest.artifact_hash}`);
-  }
-  return manifest.artifact_uri.startsWith("file://") ? fileURLToPath(manifest.artifact_uri) : manifest.artifact_uri;
-}
-
 function wait(reason: string, loraArtifacts: unknown[], evaluationArtifacts: unknown[]) {
   return {
     type: "marshall_round_advance",
@@ -424,16 +349,6 @@ async function walk(path: string, output: string[]): Promise<void> {
       output.push(child);
     }
   }
-}
-
-async function sha256File(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  hash.update(await readFile(path));
-  return `sha256:${hash.digest("hex")}`;
-}
-
-function sha256Text(value: string): string {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 function parseArtifacts(value: unknown): CoordinatorArtifact[] {

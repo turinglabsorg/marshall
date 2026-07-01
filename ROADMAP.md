@@ -89,7 +89,9 @@ It also has durable gateway-owned conversation memory. The gateway persists `con
 
 The gateway now probes configured workers with `/marshall/inference/hello/1.0.0`, filters for the requested model and adapter, exposes a public worker registry endpoint without raw multiaddrs, and retries compatible workers when generation fails.
 
-The next product step is a production replicated inference gateway with worker discovery, process supervision, public TLS cutover, and memory retention controls.
+Ready model packages are now published as P2P artifacts. The public registry may expose metadata such as model name, package job id, adapter id, hashes, and eval score, but workers must fetch package and adapter payloads through `/marshall/artifact/fetch/1.0.0` with chunk, file, and root hash verification. No model payload download path should depend on HTTPS.
+
+The next product step is a production replicated inference gateway with worker discovery, model-cache advertisement, process supervision, and memory retention controls.
 
 Workers advertise loaded models and adapters. A router receives a prompt, selects one capable worker, forwards the request, streams tokens back, and records runtime metrics.
 
@@ -116,7 +118,7 @@ Implemented prototype protocol:
 Required production protocols:
 
 - `serve_model` worker registration capability;
-- model cache manifest publication;
+- model cache manifest publication and cache eviction policy;
 - token-level streaming from model APIs where supported;
 - inference benchmark jobs;
 - timeout and retry policy with reputation-aware scoring;

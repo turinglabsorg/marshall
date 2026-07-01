@@ -13,6 +13,7 @@ import {
   type LongTermMemoryUpdate,
 } from "./chat-memory.js";
 import { InferenceRouter } from "./inference-router.js";
+import type { ModelRegistry, ModelRegistryEntry } from "./model-package.js";
 import { createMarshallNode } from "./node.js";
 import { InferenceStreamEventSchema, type InferenceRequest, type InferenceStreamEvent } from "./schemas.js";
 
@@ -34,6 +35,8 @@ export interface ChatServerConfig {
   conversationTtlDays?: number;
   maxContextMessages?: number;
   maxMemoryItems?: number;
+  modelRegistryPath?: string;
+  modelRegistryUrl?: string;
   modelPackagePath?: string;
   model?: string;
   adapterPath?: string;
@@ -213,6 +216,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     await handleInferenceWorkers(url, response, config);
     return;
   }
+  if (request.method === "GET" && url.pathname === "/api/models") {
+    await handleModels(response, config);
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/chat") {
     await handleChat(request, response, config);
     return;
@@ -271,6 +278,34 @@ async function handleInferenceWorkers(url: URL, response: ServerResponse, config
   sendJson(response, 200, {
     type: "marshall_chat_inference_workers",
     workers: await config.inferenceRouter.refresh({ force }),
+  });
+}
+
+async function handleModels(response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
+  const registry = await loadModelRegistry(config).catch((error) => ({
+    type: "marshall_model_registry_error" as const,
+    error: error instanceof Error ? error.message : String(error),
+  }));
+  const workers = config.inferenceRouter == null ? [] : await config.inferenceRouter.refresh();
+  const current = currentModelEntry(config);
+  const models = registry.type === "marshall_model_registry" ? registry.models : [];
+  sendJson(response, 200, {
+    type: "marshall_chat_models",
+    current,
+    registry,
+    models,
+    serving: models.map((model) => ({
+      ...model,
+      ready_workers: workers.filter((worker) =>
+        worker.status === "ready"
+        && worker.model === model.base_model
+        && worker.adapter_id === model.adapter_id
+        && worker.adapter_hash === model.adapter_artifact_hash
+      ).length,
+      selected: model.base_model === config.model
+        && model.adapter_id === config.adapterId
+        && model.adapter_artifact_hash === config.adapterArtifactHash,
+    })),
   });
 }
 
@@ -598,6 +633,98 @@ export async function loadModelPackage(path: string): Promise<LoadedModelPackage
   };
 }
 
+async function loadModelRegistry(config: RuntimeChatServerConfig): Promise<ModelRegistry> {
+  if (config.modelRegistryPath != null && config.modelRegistryPath !== "") {
+    return parseModelRegistry(JSON.parse(await readFile(config.modelRegistryPath, "utf8")));
+  }
+  if (config.modelRegistryUrl != null && config.modelRegistryUrl !== "") {
+    const response = await fetch(config.modelRegistryUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`model registry request failed ${response.status}`);
+    }
+    return parseModelRegistry(await response.json());
+  }
+  return {
+    type: "marshall_model_registry",
+    version: 1,
+    updated_at: new Date(0).toISOString(),
+    models: [],
+  };
+}
+
+function currentModelEntry(config: RuntimeChatServerConfig) {
+  return {
+    status: config.inferenceRouter == null ? "local" : ((config.inferenceRouter.readyWorkers ?? 0) > 0 ? "ready" : "waiting"),
+    base_model: config.model,
+    adapter_id: config.adapterId,
+    adapter_artifact_hash: config.adapterArtifactHash,
+    eval: config.packageInfo?.eval ?? null,
+  };
+}
+
+function parseModelRegistry(value: unknown): ModelRegistry {
+  if (typeof value !== "object" || value == null) {
+    throw new Error("model registry must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type !== "marshall_model_registry" || record.version !== 1 || !Array.isArray(record.models)) {
+    throw new Error("invalid Marshall model registry");
+  }
+  return {
+    type: "marshall_model_registry",
+    version: 1,
+    updated_at: stringValue(record.updated_at, "updated_at"),
+    models: record.models.map(parseModelRegistryEntry),
+  };
+}
+
+function parseModelRegistryEntry(value: unknown): ModelRegistryEntry {
+  if (typeof value !== "object" || value == null) {
+    throw new Error("model registry entry must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  const transfer = typeof record.transfer === "object" && record.transfer != null
+    ? record.transfer as Record<string, unknown>
+    : {};
+  return {
+    status: "ready",
+    run_id: stringValue(record.run_id, "run_id"),
+    created_at: stringValue(record.created_at, "created_at"),
+    base_model: stringValue(record.base_model, "base_model"),
+    adapter_id: stringValue(record.adapter_id, "adapter_id"),
+    adapter_uri: stringValue(record.adapter_uri, "adapter_uri"),
+    adapter_artifact_hash: stringValue(record.adapter_artifact_hash, "adapter_artifact_hash"),
+    package_job_id: stringValue(record.package_job_id, "package_job_id"),
+    package_uri: stringValue(record.package_uri, "package_uri"),
+    package_artifact_hash: stringValue(record.package_artifact_hash, "package_artifact_hash"),
+    eval: parseModelRegistryEval(record.eval),
+    transfer: {
+      protocol: stringValue(transfer.protocol, "transfer.protocol"),
+      chunked: true,
+      hash_verified: true,
+      https_payload: false,
+    },
+  };
+}
+
+function parseModelRegistryEval(value: unknown): ModelRegistryEntry["eval"] {
+  if (typeof value !== "object" || value == null) {
+    throw new Error("model registry eval must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    job_id: stringValue(record.job_id, "eval.job_id"),
+    eval_shard_id: stringValue(record.eval_shard_id, "eval.eval_shard_id"),
+    examples: numberValue(record.examples, "eval.examples"),
+    correct: numberValue(record.correct, "eval.correct"),
+    accuracy: numberValue(record.accuracy, "eval.accuracy"),
+    invalid: numberValue(record.invalid, "eval.invalid"),
+    invalid_rate: numberValue(record.invalid_rate, "eval.invalid_rate"),
+    score: numberValue(record.score, "eval.score"),
+    metrics_path: stringValue(record.metrics_path, "eval.metrics_path"),
+  };
+}
+
 async function serveStatic(response: ServerResponse, publicDir: string, requestPath: string): Promise<void> {
   const relativePath = requestPath === "/" ? "index.html" : requestPath.replace(/^\/+/, "");
   if (relativePath.includes("..")) {
@@ -917,6 +1044,13 @@ function contentType(path: string): string {
 
 function stringValue(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`invalid ${field}`);
+  }
+  return value;
+}
+
+function numberValue(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`invalid ${field}`);
   }
   return value;

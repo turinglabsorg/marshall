@@ -1,14 +1,16 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { artifactStoreManifestPath, sha256Path } from "../src/artifact-transfer.js";
+import { artifactStoreManifestPath, sha256File, sha256Path } from "../src/artifact-transfer.js";
 import { ControlPeer } from "../src/control-peer.js";
 import { createTrainingJobs } from "../src/jobs.js";
+import { modelArtifactUri, publishModelPackageArtifact, type OptimizedModelPackage } from "../src/model-package.js";
+import { promoteModelPackageFromControl } from "../src/model-promotion.js";
 import { runToyTraining } from "../src/training-runner.js";
 import { WorkerPeer } from "../src/worker-peer.js";
-import type { AdapterEvaluationJob, ArtifactValidationJob } from "../src/schemas.js";
+import { TrainingArtifactManifestSchema, type AdapterEvaluationJob, type ArtifactValidationJob } from "../src/schemas.js";
 
 describe("Marshall p2p substrate", () => {
   let tempDir: string;
@@ -247,6 +249,102 @@ describe("Marshall p2p substrate", () => {
       { chunkBytes: 16, maxChunkRetries: 2 },
     );
     expect(await sha256Path(fileURLToPath(materializedInput.artifact_uri))).toBe(storedManifest.artifact_hash);
+  }, 30_000);
+
+  it("promotes a ready model package and adapter through chunked p2p artifact fetch", async () => {
+    const controlArtifactStore = join(tempDir, "control-artifacts");
+    const adapterId = "adapter_ready_001";
+    const adapterDir = join(tempDir, "source-adapter");
+    await mkdir(adapterDir, { recursive: true });
+    await writeFile(join(adapterDir, "adapters.safetensors"), "adapter weights split into multiple chunks", "utf8");
+    await writeFile(join(adapterDir, "adapter_config.json"), "{\"rank\":4}\n", "utf8");
+    const adapterHash = await sha256Path(adapterDir);
+    const adapterManifestPath = artifactStoreManifestPath(controlArtifactStore, adapterId);
+    await mkdir(join(controlArtifactStore, adapterId), { recursive: true });
+    await writeFile(adapterManifestPath, JSON.stringify({
+      worker_id: "worker_train_ready",
+      peer_id: "peer_train_ready",
+      job_id: adapterId,
+      artifact_type: "lora_adapter",
+      artifact_uri: pathToFileURL(adapterDir).toString(),
+      artifact_hash: adapterHash,
+      config_hash: "sha256:adapter-config",
+      created_at: "2026-07-01T00:00:00.000Z",
+    }, null, 2) + "\n", "utf8");
+
+    const packageDir = join(tempDir, "model-package-source");
+    await mkdir(packageDir, { recursive: true });
+    const modelPackage: OptimizedModelPackage = {
+      type: "marshall_optimized_model_package",
+      strategy: "best_adapter_by_eval_score",
+      selection_policy: null,
+      created_at: "2026-07-01T00:01:00.000Z",
+      run_id: "run_ready_model_test",
+      base_model: "mlx-community/gemma-3-1b-it-4bit",
+      adapter_id: adapterId,
+      adapter_uri: modelArtifactUri(adapterId),
+      adapter_path: adapterDir,
+      adapter_artifact_hash: adapterHash,
+      eval: {
+        job_id: "job_eval_ready_001",
+        eval_shard_id: "instruction_terms_jsonl",
+        examples: 4,
+        correct: 3,
+        accuracy: 0.75,
+        invalid: 0,
+        invalid_rate: 0,
+        score: 0.75,
+        metrics_path: join(packageDir, "metrics.json"),
+      },
+    };
+    await writeFile(modelPackage.eval.metrics_path, "{\"accuracy\":0.75}\n", "utf8");
+    const packagePath = join(packageDir, "model_package.json");
+    await writeFile(packagePath, JSON.stringify(modelPackage, null, 2) + "\n", "utf8");
+    const packageManifest = TrainingArtifactManifestSchema.parse({
+      job_id: `optimized_model_${adapterId}`,
+      artifact_type: "optimized_model_package",
+      artifact_uri: pathToFileURL(packagePath).toString(),
+      artifact_hash: await sha256File(packagePath),
+      config_hash: "sha256:package-config",
+      created_at: "2026-07-01T00:01:00.000Z",
+      metrics_uri: pathToFileURL(modelPackage.eval.metrics_path).toString(),
+    });
+    await publishModelPackageArtifact({
+      modelPackage,
+      manifest: packageManifest,
+      artifactStoreDir: controlArtifactStore,
+      registryPath: join(tempDir, "model-registry", "index.json"),
+    });
+
+    control = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "control.key"),
+      artifactServeDirs: [controlArtifactStore],
+      artifactChunkBytes: 11,
+      artifactMaxChunkRetries: 2,
+    });
+    worker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "worker.key"),
+      workerId: "mac-worker-model-promotion",
+      controlAddr: control.multiaddrs[0],
+      memoryGb: 64,
+      tokensPerSecond: 1234,
+    });
+
+    const promoted = await promoteModelPackageFromControl({
+      worker,
+      packageJobId: packageManifest.job_id,
+      packageArtifactHash: packageManifest.artifact_hash,
+      outputRoot: join(tempDir, "promoted"),
+      chunkBytes: 7,
+      maxChunkRetries: 2,
+    });
+
+    const promotedPackage = JSON.parse(await readFile(promoted.model_package_path, "utf8"));
+    expect(promotedPackage.base_model).toBe("mlx-community/gemma-3-1b-it-4bit");
+    expect(promotedPackage.adapter_id).toBe(adapterId);
+    expect(promotedPackage.adapter_uri).toBe(modelArtifactUri(adapterId));
+    expect(promotedPackage.adapter_path).not.toBe(adapterDir);
+    expect(await sha256Path(promotedPackage.adapter_path)).toBe(adapterHash);
   }, 30_000);
 
   it("prevents workers from evaluating adapters produced by the same worker slot", async () => {

@@ -11,6 +11,11 @@ marshall.training {
 		file_server
 	}
 
+	handle /models/index.json {
+		root * /var/lib/marshall/model-packages
+		file_server
+	}
+
 	redir /chat /chat/ 308
 
 	handle_path /chat/* {

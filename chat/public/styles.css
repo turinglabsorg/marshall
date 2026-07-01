@@ -149,7 +149,7 @@ dt,
 
 .side-pane {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
   gap: 14px;
 }
 
@@ -294,6 +294,59 @@ button:disabled {
   display: grid;
   grid-template-columns: 82px minmax(0, 1fr);
   gap: 10px 12px;
+}
+
+.models-panel {
+  min-height: 0;
+}
+
+.models-list {
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.model-row {
+  border: 1px solid rgba(56, 241, 115, 0.18);
+  background: #020503;
+  padding: 9px;
+  display: grid;
+  gap: 6px;
+}
+
+.model-row.selected {
+  border-color: var(--line-hot);
+  box-shadow: inset 0 0 16px rgba(56, 241, 115, 0.08);
+}
+
+.model-row.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.model-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.model-row-head strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.model-row-head span,
+.model-row-meta {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.model-row-meta {
+  overflow-wrap: anywhere;
 }
 
 .memory-panel {
