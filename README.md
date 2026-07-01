@@ -9,6 +9,7 @@ Marshall is not trying to pretend that random public machines are one synchronou
 ## Live Network
 
 - Training dashboard: <https://marshall.training>
+- Public chat fallback: <https://marshall.training/chat/>
 - Chat gateway target: <https://marshall.chat>
 - Worker onboarding guide: <https://marshall.training/AGENTS.md>
 - Coordinator snapshot: <https://marshall.training/dashboard>
@@ -396,7 +397,7 @@ Deploy:
 ./scripts/deploy-gcp-micro.sh
 ```
 
-The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config has a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`; for the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
+The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config exposes the chat gateway in two ways: `https://marshall.training/chat/` as the public fallback path, and a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`. For the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
 
 ## Architecture
 

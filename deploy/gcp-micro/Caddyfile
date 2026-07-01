@@ -11,6 +11,12 @@ marshall.training {
 		file_server
 	}
 
+	redir /chat /chat/ 308
+
+	handle_path /chat/* {
+		reverse_proxy 127.0.0.1:8787
+	}
+
 	reverse_proxy 127.0.0.1:8080
 }
 

@@ -7,6 +7,7 @@ const state = {
   health: null,
 };
 
+const baseUrl = new URL("./", window.location.href);
 const transcript = document.getElementById("transcript");
 const form = document.getElementById("chatForm");
 const input = document.getElementById("promptInput");
@@ -66,7 +67,7 @@ memorySaveButton.addEventListener("click", async () => {
   memorySaveButton.disabled = true;
   memorySaveButton.textContent = "saving";
   try {
-    const response = await fetch("/api/conversation/memory", {
+    const response = await fetch(appUrl("api/conversation/memory"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -140,7 +141,7 @@ form.addEventListener("submit", async (event) => {
 });
 
 async function streamChat(body, assistantMessage, startedAt) {
-  const response = await fetch("/api/chat/stream", {
+  const response = await fetch(appUrl("api/chat/stream"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -242,7 +243,7 @@ async function loadConversation() {
     return;
   }
   try {
-    const response = await fetch(`/api/conversation?conversation_id=${encodeURIComponent(state.conversationId)}`, { cache: "no-store" });
+    const response = await fetch(appUrl(`api/conversation?conversation_id=${encodeURIComponent(state.conversationId)}`), { cache: "no-store" });
     if (response.status === 404) {
       return;
     }
@@ -262,7 +263,7 @@ async function loadConversation() {
 
 async function refreshHealth() {
   try {
-    const response = await fetch("/api/health", { cache: "no-store" });
+    const response = await fetch(appUrl("api/health"), { cache: "no-store" });
     const payload = await response.json();
     state.health = payload;
     readyDot.className = `status-dot ${payload.ready ? "ready" : "bad"}`;
@@ -394,6 +395,10 @@ function workerText(inference) {
   const ready = inference.ready_workers ?? 0;
   const configured = inference.configured_workers ?? 0;
   return `${ready}/${configured} ready`;
+}
+
+function appUrl(path) {
+  return new URL(path.replace(/^\/+/, ""), baseUrl).toString();
 }
 
 function existingConversationId() {
