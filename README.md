@@ -418,6 +418,15 @@ Deploy:
 
 The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config exposes the chat gateway in two ways: `https://marshall.training/chat/` as the public fallback path, and a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`. For the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
 
+Use the public chat readiness check before calling inference operational:
+
+```bash
+scripts/check-chat-public.sh --url https://marshall.training/chat/ --expected-ip 34.148.63.131
+scripts/check-chat-public.sh --url https://marshall.chat --expected-ip 34.148.63.131
+```
+
+The check verifies DNS, HTTPS health, a streamed P2P inference response, at least one ready worker, and that public `completed` SSE events do not expose the gateway-composed prompt or long-term memory context.
+
 ## Architecture
 
 Core components:
@@ -433,6 +442,7 @@ Core components:
 - `src/chat-memory.ts`: file-backed conversation memory and structured long-term plans owned by the gateway;
 - `scripts/run-chat-gateway-local.sh`: Mac Pro gateway runner backed by an ignored local env file;
 - `scripts/run-chat-tunnel-gcp.sh`: reverse SSH tunnel runner from the GCP VM to the local gateway;
+- `scripts/check-chat-public.sh`: public DNS/HTTPS/P2P readiness check for `marshall.training/chat` and `marshall.chat`;
 - `scripts/install-macos-chat-launchd.sh`: macOS LaunchAgent installer for persistent gateway and tunnel processes;
 - `scripts/run-inference-worker-local.sh`: macOS inference worker runner backed by an ignored local env file;
 - `scripts/install-macos-inference-launchd.sh`: macOS LaunchAgent installer for persistent inference workers;
