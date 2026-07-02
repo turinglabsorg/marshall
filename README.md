@@ -316,7 +316,7 @@ npm run model:package -- \
   --registry-path /var/lib/marshall/model-packages/index.json
 ```
 
-Promote a ready package onto a worker machine over P2P:
+Promote a ready package onto a worker machine over P2P when you need a manual cache step:
 
 ```bash
 npm run model:promote -- \
@@ -326,27 +326,27 @@ npm run model:promote -- \
   --output-root .marshall/model-promotions
 ```
 
-The command writes `.marshall/model-promotions/ready/<run-id>/model_package.json`. Point `MARSHALL_MODEL_PACKAGE` or `--model-package` at that promoted file when starting an inference worker.
+The command writes `.marshall/model-promotions/ready/<run-id>/model_package.json`. The product path is now automatic inference-worker cache: when `MARSHALL_MODEL_PACKAGE` is absent, the worker can read the registry metadata, fetch the selected package and adapter from the control peer over libp2p, verify chunk/file/root hashes, write a local `model_package.json`, and then start serving that package. Manual promotion remains useful for debugging and offline inspection.
 
 ## P2P marshall.chat Prototype
 
 `marshall.chat` should be tested as a distributed path: an HTTP gateway serves the UI, but generation is performed by a separate libp2p inference worker. A local-process gateway is still available for debugging, but it is not the product proof.
 
-Start the inference worker on the machine that owns the model and adapter, for example an Apple Silicon MacBook:
+Start the inference worker on the machine that owns the compute. For finalized public models, prefer registry-backed auto-cache so the worker downloads the model package from the control peer instead of requiring a hand-written adapter path:
 
 ```bash
 npm run inference:worker -- \
   --key .marshall/inference-worker.key \
   --listen /ip4/0.0.0.0/tcp/8788 \
   --worker-id "$(hostname)-inference-0001" \
-  --model mlx-community/gemma-3-1b-it-4bit \
-  --adapter-id job_dolly_gemma3_1b_public_shard_007 \
-  --adapter-path .marshall/input-artifacts/<worker-id>/job_dolly_gemma3_1b_public_shard_007/artifact \
-  --adapter-hash sha256:<adapter-root-hash> \
+  --control "/dns4/marshall.training/tcp/4001/p2p/<control-peer-id>" \
+  --model-registry-url https://marshall.training/models/index.json \
+  --model-package-id optimized_model_job_dolly_gemma3_1b_public_shard_007 \
+  --model-cache-dir .marshall/model-cache \
   --python ~/.marshall/mlx-venv/bin/python
 ```
 
-The worker prints libp2p multiaddrs. Start the gateway on the Mac Pro with one or more reachable worker addresses:
+If the registry has exactly one ready model, the package id may be omitted. If multiple ready models exist, pass `--model-package-id` or exact model/adapter selector values. The worker prints libp2p multiaddrs. Start the gateway on the Mac Pro with one or more reachable worker addresses:
 
 ```bash
 npm run chat:dev -- \
@@ -359,12 +359,13 @@ npm run chat:dev -- \
   --p2p-max-attempts 3 \
   --conversation-dir .marshall/chat/conversations \
   --max-context-messages 18 \
+  --model-registry-url https://marshall.training/models/index.json \
   --model mlx-community/gemma-3-1b-it-4bit \
   --adapter-id job_dolly_gemma3_1b_public_shard_007 \
   --adapter-hash sha256:<adapter-root-hash>
 ```
 
-Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/models`, `GET /api/inference/workers`, `GET /api/conversation?conversation_id=<id>`, `POST /api/chat`, and streaming `POST /api/chat/stream`. The gateway probes workers with `/marshall/inference/hello/1.0.0`, filters for the requested model and adapter, routes `/marshall/inference/generate_stream/1.0.0` or `/marshall/inference/generate/1.0.0` to a ready worker, and retries another compatible worker when generation fails. `/api/models` returns current package metadata, registry entries, and ready worker counts without proxying model payloads. `/api/chat` and `/api/chat/stream` store the user turn under a durable `conversation_id`, build the bounded context window, send the request over libp2p, store the assistant turn, and return the updated conversation plus the selected `worker_id` and `worker_peer_id`.
+Open `http://127.0.0.1:8787`. The gateway exposes `GET /api/health`, `GET /api/models`, `GET /api/inference/workers`, `GET /api/conversation?conversation_id=<id>`, `POST /api/chat`, and streaming `POST /api/chat/stream`. The gateway probes workers with `/marshall/inference/hello/1.0.0`, tracks each worker's advertised model capability, routes each request to a worker compatible with the selected `model_package_id`, and retries another compatible worker when generation fails. `/api/models` returns current package metadata, registry entries, selected/default model metadata, and ready worker counts without proxying model payloads. `/api/chat` and `/api/chat/stream` store the user turn under a durable `conversation_id`, build the bounded context window, send the request over libp2p, store the assistant turn, and return the updated conversation plus the selected `worker_id`, `worker_peer_id`, and `model_package_id`.
 
 In the chat composer, `Enter` submits the prompt and `Shift+Enter` inserts a newline.
 
@@ -394,7 +395,10 @@ MARSHALL_INFERENCE_KEY=.marshall/inference-worker.key
 MARSHALL_INFERENCE_LISTEN=/ip4/0.0.0.0/tcp/8788
 MARSHALL_INFERENCE_WORKER_ID=<stable-worker-id>
 MARSHALL_PYTHON=/absolute/path/to/mlx-python
-MARSHALL_MODEL_PACKAGE=.marshall/model-promotions/ready/<run-id>/model_package.json
+MARSHALL_CONTROL_ADDR=/dns4/marshall.training/tcp/4001/p2p/<control-peer-id>
+MARSHALL_MODEL_REGISTRY_URL=https://marshall.training/models/index.json
+MARSHALL_MODEL_PACKAGE_ID=optimized_model_job_dolly_gemma3_1b_public_shard_007
+MARSHALL_MODEL_CACHE_DIR=.marshall/model-cache
 ```
 
 Then install the worker LaunchAgent from that machine:
@@ -403,7 +407,7 @@ Then install the worker LaunchAgent from that machine:
 scripts/install-macos-inference-launchd.sh
 ```
 
-`scripts/run-inference-worker-local.sh` starts the compiled `dist/src/inference-worker-cli.js`, validates Node.js 22+, requires an explicit worker id, key, listen address, Python binary, and either a model package or explicit model/adapter metadata. `scripts/uninstall-macos-inference-launchd.sh` removes the LaunchAgent. Keep the worker env file out of git; it is machine-local operational state.
+`scripts/run-inference-worker-local.sh` starts the compiled `dist/src/inference-worker-cli.js`, validates Node.js 22+, requires an explicit worker id, key, listen address, and Python binary, then starts from either a local `MARSHALL_MODEL_PACKAGE`, registry-backed P2P auto-cache, or explicit model/adapter metadata for debugging. `scripts/uninstall-macos-inference-launchd.sh` removes the LaunchAgent. Keep the worker env file out of git; it is machine-local operational state.
 
 For a single-process debugging run only:
 

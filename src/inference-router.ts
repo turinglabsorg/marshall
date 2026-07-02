@@ -15,12 +15,18 @@ import { readJsonLines, requestJson, writeJson } from "./wire.js";
 type InferenceWorkerStatus = "unknown" | "ready" | "incompatible" | "offline";
 type AcceptedHello = Extract<InferenceHelloResponse, { accepted: true }>;
 
-export interface InferenceRouterOptions {
-  node: Libp2p;
-  workerAddrs: string[];
+export interface InferenceTarget {
   model: string;
   adapterId: string;
   adapterHash: string;
+}
+
+export interface InferenceRouterOptions {
+  node: Libp2p;
+  workerAddrs: string[];
+  model?: string;
+  adapterId?: string;
+  adapterHash?: string;
   requestTimeoutMs?: number;
   probeTimeoutMs?: number;
   maxAttempts?: number;
@@ -61,9 +67,7 @@ interface InferenceWorkerCandidate {
 export class InferenceRouter {
   private readonly node: Libp2p;
   private readonly candidates: InferenceWorkerCandidate[];
-  private readonly model: string;
-  private readonly adapterId: string;
-  private readonly adapterHash: string;
+  private readonly defaultTarget?: InferenceTarget;
   private readonly requestTimeoutMs: number;
   private readonly probeTimeoutMs: number;
   private readonly maxAttempts?: number;
@@ -71,9 +75,13 @@ export class InferenceRouter {
 
   constructor(options: InferenceRouterOptions) {
     this.node = options.node;
-    this.model = options.model;
-    this.adapterId = options.adapterId;
-    this.adapterHash = options.adapterHash;
+    this.defaultTarget = options.model != null && options.adapterId != null && options.adapterHash != null
+      ? {
+        model: options.model,
+        adapterId: options.adapterId,
+        adapterHash: options.adapterHash,
+      }
+      : undefined;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 120_000;
     this.probeTimeoutMs = options.probeTimeoutMs ?? 10_000;
     this.maxAttempts = options.maxAttempts;
@@ -96,6 +104,12 @@ export class InferenceRouter {
     return this.candidates.filter((candidate) => candidate.status === "ready").length;
   }
 
+  readyWorkersFor(target: InferenceTarget): number {
+    return this.candidates.filter((candidate) =>
+      candidate.status === "ready" && isCompatible(candidate.capabilities, target)
+    ).length;
+  }
+
   snapshot(): InferenceWorkerSnapshot[] {
     return this.candidates.map((candidate) => snapshot(candidate));
   }
@@ -105,12 +119,13 @@ export class InferenceRouter {
     return this.snapshot();
   }
 
-  async generate(payload: InferenceRequest): Promise<InferenceResponse> {
+  async generate(payload: InferenceRequest, target?: InferenceTarget): Promise<InferenceResponse> {
+    const requestedTarget = this.resolveTarget(target);
     await this.refresh();
-    let candidates = this.selectCandidates();
+    let candidates = this.selectCandidates(requestedTarget);
     if (candidates.length === 0) {
       await this.refresh({ force: true });
-      candidates = this.selectCandidates();
+      candidates = this.selectCandidates(requestedTarget);
     }
     if (candidates.length === 0) {
       throw new Error("no compatible inference workers are ready");
@@ -152,12 +167,14 @@ export class InferenceRouter {
   async generateStream(
     payload: InferenceRequest,
     onEvent: (event: InferenceStreamEvent) => void,
+    target?: InferenceTarget,
   ): Promise<InferenceResponse> {
+    const requestedTarget = this.resolveTarget(target);
     await this.refresh();
-    let candidates = this.selectCandidates();
+    let candidates = this.selectCandidates(requestedTarget);
     if (candidates.length === 0) {
       await this.refresh({ force: true });
-      candidates = this.selectCandidates();
+      candidates = this.selectCandidates(requestedTarget);
     }
     if (candidates.length === 0) {
       throw new Error("no compatible inference workers are ready");
@@ -187,9 +204,9 @@ export class InferenceRouter {
     throw new Error(`no inference worker completed streaming request: ${errors.join("; ")}`);
   }
 
-  private selectCandidates(): InferenceWorkerCandidate[] {
+  private selectCandidates(target: InferenceTarget): InferenceWorkerCandidate[] {
     return this.candidates
-      .filter((candidate) => candidate.status === "ready" && isCompatible(candidate.capabilities, this.model, this.adapterId, this.adapterHash))
+      .filter((candidate) => candidate.status === "ready" && isCompatible(candidate.capabilities, target))
       .sort((left, right) => {
         if (left.inFlight !== right.inFlight) {
           return left.inFlight - right.inFlight;
@@ -220,13 +237,8 @@ export class InferenceRouter {
       }
       candidate.capabilities = response;
       candidate.lastSeenMs = Date.now();
-      if (isCompatible(response, this.model, this.adapterId, this.adapterHash)) {
-        candidate.status = "ready";
-        candidate.lastError = undefined;
-      } else {
-        candidate.status = "incompatible";
-        candidate.lastError = `worker serves ${response.model}/${response.adapter_id}/${response.adapter_hash}`;
-      }
+      candidate.status = "ready";
+      candidate.lastError = undefined;
     } catch (error) {
       candidate.status = "offline";
       candidate.lastError = error instanceof Error ? error.message : String(error);
@@ -270,18 +282,24 @@ export class InferenceRouter {
     }
     return InferenceResponseSchema.parse(completed);
   }
+
+  private resolveTarget(target: InferenceTarget | undefined): InferenceTarget {
+    const resolved = target ?? this.defaultTarget;
+    if (resolved == null) {
+      throw new Error("inference target is required");
+    }
+    return resolved;
+  }
 }
 
 function isCompatible(
   capabilities: AcceptedHello | undefined,
-  model: string,
-  adapterId: string,
-  adapterHash: string,
+  target: InferenceTarget,
 ): boolean {
   return capabilities != null
-    && capabilities.model === model
-    && capabilities.adapter_id === adapterId
-    && capabilities.adapter_hash === adapterHash;
+    && capabilities.model === target.model
+    && capabilities.adapter_id === target.adapterId
+    && capabilities.adapter_hash === target.adapterHash;
 }
 
 function markSuccess(candidate: InferenceWorkerCandidate, elapsedMs: number): void {

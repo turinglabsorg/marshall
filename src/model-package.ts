@@ -87,6 +87,23 @@ export interface ModelRegistry {
   models: ModelRegistryEntry[];
 }
 
+export interface LoadModelRegistrySourceOptions {
+  registryPath?: string;
+  registryUrl?: string;
+  fetchImpl?: (url: string, init?: { cache?: string }) => Promise<{
+    ok: boolean;
+    status: number;
+    json(): Promise<unknown>;
+  }>;
+}
+
+export interface ModelRegistrySelector {
+  packageJobId?: string;
+  model?: string;
+  adapterId?: string;
+  adapterArtifactHash?: string;
+}
+
 export interface CreateOptimizedModelPackageOptions {
   optimizedModel: OptimizedModelSelection;
   runId?: string;
@@ -275,6 +292,72 @@ export function parseOptimizedModelPackage(value: unknown): OptimizedModelPackag
   };
 }
 
+export async function loadModelRegistrySource(options: LoadModelRegistrySourceOptions): Promise<ModelRegistry> {
+  if (options.registryPath != null && options.registryPath !== "") {
+    return parseModelRegistry(JSON.parse(await readFile(options.registryPath, "utf8")));
+  }
+  if (options.registryUrl != null && options.registryUrl !== "") {
+    const fetcher = options.fetchImpl ?? fetch;
+    const response = await fetcher(options.registryUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`model registry request failed ${response.status}`);
+    }
+    return parseModelRegistry(await response.json());
+  }
+  return emptyModelRegistry();
+}
+
+export function parseModelRegistry(value: unknown): ModelRegistry {
+  if (typeof value !== "object" || value == null) {
+    throw new Error("model registry must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type !== "marshall_model_registry" || record.version !== 1 || !Array.isArray(record.models)) {
+    throw new Error("invalid Marshall model registry");
+  }
+  return {
+    type: "marshall_model_registry",
+    version: 1,
+    updated_at: stringValue(record.updated_at, "updated_at", true) || new Date(0).toISOString(),
+    models: record.models.map(parseRegistryEntry),
+  };
+}
+
+export function selectModelRegistryEntry(
+  registry: ModelRegistry,
+  selector: ModelRegistrySelector,
+): ModelRegistryEntry {
+  const readyModels = registry.models.filter((entry) => entry.status === "ready");
+  const matches = readyModels.filter((entry) =>
+    (selector.packageJobId == null || selector.packageJobId === "" || entry.package_job_id === selector.packageJobId)
+    && (selector.model == null || selector.model === "" || entry.base_model === selector.model)
+    && (selector.adapterId == null || selector.adapterId === "" || entry.adapter_id === selector.adapterId)
+    && (selector.adapterArtifactHash == null || selector.adapterArtifactHash === "" || entry.adapter_artifact_hash === selector.adapterArtifactHash)
+  );
+  if (matches.length === 1) {
+    return matches[0];
+  }
+  if (matches.length > 1) {
+    throw new Error("model registry selector matches multiple ready models; pass package_job_id");
+  }
+  if (readyModels.length === 1 && isEmptySelector(selector)) {
+    return readyModels[0];
+  }
+  throw new Error("no ready model matches registry selector");
+}
+
+export function modelRegistryEntryTarget(entry: ModelRegistryEntry): {
+  model: string;
+  adapterId: string;
+  adapterArtifactHash: string;
+} {
+  return {
+    model: entry.base_model,
+    adapterId: entry.adapter_id,
+    adapterArtifactHash: entry.adapter_artifact_hash,
+  };
+}
+
 export function modelArtifactUri(jobId: string): string {
   return `marshall-artifact://${jobId}`;
 }
@@ -327,24 +410,10 @@ async function upsertRegistry(path: string, entry: ModelRegistryEntry): Promise<
 
 async function readRegistry(path: string): Promise<ModelRegistry> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8"));
-    if (parsed?.type !== "marshall_model_registry" || parsed?.version !== 1 || !Array.isArray(parsed?.models)) {
-      throw new Error(`${path} is not a Marshall model registry`);
-    }
-    return {
-      type: "marshall_model_registry",
-      version: 1,
-      updated_at: stringValue(parsed.updated_at, "updated_at", true) || new Date(0).toISOString(),
-      models: parsed.models.map(parseRegistryEntry),
-    };
+    return parseModelRegistry(JSON.parse(await readFile(path, "utf8")));
   } catch (error) {
     if (isMissingFile(error)) {
-      return {
-        type: "marshall_model_registry",
-        version: 1,
-        updated_at: new Date(0).toISOString(),
-        models: [],
-      };
+      return emptyModelRegistry();
     }
     throw error;
   }
@@ -446,6 +515,24 @@ function nestedValue(value: unknown, field: string): unknown {
     return undefined;
   }
   return (value as Record<string, unknown>)[field];
+}
+
+function emptyModelRegistry(): ModelRegistry {
+  return {
+    type: "marshall_model_registry",
+    version: 1,
+    updated_at: new Date(0).toISOString(),
+    models: [],
+  };
+}
+
+function isEmptySelector(selector: ModelRegistrySelector): boolean {
+  return [
+    selector.packageJobId,
+    selector.model,
+    selector.adapterId,
+    selector.adapterArtifactHash,
+  ].every((value) => value == null || value === "");
 }
 
 function sha256Text(value: string): string {

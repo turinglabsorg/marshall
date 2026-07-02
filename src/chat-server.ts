@@ -12,8 +12,8 @@ import {
   ttlDaysToMs,
   type LongTermMemoryUpdate,
 } from "./chat-memory.js";
-import { InferenceRouter } from "./inference-router.js";
-import type { ModelRegistry, ModelRegistryEntry } from "./model-package.js";
+import { InferenceRouter, type InferenceTarget } from "./inference-router.js";
+import { loadModelRegistrySource, type ModelRegistry, type ModelRegistryEntry } from "./model-package.js";
 import { createMarshallNode } from "./node.js";
 import { InferenceStreamEventSchema, type InferenceRequest, type InferenceStreamEvent } from "./schemas.js";
 
@@ -82,6 +82,10 @@ interface ChatRequest {
   messages?: unknown;
   max_tokens?: unknown;
   temperature?: unknown;
+  model_package_id?: unknown;
+  model?: unknown;
+  adapter_id?: unknown;
+  adapter_hash?: unknown;
 }
 
 interface ConversationMemoryRequest {
@@ -112,6 +116,11 @@ interface InferenceResult {
   text: string;
   raw_text: string;
   elapsed_ms: number;
+}
+
+interface ChatModelTarget extends InferenceTarget {
+  packageJobId?: string;
+  eval?: ModelRegistryEntry["eval"] | LoadedModelPackage["eval"] | null;
 }
 
 export async function resolveChatConfig(config: ChatServerConfig): Promise<ResolvedChatServerConfig> {
@@ -240,18 +249,21 @@ async function handleHealth(response: ServerResponse, config: RuntimeChatServerC
     ? await stat(config.adapterPath).catch(() => null)
     : null;
   const workers = config.inferenceRouter == null ? [] : await config.inferenceRouter.refresh();
+  const defaultTarget = defaultChatModelTarget(config);
+  const readyWorkers = config.inferenceRouter?.readyWorkersFor(defaultTarget) ?? 0;
   sendJson(response, 200, {
     type: "marshall_chat_health",
-    ready: config.runtime === "local_process" ? adapterStat != null : (config.inferenceRouter?.readyWorkers ?? 0) > 0,
+    ready: config.runtime === "local_process" ? adapterStat != null : readyWorkers > 0,
     runtime: config.runtime,
-    model: config.model,
-    adapter_id: config.adapterId,
+    model: defaultTarget.model,
+    adapter_id: defaultTarget.adapterId,
     adapter_path: config.adapterPath ?? null,
-    adapter_hash: config.adapterArtifactHash,
+    adapter_hash: defaultTarget.adapterHash,
     p2p_gateway_peer_id: config.p2pNode?.peerId.toString() ?? null,
     inference: {
       configured_workers: config.inferenceRouter?.configuredWorkers ?? 0,
-      ready_workers: config.inferenceRouter?.readyWorkers ?? 0,
+      ready_workers: readyWorkers,
+      total_ready_workers: config.inferenceRouter?.readyWorkers ?? 0,
       workers,
     },
     memory: {
@@ -287,11 +299,19 @@ async function handleModels(response: ServerResponse, config: RuntimeChatServerC
     error: error instanceof Error ? error.message : String(error),
   }));
   const workers = config.inferenceRouter == null ? [] : await config.inferenceRouter.refresh();
-  const current = currentModelEntry(config);
   const models = registry.type === "marshall_model_registry" ? registry.models : [];
+  const defaultTarget = defaultChatModelTarget(config);
+  const defaultEntry = models.find((model) => entryMatchesTarget(model, defaultTarget));
+  const current = currentModelEntry(config, defaultEntry);
   sendJson(response, 200, {
     type: "marshall_chat_models",
     current,
+    default_model: {
+      model: defaultTarget.model,
+      adapter_id: defaultTarget.adapterId,
+      adapter_hash: defaultTarget.adapterHash,
+      package_job_id: defaultEntry?.package_job_id ?? defaultTarget.packageJobId ?? null,
+    },
     registry,
     models,
     serving: models.map((model) => ({
@@ -302,9 +322,9 @@ async function handleModels(response: ServerResponse, config: RuntimeChatServerC
         && worker.adapter_id === model.adapter_id
         && worker.adapter_hash === model.adapter_artifact_hash
       ).length,
-      selected: model.base_model === config.model
-        && model.adapter_id === config.adapterId
-        && model.adapter_artifact_hash === config.adapterArtifactHash,
+      selected: model.base_model === defaultTarget.model
+        && model.adapter_id === defaultTarget.adapterId
+        && model.adapter_artifact_hash === defaultTarget.adapterHash,
     })),
   });
 }
@@ -340,30 +360,32 @@ async function handleConversationMemory(request: IncomingMessage, response: Serv
 async function handleChat(request: IncomingMessage, response: ServerResponse, config: RuntimeChatServerConfig): Promise<void> {
   const body = await readJsonBody<ChatRequest>(request);
   const userContent = userPrompt(body);
+  const target = await resolveRequestedModel(config, body);
   const context = await config.conversations.context(
     conversationId(body),
     userContent,
-    conversationMetadata(config),
+    conversationMetadataForTarget(target),
     { maxMessages: config.maxContextMessages, maxMemoryItems: config.maxMemoryItems },
   );
   const maxTokens = positiveInteger(body.max_tokens, config.maxTokens, "max_tokens");
   const temperature = finiteNumber(body.temperature, config.temperature, "temperature");
   const promptSystem = systemPrompt(body, config.systemPrompt);
   const result = config.runtime === "p2p_worker"
-    ? await runP2pInference(config, context.prompt, promptSystem, maxTokens, temperature)
-    : await runLocalInference(config, context.prompt, promptSystem, maxTokens, temperature);
+    ? await runP2pInference(config, target, context.prompt, promptSystem, maxTokens, temperature)
+    : await runLocalInference(config, target, context.prompt, promptSystem, maxTokens, temperature);
   const updatedConversation = await config.conversations.appendTurn(
     context.conversation,
     userContent,
     result.text ?? result.raw_text ?? "",
-    conversationMetadata(config),
+    conversationMetadataForTarget(target),
   );
   sendJson(response, 200, {
     type: "marshall_chat_response",
     runtime: config.runtime,
-    model: result.model ?? config.model,
-    adapter_id: result.adapter_id ?? config.adapterId,
-    adapter_hash: result.adapter_hash ?? config.adapterArtifactHash,
+    model: result.model ?? target.model,
+    adapter_id: result.adapter_id ?? target.adapterId,
+    adapter_hash: result.adapter_hash ?? target.adapterHash,
+    model_package_id: target.packageJobId ?? null,
     worker_id: result.worker_id ?? null,
     worker_peer_id: result.peer_id ?? null,
     conversation_id: updatedConversation.conversation_id,
@@ -380,10 +402,11 @@ async function handleChatStream(request: IncomingMessage, response: ServerRespon
   try {
     const body = await readJsonBody<ChatRequest>(request);
     const userContent = userPrompt(body);
+    const target = await resolveRequestedModel(config, body);
     const context = await config.conversations.context(
       conversationId(body),
       userContent,
-      conversationMetadata(config),
+      conversationMetadataForTarget(target),
       { maxMessages: config.maxContextMessages, maxMemoryItems: config.maxMemoryItems },
     );
     const maxTokens = positiveInteger(body.max_tokens, config.maxTokens, "max_tokens");
@@ -391,25 +414,27 @@ async function handleChatStream(request: IncomingMessage, response: ServerRespon
     const promptSystem = systemPrompt(body, config.systemPrompt);
     sendSse(response, "accepted", {
       conversation_id: context.conversation.conversation_id,
-      model: config.model,
-      adapter_id: config.adapterId,
-      adapter_hash: config.adapterArtifactHash,
+      model: target.model,
+      adapter_id: target.adapterId,
+      adapter_hash: target.adapterHash,
+      model_package_id: target.packageJobId ?? null,
     });
     const result = config.runtime === "p2p_worker"
-      ? await runP2pInferenceStream(config, context.prompt, promptSystem, maxTokens, temperature, (event) => sendInferenceSse(response, event, config))
-      : await runLocalInferenceStream(config, context.prompt, promptSystem, maxTokens, temperature, (event) => sendInferenceSse(response, event, config));
+      ? await runP2pInferenceStream(config, target, context.prompt, promptSystem, maxTokens, temperature, (event) => sendInferenceSse(response, event, target))
+      : await runLocalInferenceStream(config, target, context.prompt, promptSystem, maxTokens, temperature, (event) => sendInferenceSse(response, event, target));
     const updatedConversation = await config.conversations.appendTurn(
       context.conversation,
       userContent,
       result.text ?? result.raw_text ?? "",
-      conversationMetadata(config),
+      conversationMetadataForTarget(target),
     );
     sendSse(response, "done", {
       type: "marshall_chat_response",
       runtime: config.runtime,
-      model: result.model ?? config.model,
-      adapter_id: result.adapter_id ?? config.adapterId,
-      adapter_hash: result.adapter_hash ?? config.adapterArtifactHash,
+      model: result.model ?? target.model,
+      adapter_id: result.adapter_id ?? target.adapterId,
+      adapter_hash: result.adapter_hash ?? target.adapterHash,
+      model_package_id: target.packageJobId ?? null,
       worker_id: result.worker_id ?? null,
       worker_peer_id: result.peer_id ?? null,
       conversation_id: updatedConversation.conversation_id,
@@ -431,18 +456,20 @@ async function handleChatStream(request: IncomingMessage, response: ServerRespon
 
 async function runLocalInference(
   config: ResolvedChatServerConfig,
+  target: ChatModelTarget,
   prompt: string,
   promptSystem: string,
   maxTokens: number,
   temperature: number,
 ) {
+  assertLocalTarget(config, target);
   if (config.adapterPath == null || config.adapterPath === "") {
     throw new Error("local_process runtime requires adapterPath");
   }
   const result = await runInference({
     runnerPath: config.runnerPath,
     pythonBin: config.pythonBin,
-    model: config.model,
+    model: target.model,
     adapterPath: config.adapterPath,
     systemPrompt: promptSystem,
     prompt,
@@ -451,26 +478,28 @@ async function runLocalInference(
   });
   return {
     ...result,
-    adapter_id: config.adapterId,
-    adapter_hash: config.adapterArtifactHash,
+    adapter_id: target.adapterId,
+    adapter_hash: target.adapterHash,
   };
 }
 
 async function runLocalInferenceStream(
   config: ResolvedChatServerConfig,
+  target: ChatModelTarget,
   prompt: string,
   promptSystem: string,
   maxTokens: number,
   temperature: number,
   onEvent: (event: InferenceStreamEvent) => void,
 ) {
+  assertLocalTarget(config, target);
   if (config.adapterPath == null || config.adapterPath === "") {
     throw new Error("local_process runtime requires adapterPath");
   }
   const result = await runInferenceStream({
     runnerPath: config.runnerPath,
     pythonBin: config.pythonBin,
-    model: config.model,
+    model: target.model,
     adapterPath: config.adapterPath,
     systemPrompt: promptSystem,
     prompt,
@@ -480,13 +509,14 @@ async function runLocalInferenceStream(
   });
   return {
     ...result,
-    adapter_id: config.adapterId,
-    adapter_hash: config.adapterArtifactHash,
+    adapter_id: target.adapterId,
+    adapter_hash: target.adapterHash,
   };
 }
 
 async function runP2pInference(
   config: RuntimeChatServerConfig,
+  target: ChatModelTarget,
   prompt: string,
   promptSystem: string,
   maxTokens: number,
@@ -502,11 +532,12 @@ async function runP2pInference(
     max_tokens: maxTokens,
     temperature,
   };
-  return config.inferenceRouter.generate(request);
+  return config.inferenceRouter.generate(request, target);
 }
 
 async function runP2pInferenceStream(
   config: RuntimeChatServerConfig,
+  target: ChatModelTarget,
   prompt: string,
   promptSystem: string,
   maxTokens: number,
@@ -524,24 +555,24 @@ async function runP2pInferenceStream(
     temperature,
   };
   try {
-    return await config.inferenceRouter.generateStream(request, onEvent);
+    return await config.inferenceRouter.generateStream(request, onEvent, target);
   } catch {
     onEvent({
       type: "marshall_inference_stream_event",
       event: "started",
-      model: config.model,
-      adapter_id: config.adapterId,
-      adapter_hash: config.adapterArtifactHash,
+      model: target.model,
+      adapter_id: target.adapterId,
+      adapter_hash: target.adapterHash,
     });
-    const response = await config.inferenceRouter.generate(request);
+    const response = await config.inferenceRouter.generate(request, target);
     onEvent({
       type: "marshall_inference_stream_event",
       event: "completed",
       peer_id: response.peer_id,
       worker_id: response.worker_id,
-      model: response.model ?? config.model,
-      adapter_id: response.adapter_id ?? config.adapterId,
-      adapter_hash: response.adapter_hash ?? config.adapterArtifactHash,
+      model: response.model ?? target.model,
+      adapter_id: response.adapter_id ?? target.adapterId,
+      adapter_hash: response.adapter_hash ?? target.adapterHash,
       prompt: response.prompt ?? prompt,
       text: response.text ?? response.raw_text ?? "",
       raw_text: response.raw_text ?? response.text ?? "",
@@ -634,94 +665,21 @@ export async function loadModelPackage(path: string): Promise<LoadedModelPackage
 }
 
 async function loadModelRegistry(config: RuntimeChatServerConfig): Promise<ModelRegistry> {
-  if (config.modelRegistryPath != null && config.modelRegistryPath !== "") {
-    return parseModelRegistry(JSON.parse(await readFile(config.modelRegistryPath, "utf8")));
-  }
-  if (config.modelRegistryUrl != null && config.modelRegistryUrl !== "") {
-    const response = await fetch(config.modelRegistryUrl, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`model registry request failed ${response.status}`);
-    }
-    return parseModelRegistry(await response.json());
-  }
-  return {
-    type: "marshall_model_registry",
-    version: 1,
-    updated_at: new Date(0).toISOString(),
-    models: [],
-  };
+  return loadModelRegistrySource({
+    registryPath: config.modelRegistryPath,
+    registryUrl: config.modelRegistryUrl,
+  });
 }
 
-function currentModelEntry(config: RuntimeChatServerConfig) {
+function currentModelEntry(config: RuntimeChatServerConfig, registryEntry?: ModelRegistryEntry) {
+  const target = defaultChatModelTarget(config);
   return {
-    status: config.inferenceRouter == null ? "local" : ((config.inferenceRouter.readyWorkers ?? 0) > 0 ? "ready" : "waiting"),
-    base_model: config.model,
-    adapter_id: config.adapterId,
-    adapter_artifact_hash: config.adapterArtifactHash,
-    eval: config.packageInfo?.eval ?? null,
-  };
-}
-
-function parseModelRegistry(value: unknown): ModelRegistry {
-  if (typeof value !== "object" || value == null) {
-    throw new Error("model registry must be an object");
-  }
-  const record = value as Record<string, unknown>;
-  if (record.type !== "marshall_model_registry" || record.version !== 1 || !Array.isArray(record.models)) {
-    throw new Error("invalid Marshall model registry");
-  }
-  return {
-    type: "marshall_model_registry",
-    version: 1,
-    updated_at: stringValue(record.updated_at, "updated_at"),
-    models: record.models.map(parseModelRegistryEntry),
-  };
-}
-
-function parseModelRegistryEntry(value: unknown): ModelRegistryEntry {
-  if (typeof value !== "object" || value == null) {
-    throw new Error("model registry entry must be an object");
-  }
-  const record = value as Record<string, unknown>;
-  const transfer = typeof record.transfer === "object" && record.transfer != null
-    ? record.transfer as Record<string, unknown>
-    : {};
-  return {
-    status: "ready",
-    run_id: stringValue(record.run_id, "run_id"),
-    created_at: stringValue(record.created_at, "created_at"),
-    base_model: stringValue(record.base_model, "base_model"),
-    adapter_id: stringValue(record.adapter_id, "adapter_id"),
-    adapter_uri: stringValue(record.adapter_uri, "adapter_uri"),
-    adapter_artifact_hash: stringValue(record.adapter_artifact_hash, "adapter_artifact_hash"),
-    package_job_id: stringValue(record.package_job_id, "package_job_id"),
-    package_uri: stringValue(record.package_uri, "package_uri"),
-    package_artifact_hash: stringValue(record.package_artifact_hash, "package_artifact_hash"),
-    eval: parseModelRegistryEval(record.eval),
-    transfer: {
-      protocol: stringValue(transfer.protocol, "transfer.protocol"),
-      chunked: true,
-      hash_verified: true,
-      https_payload: false,
-    },
-  };
-}
-
-function parseModelRegistryEval(value: unknown): ModelRegistryEntry["eval"] {
-  if (typeof value !== "object" || value == null) {
-    throw new Error("model registry eval must be an object");
-  }
-  const record = value as Record<string, unknown>;
-  return {
-    job_id: stringValue(record.job_id, "eval.job_id"),
-    eval_shard_id: stringValue(record.eval_shard_id, "eval.eval_shard_id"),
-    examples: numberValue(record.examples, "eval.examples"),
-    correct: numberValue(record.correct, "eval.correct"),
-    accuracy: numberValue(record.accuracy, "eval.accuracy"),
-    invalid: numberValue(record.invalid, "eval.invalid"),
-    invalid_rate: numberValue(record.invalid_rate, "eval.invalid_rate"),
-    score: numberValue(record.score, "eval.score"),
-    metrics_path: stringValue(record.metrics_path, "eval.metrics_path"),
+    status: config.inferenceRouter == null ? "local" : (config.inferenceRouter.readyWorkersFor(target) > 0 ? "ready" : "waiting"),
+    base_model: target.model,
+    adapter_id: target.adapterId,
+    adapter_artifact_hash: target.adapterHash,
+    package_job_id: registryEntry?.package_job_id ?? target.packageJobId ?? null,
+    eval: registryEntry?.eval ?? target.eval ?? null,
   };
 }
 
@@ -802,6 +760,13 @@ function requiredConversationId(value: unknown): string {
   return stringValue(value, "conversation_id");
 }
 
+function optionalString(value: unknown, field: string): string | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+  return stringValue(value, field);
+}
+
 function parseMemoryUpdate(body: ConversationMemoryRequest): LongTermMemoryUpdate {
   const source = typeof body.memory === "object" && body.memory != null
     ? body.memory as Record<string, unknown>
@@ -836,11 +801,72 @@ function stringOrEmpty(value: unknown, field: string): string {
 }
 
 function conversationMetadata(config: ResolvedChatServerConfig) {
+  return conversationMetadataForTarget(defaultChatModelTarget(config));
+}
+
+function conversationMetadataForTarget(target: ChatModelTarget) {
+  return {
+    model: target.model,
+    adapterId: target.adapterId,
+    adapterHash: target.adapterHash,
+  };
+}
+
+function defaultChatModelTarget(config: ResolvedChatServerConfig): ChatModelTarget {
   return {
     model: config.model,
     adapterId: config.adapterId,
     adapterHash: config.adapterArtifactHash,
+    eval: config.packageInfo?.eval ?? null,
   };
+}
+
+function entryMatchesTarget(entry: ModelRegistryEntry, target: ChatModelTarget): boolean {
+  return entry.base_model === target.model
+    && entry.adapter_id === target.adapterId
+    && entry.adapter_artifact_hash === target.adapterHash;
+}
+
+async function resolveRequestedModel(config: RuntimeChatServerConfig, body: ChatRequest): Promise<ChatModelTarget> {
+  const packageJobId = optionalString(body.model_package_id, "model_package_id");
+  const requestedModel = optionalString(body.model, "model");
+  const requestedAdapterId = optionalString(body.adapter_id, "adapter_id");
+  const requestedAdapterHash = optionalString(body.adapter_hash, "adapter_hash");
+  const defaultTarget = defaultChatModelTarget(config);
+  if ([packageJobId, requestedModel, requestedAdapterId, requestedAdapterHash].every((value) => value == null)) {
+    return defaultTarget;
+  }
+
+  const registry = await loadModelRegistry(config);
+  const matches = registry.models.filter((entry) =>
+    (packageJobId == null || entry.package_job_id === packageJobId)
+    && (requestedModel == null || entry.base_model === requestedModel)
+    && (requestedAdapterId == null || entry.adapter_id === requestedAdapterId)
+    && (requestedAdapterHash == null || entry.adapter_artifact_hash === requestedAdapterHash)
+  );
+  if (matches.length !== 1) {
+    throw new Error(matches.length === 0
+      ? "requested model is not available in the registry"
+      : "requested model selector matches multiple registry entries");
+  }
+  const entry = matches[0];
+  return {
+    model: entry.base_model,
+    adapterId: entry.adapter_id,
+    adapterHash: entry.adapter_artifact_hash,
+    packageJobId: entry.package_job_id,
+    eval: entry.eval,
+  };
+}
+
+function assertLocalTarget(config: ResolvedChatServerConfig, target: ChatModelTarget): void {
+  if (
+    target.model !== config.model
+    || target.adapterId !== config.adapterId
+    || target.adapterHash !== config.adapterArtifactHash
+  ) {
+    throw new Error("local_process runtime can only serve the configured local model package");
+  }
 }
 
 function normalizeWorkerAddrs(config: ChatServerConfig): string[] {
@@ -1001,14 +1027,15 @@ function writeSseHead(response: ServerResponse): void {
   });
 }
 
-function sendInferenceSse(response: ServerResponse, event: InferenceStreamEvent, config: ResolvedChatServerConfig): void {
+function sendInferenceSse(response: ServerResponse, event: InferenceStreamEvent, target: ChatModelTarget): void {
   const publicEvent: Record<string, unknown> = { ...event };
   delete publicEvent.prompt;
   sendSse(response, event.event, {
     ...publicEvent,
-    model: event.event === "started" || event.event === "completed" ? event.model ?? config.model : undefined,
-    adapter_id: event.event === "started" || event.event === "completed" ? event.adapter_id ?? config.adapterId : undefined,
-    adapter_hash: event.event === "started" || event.event === "completed" ? event.adapter_hash ?? config.adapterArtifactHash : undefined,
+    model: event.event === "started" || event.event === "completed" ? event.model ?? target.model : undefined,
+    adapter_id: event.event === "started" || event.event === "completed" ? event.adapter_id ?? target.adapterId : undefined,
+    adapter_hash: event.event === "started" || event.event === "completed" ? event.adapter_hash ?? target.adapterHash : undefined,
+    model_package_id: event.event === "started" || event.event === "completed" ? target.packageJobId ?? null : undefined,
   });
 }
 

@@ -273,6 +273,138 @@ function value(flag) {
       completed_requests: 1,
     });
   }, 20_000);
+
+  it("routes each chat request to the worker serving the selected model package", async () => {
+    const publicDir = join(tempDir, "public");
+    const adapterPathA = join(tempDir, "adapter-a");
+    const adapterPathB = join(tempDir, "adapter-b");
+    const runnerPath = join(tempDir, "fake-runner.mjs");
+    const registryPath = join(tempDir, "models", "index.json");
+    await mkdir(publicDir);
+    await mkdir(adapterPathA);
+    await mkdir(adapterPathB);
+    await mkdir(join(tempDir, "models"));
+    await writeFile(join(publicDir, "index.html"), "<!doctype html><title>marshall.chat</title>", "utf8");
+    await writeFile(runnerPath, `
+const prompt = value("--prompt");
+const model = value("--model");
+console.log(JSON.stringify({
+  type: "marshall_chat_completion",
+  model,
+  adapter_path: value("--adapter-path"),
+  prompt,
+  text: model + " answered: " + prompt,
+  raw_text: model + " answered: " + prompt,
+  elapsed_ms: 17
+}));
+
+function value(flag) {
+  const index = process.argv.indexOf(flag);
+  if (index === -1) {
+    throw new Error("missing " + flag);
+  }
+  return process.argv[index + 1];
+}
+`, "utf8");
+    await writeFile(registryPath, JSON.stringify({
+      type: "marshall_model_registry",
+      version: 1,
+      updated_at: "2026-07-01T00:00:00.000Z",
+      models: [
+        registryEntry("mlx-community/gemma-3-1b-it-4bit", "job_gemma_adapter", "sha256:gemma-adapter", "optimized_model_job_gemma_adapter", "sha256:gemma-package"),
+        registryEntry("mlx-community/qwen2.5-0.5b-instruct-4bit", "job_qwen_adapter", "sha256:qwen-adapter", "optimized_model_job_qwen_adapter", "sha256:qwen-package"),
+      ],
+    }), "utf8");
+
+    const gemmaWorker = await InferenceWorkerPeer.create({
+      privateKeyPath: join(tempDir, "gemma-worker.key"),
+      listen: ["/ip4/127.0.0.1/tcp/0"],
+      workerId: "gemma-inference-test",
+      publicDir,
+      runnerPath,
+      pythonBin: process.execPath,
+      model: "mlx-community/gemma-3-1b-it-4bit",
+      adapterPath: adapterPathA,
+      adapterArtifactHash: "sha256:gemma-adapter",
+      adapterId: "job_gemma_adapter",
+      systemPrompt: "You are Marshall.",
+      maxTokens: 64,
+      temperature: 0.1,
+    });
+    const qwenWorker = await InferenceWorkerPeer.create({
+      privateKeyPath: join(tempDir, "qwen-worker.key"),
+      listen: ["/ip4/127.0.0.1/tcp/0"],
+      workerId: "qwen-inference-test",
+      publicDir,
+      runnerPath,
+      pythonBin: process.execPath,
+      model: "mlx-community/qwen2.5-0.5b-instruct-4bit",
+      adapterPath: adapterPathB,
+      adapterArtifactHash: "sha256:qwen-adapter",
+      adapterId: "job_qwen_adapter",
+      systemPrompt: "You are Marshall.",
+      maxTokens: 64,
+      temperature: 0.1,
+    });
+    workers.push(gemmaWorker, qwenWorker);
+
+    server = await createChatServer({
+      publicDir,
+      runnerPath,
+      pythonBin: process.execPath,
+      runtime: "p2p_worker",
+      p2pPrivateKeyPath: join(tempDir, "gateway.key"),
+      p2pWorkerAddrs: [
+        gemmaWorker.multiaddrs[0].toString(),
+        qwenWorker.multiaddrs[0].toString(),
+      ],
+      model: "mlx-community/gemma-3-1b-it-4bit",
+      adapterArtifactHash: "sha256:gemma-adapter",
+      adapterId: "job_gemma_adapter",
+      systemPrompt: "You are Marshall.",
+      maxTokens: 64,
+      temperature: 0.1,
+      conversationDir: join(tempDir, "conversations"),
+      modelRegistryPath: registryPath,
+    });
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const models = await fetch(`${baseUrl}/api/models`).then((response) => response.json()) as any;
+    expect(models.serving).toHaveLength(2);
+    expect(models.serving.map((model: any) => [model.package_job_id, model.ready_workers])).toEqual([
+      ["optimized_model_job_gemma_adapter", 1],
+      ["optimized_model_job_qwen_adapter", 1],
+    ]);
+
+    const chat = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        prompt: "use the selected package",
+        model_package_id: "optimized_model_job_qwen_adapter",
+      }),
+    }).then((response) => response.json()) as any;
+
+    expect(chat).toMatchObject({
+      type: "marshall_chat_response",
+      model: "mlx-community/qwen2.5-0.5b-instruct-4bit",
+      adapter_id: "job_qwen_adapter",
+      adapter_hash: "sha256:qwen-adapter",
+      model_package_id: "optimized_model_job_qwen_adapter",
+      worker_id: "qwen-inference-test",
+      text: "mlx-community/qwen2.5-0.5b-instruct-4bit answered: user: use the selected package\nassistant:",
+    });
+
+    const after = await fetch(`${baseUrl}/api/inference/workers?refresh=false`).then((response) => response.json()) as any;
+    expect(after.workers.find((worker: any) => worker.worker_id === "gemma-inference-test")).toMatchObject({
+      completed_requests: 0,
+    });
+    expect(after.workers.find((worker: any) => worker.worker_id === "qwen-inference-test")).toMatchObject({
+      completed_requests: 1,
+    });
+  }, 20_000);
 });
 
 function eventsFromSse(value: string): Array<{ name: string; data: unknown }> {
@@ -285,4 +417,42 @@ function eventsFromSse(value: string): Array<{ name: string; data: unknown }> {
       data: JSON.parse(dataLine?.slice("data:".length).trim() ?? "{}"),
     };
   });
+}
+
+function registryEntry(
+  baseModel: string,
+  adapterId: string,
+  adapterHash: string,
+  packageJobId: string,
+  packageHash: string,
+) {
+  return {
+    status: "ready",
+    run_id: `run_${adapterId}`,
+    created_at: "2026-07-01T00:00:00.000Z",
+    base_model: baseModel,
+    adapter_id: adapterId,
+    adapter_uri: `marshall-artifact://${adapterId}`,
+    adapter_artifact_hash: adapterHash,
+    package_job_id: packageJobId,
+    package_uri: `marshall-artifact://${packageJobId}`,
+    package_artifact_hash: packageHash,
+    eval: {
+      job_id: `job_eval_${adapterId}`,
+      eval_shard_id: "instruction_terms_jsonl",
+      examples: 4,
+      correct: 3,
+      accuracy: 0.75,
+      invalid: 0,
+      invalid_rate: 0,
+      score: 0.75,
+      metrics_path: "/tmp/metrics.json",
+    },
+    transfer: {
+      protocol: "/marshall/artifact/fetch/1.0.0",
+      chunked: true,
+      hash_verified: true,
+      https_payload: false,
+    },
+  };
 }

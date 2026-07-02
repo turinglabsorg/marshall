@@ -309,14 +309,24 @@ button:disabled {
 .model-row {
   border: 1px solid rgba(56, 241, 115, 0.18);
   background: #020503;
+  color: var(--text);
   padding: 9px;
   display: grid;
   gap: 6px;
+  width: 100%;
+  min-height: 0;
+  text-align: left;
+  text-transform: none;
 }
 
 .model-row.selected {
   border-color: var(--line-hot);
   box-shadow: inset 0 0 16px rgba(56, 241, 115, 0.08);
+}
+
+.model-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .model-row.muted {

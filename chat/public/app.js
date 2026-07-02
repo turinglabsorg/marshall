@@ -6,6 +6,7 @@ const state = {
   busy: false,
   health: null,
   models: [],
+  selectedModelPackageId: null,
 };
 
 const baseUrl = new URL("./", window.location.href);
@@ -117,6 +118,7 @@ form.addEventListener("submit", async (event) => {
       prompt,
       max_tokens: Number(tokensInput.value),
       temperature: Number(tempInput.value),
+      model_package_id: state.selectedModelPackageId,
     }, assistantMessage, startedAt);
     state.conversationId = payload.conversation_id || state.conversationId;
     localStorage.setItem("marshall.chat.conversation_id", state.conversationId);
@@ -214,7 +216,10 @@ function parseSseBlock(block) {
 function handleStreamEvent(name, payload, assistantMessage, startedAt) {
   if (name === "accepted") {
     state.conversationId = payload.conversation_id || state.conversationId;
-    logEvent("accepted", `${payload.model || ""} ${payload.adapter_id || ""}`.trim());
+    if (payload.model_package_id) {
+      state.selectedModelPackageId = payload.model_package_id;
+    }
+    logEvent("accepted", `${short(payload.model || "", 36)} ${short(payload.model_package_id || payload.adapter_id || "", 34)}`.trim());
     return null;
   }
   if (name === "started") {
@@ -298,6 +303,7 @@ async function refreshModels() {
       : payload.current
       ? [payload.current]
       : [];
+    ensureSelectedModel();
     renderModels();
   } catch (error) {
     modelCountLabel.textContent = "offline";
@@ -353,15 +359,27 @@ function renderModels() {
     return;
   }
   for (const model of state.models.slice(0, 6)) {
-    const item = document.createElement("div");
-    item.className = `model-row ${model.selected ? "selected" : ""}`;
+    const readyWorkers = model.ready_workers ?? (model.status === "ready" ? 1 : 0);
+    const selected = model.package_job_id
+      ? model.package_job_id === state.selectedModelPackageId
+      : model.selected;
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `model-row ${selected ? "selected" : ""}`;
+    item.disabled = readyWorkers < 1 && !selected;
+    item.addEventListener("click", () => {
+      if (model.package_job_id) {
+        state.selectedModelPackageId = model.package_job_id;
+        renderModels();
+        logEvent("model", `selected ${short(model.base_model || "", 36)}`);
+      }
+    });
     const head = document.createElement("div");
     head.className = "model-row-head";
     const title = document.createElement("strong");
     title.textContent = short(model.base_model || "unknown-model", 48);
     const status = document.createElement("span");
-    const readyWorkers = model.ready_workers ?? (model.status === "ready" ? 1 : 0);
-    status.textContent = model.selected ? "serving" : `${readyWorkers} workers`;
+    status.textContent = selected ? "selected" : `${readyWorkers} workers`;
     head.append(title, status);
 
     const meta = document.createElement("div");
@@ -375,6 +393,30 @@ function renderModels() {
     item.append(head, meta);
     modelsList.append(item);
   }
+  renderSelectedModelLabels();
+}
+
+function ensureSelectedModel() {
+  if (state.selectedModelPackageId && state.models.some((model) => model.package_job_id === state.selectedModelPackageId)) {
+    return;
+  }
+  const selected = state.models.find((model) => model.selected && model.package_job_id)
+    || state.models.find((model) => (model.ready_workers ?? 0) > 0 && model.package_job_id)
+    || state.models.find((model) => model.package_job_id);
+  state.selectedModelPackageId = selected?.package_job_id || null;
+}
+
+function renderSelectedModelLabels() {
+  const selected = state.models.find((model) => model.package_job_id === state.selectedModelPackageId)
+    || state.models.find((model) => model.selected);
+  if (!selected) {
+    return;
+  }
+  modelLabel.textContent = selected.base_model || "--";
+  adapterLabel.textContent = selected.adapter_id || "--";
+  hashLabel.textContent = shortHash(selected.adapter_artifact_hash);
+  evalLabel.textContent = evalText(selected.eval);
+  scoreLabel.textContent = selected.eval?.score == null ? "score --" : `score ${Number(selected.eval.score).toFixed(3)}`;
 }
 
 function collectMemory() {

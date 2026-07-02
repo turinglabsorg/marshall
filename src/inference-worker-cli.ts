@@ -1,14 +1,21 @@
+import { hostname } from "node:os";
+import { multiaddr } from "@multiformats/multiaddr";
 import { InferenceWorkerPeer } from "./inference-worker.js";
+import { promoteModelPackageFromControl } from "./model-promotion.js";
+import { loadModelRegistrySource, selectModelRegistryEntry } from "./model-package.js";
+import { WorkerPeer } from "./worker-peer.js";
 
 const args = parseArgs(process.argv.slice(2));
+const privateKeyPath = requiredArg(args.key ?? process.env.MARSHALL_INFERENCE_KEY, "--key");
+const modelPackage = await resolveModelPackagePath(args, privateKeyPath);
 const worker = await InferenceWorkerPeer.create({
-  privateKeyPath: requiredArg(args.key ?? process.env.MARSHALL_INFERENCE_KEY, "--key"),
+  privateKeyPath,
   listen: splitList(args.listen ?? process.env.MARSHALL_INFERENCE_LISTEN ?? "/ip4/0.0.0.0/tcp/8788"),
   workerId: args["worker-id"] ?? process.env.MARSHALL_INFERENCE_WORKER_ID,
   publicDir: args["public-dir"] ?? process.env.MARSHALL_CHAT_PUBLIC_DIR,
   runnerPath: args.runner ?? process.env.MARSHALL_CHAT_RUNNER,
   pythonBin: args.python ?? process.env.MARSHALL_PYTHON ?? "python3",
-  modelPackagePath: args["model-package"] ?? args.package ?? process.env.MARSHALL_MODEL_PACKAGE,
+  modelPackagePath: modelPackage,
   model: args.model ?? process.env.MARSHALL_MODEL,
   adapterPath: args["adapter-path"] ?? process.env.MARSHALL_ADAPTER_PATH,
   adapterArtifactHash: args["adapter-hash"] ?? process.env.MARSHALL_ADAPTER_HASH,
@@ -55,6 +62,80 @@ function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+async function resolveModelPackagePath(args: Record<string, string>, privateKeyPath: string): Promise<string | undefined> {
+  const configuredPackage = args["model-package"] ?? args.package ?? process.env.MARSHALL_MODEL_PACKAGE;
+  if (configuredPackage != null && configuredPackage !== "") {
+    return configuredPackage;
+  }
+  const registryPath = args["model-registry-path"] ?? process.env.MARSHALL_MODEL_REGISTRY_PATH;
+  const registryUrl = args["model-registry-url"] ?? process.env.MARSHALL_MODEL_REGISTRY_URL;
+  const controlAddr = args.control ?? process.env.MARSHALL_CONTROL_ADDR;
+  if ((registryPath == null || registryPath === "") && (registryUrl == null || registryUrl === "")) {
+    return undefined;
+  }
+  if (controlAddr == null || controlAddr === "") {
+    throw new Error("--control or MARSHALL_CONTROL_ADDR is required when auto-caching from a model registry");
+  }
+
+  const registry = await loadModelRegistrySource({ registryPath, registryUrl });
+  const selected = selectModelRegistryEntry(registry, {
+    packageJobId: args["model-package-id"] ?? args["package-job-id"] ?? process.env.MARSHALL_MODEL_PACKAGE_ID ?? process.env.MARSHALL_PACKAGE_JOB_ID,
+    model: args.model ?? process.env.MARSHALL_MODEL,
+    adapterId: args["adapter-id"] ?? process.env.MARSHALL_ADAPTER_ID,
+    adapterArtifactHash: args["adapter-hash"] ?? process.env.MARSHALL_ADAPTER_HASH,
+  });
+  const controlAddrs = parseControlAddrs(controlAddr, args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS);
+  const promoter = await WorkerPeer.create({
+    privateKeyPath,
+    workerId: args["promoter-worker-id"] ?? process.env.MARSHALL_MODEL_PROMOTER_WORKER_ID ?? `${hostname()}-inference-model-cache`,
+    controlAddr: controlAddrs[0],
+    controlAddrs,
+    listen: splitList(args["promoter-listen"] ?? process.env.MARSHALL_MODEL_PROMOTER_LISTEN ?? "/ip4/0.0.0.0/tcp/0"),
+    backend: "cpu",
+    supportedJobs: ["benchmark_inference"],
+    memoryGb: positiveNumberArg(args["promoter-memory-gb"] ?? process.env.MARSHALL_MODEL_PROMOTER_MEMORY_GB ?? "1"),
+    tokensPerSecond: numberArg(args["promoter-tokens-per-second"] ?? process.env.MARSHALL_MODEL_PROMOTER_TOKENS_PER_SECOND ?? "0"),
+    swarmToken: args["swarm-token"] ?? process.env.MARSHALL_SWARM_TOKEN,
+  });
+
+  try {
+    const result = await promoteModelPackageFromControl({
+      worker: promoter,
+      packageJobId: selected.package_job_id,
+      packageArtifactHash: selected.package_artifact_hash,
+      outputRoot: args["model-cache-dir"] ?? args["output-root"] ?? process.env.MARSHALL_MODEL_CACHE_DIR ?? process.env.MARSHALL_MODEL_PROMOTION_DIR ?? ".marshall/model-cache",
+      packageName: selected.package_job_id,
+      adapterId: selected.adapter_id,
+      adapterArtifactHash: selected.adapter_artifact_hash,
+      chunkBytes: optionalPositiveIntegerArg(args["chunk-bytes"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_BYTES),
+      maxChunkRetries: optionalPositiveIntegerArg(args["chunk-retries"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_RETRIES),
+    });
+    console.log(JSON.stringify({
+      ...result,
+      type: "marshall_inference_worker_model_cached",
+      registry_updated_at: registry.updated_at,
+      base_model: selected.base_model,
+      peer_id: promoter.peerId,
+      transfer: selected.transfer,
+    }, null, 2));
+    return result.model_package_path;
+  } finally {
+    await promoter.stop();
+  }
+}
+
+function parseControlAddrs(primary: string, extra: string | undefined) {
+  const values = [
+    ...splitList(primary),
+    ...splitList(extra ?? ""),
+  ];
+  const deduped = [...new Set(values)];
+  if (deduped.length === 0) {
+    throw new Error("--control is required");
+  }
+  return deduped.map((value) => multiaddr(value));
+}
+
 function requiredArg(value: string | undefined, name: string): string {
   if (value == null || value === "") {
     throw new Error(`${name} is required`);
@@ -76,6 +157,21 @@ function positiveIntegerArg(value: string): number {
     throw new Error(`invalid positive integer: ${value}`);
   }
   return parsed;
+}
+
+function positiveNumberArg(value: string): number {
+  const parsed = numberArg(value);
+  if (parsed <= 0) {
+    throw new Error(`invalid positive number: ${value}`);
+  }
+  return parsed;
+}
+
+function optionalPositiveIntegerArg(value: string | undefined): number | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+  return positiveIntegerArg(value);
 }
 
 function waitForShutdown(cleanup: () => Promise<void>): Promise<void> {

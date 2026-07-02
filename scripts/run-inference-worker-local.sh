@@ -28,10 +28,16 @@ require_env MARSHALL_INFERENCE_LISTEN
 require_env MARSHALL_INFERENCE_WORKER_ID
 require_env MARSHALL_PYTHON
 
+REGISTRY_MODE=0
 if [ -z "${MARSHALL_MODEL_PACKAGE:-}" ]; then
-  require_env MARSHALL_MODEL
-  require_env MARSHALL_ADAPTER_ID
-  require_env MARSHALL_ADAPTER_HASH
+  if { [ -n "${MARSHALL_MODEL_REGISTRY_PATH:-}" ] || [ -n "${MARSHALL_MODEL_REGISTRY_URL:-}" ]; } && [ -n "${MARSHALL_CONTROL_ADDR:-}" ]; then
+    REGISTRY_MODE=1
+  else
+    require_env MARSHALL_MODEL
+    require_env MARSHALL_ADAPTER_ID
+    require_env MARSHALL_ADAPTER_HASH
+    require_env MARSHALL_ADAPTER_PATH
+  fi
 fi
 
 if [ ! -x "$MARSHALL_NODE_BIN" ]; then
@@ -72,11 +78,41 @@ ARGS=(
 if [ -n "${MARSHALL_MODEL_PACKAGE:-}" ]; then
   ARGS+=(--model-package "$MARSHALL_MODEL_PACKAGE")
 else
-  ARGS+=(--model "$MARSHALL_MODEL")
-  ARGS+=(--adapter-id "$MARSHALL_ADAPTER_ID")
-  ARGS+=(--adapter-hash "$MARSHALL_ADAPTER_HASH")
+  if [ -n "${MARSHALL_MODEL:-}" ]; then
+    ARGS+=(--model "$MARSHALL_MODEL")
+  fi
+  if [ -n "${MARSHALL_ADAPTER_ID:-}" ]; then
+    ARGS+=(--adapter-id "$MARSHALL_ADAPTER_ID")
+  fi
+  if [ -n "${MARSHALL_ADAPTER_HASH:-}" ]; then
+    ARGS+=(--adapter-hash "$MARSHALL_ADAPTER_HASH")
+  fi
   if [ -n "${MARSHALL_ADAPTER_PATH:-}" ]; then
     ARGS+=(--adapter-path "$MARSHALL_ADAPTER_PATH")
+  fi
+fi
+if [ "$REGISTRY_MODE" = "1" ]; then
+  ARGS+=(--control "$MARSHALL_CONTROL_ADDR")
+  if [ -n "${MARSHALL_CONTROL_ADDRS:-}" ]; then
+    ARGS+=(--control-addrs "$MARSHALL_CONTROL_ADDRS")
+  fi
+  if [ -n "${MARSHALL_MODEL_REGISTRY_PATH:-}" ]; then
+    ARGS+=(--model-registry-path "$MARSHALL_MODEL_REGISTRY_PATH")
+  fi
+  if [ -n "${MARSHALL_MODEL_REGISTRY_URL:-}" ]; then
+    ARGS+=(--model-registry-url "$MARSHALL_MODEL_REGISTRY_URL")
+  fi
+  if [ -n "${MARSHALL_MODEL_PACKAGE_ID:-}" ]; then
+    ARGS+=(--model-package-id "$MARSHALL_MODEL_PACKAGE_ID")
+  fi
+  if [ -n "${MARSHALL_MODEL_CACHE_DIR:-}" ]; then
+    ARGS+=(--model-cache-dir "$MARSHALL_MODEL_CACHE_DIR")
+  fi
+  if [ -n "${MARSHALL_ARTIFACT_CHUNK_BYTES:-}" ]; then
+    ARGS+=(--chunk-bytes "$MARSHALL_ARTIFACT_CHUNK_BYTES")
+  fi
+  if [ -n "${MARSHALL_ARTIFACT_CHUNK_RETRIES:-}" ]; then
+    ARGS+=(--chunk-retries "$MARSHALL_ARTIFACT_CHUNK_RETRIES")
   fi
 fi
 if [ -n "${MARSHALL_CHAT_RUNNER:-}" ]; then
