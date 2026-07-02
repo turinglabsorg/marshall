@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CoordinatorClient, type CoordinatorArtifact, type CoordinatorJob } from "./coordinator-client.js";
@@ -23,6 +23,12 @@ const once = booleanArg(args.once ?? process.env.MARSHALL_ROUND_ONCE, false);
 const stateFile = args["state-file"] ?? process.env.MARSHALL_ROUND_STATE_FILE ?? join(jobsDir, "round-daemon-state.json");
 
 await mkdir(jobsDir, { recursive: true });
+
+const selectedState = await readSelectedState();
+if (selectedState != null) {
+  console.log(JSON.stringify(selectedState, null, 2));
+  process.exit(0);
+}
 
 let iterations = 0;
 while (true) {
@@ -275,6 +281,48 @@ function daemonAction(action: string, jobs: CoordinatorJob[], artifacts: Coordin
 async function writeState(action: unknown): Promise<void> {
   await mkdir(dirname(stateFile), { recursive: true });
   await writeFile(stateFile, JSON.stringify(action, null, 2) + "\n", "utf8");
+}
+
+async function readSelectedState(): Promise<Record<string, unknown> | null> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(stateFile, "utf8"));
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) {
+      return null;
+    }
+    throw error;
+  }
+  if (!isRecord(parsed)) {
+    return null;
+  }
+  if (parsed.type !== "marshall_round_daemon" || parsed.action !== "selected") {
+    return null;
+  }
+  if (parsed.run_id !== runId || parsed.round_id !== roundId) {
+    return null;
+  }
+  return {
+    type: "marshall_round_daemon",
+    action: "already_selected",
+    run_id: runId,
+    round_id: roundId,
+    generated_at: new Date().toISOString(),
+    state_file: stateFile,
+    selected_at: typeof parsed.generated_at === "string" ? parsed.generated_at : null,
+    result: isRecord(parsed.result) ? parsed.result : null,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value != null && !Array.isArray(value);
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object"
+    && error != null
+    && "code" in error
+    && (error as { code?: unknown }).code === code;
 }
 
 function parseArgs(values: string[]): Record<string, string> {

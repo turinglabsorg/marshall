@@ -21,6 +21,9 @@ import {
   JobClaimResponseSchema,
   WorkerRegistrationResponseSchema,
   type ArtifactManifest,
+  type ArtifactFetchChunkRequest,
+  type ArtifactFetchChunkResponse,
+  type ArtifactFetchManifestResponse,
   type Backend,
   type JobClaimResponse,
   type JobType,
@@ -186,19 +189,7 @@ export class WorkerPeer {
     outputRoot: string,
     options: { chunkBytes?: number; maxChunkRetries?: number } = {},
   ): Promise<ArtifactManifest> {
-    const bundle = ArtifactFetchManifestResponseSchema.parse(await this.requestControlJson(
-      PROTOCOLS.artifactFetch,
-      {
-        ...this.authPayload(),
-        request_type: "manifest",
-        job_id: jobId,
-        artifact_hash: artifactHash,
-      },
-      { timeoutMs: 30_000 },
-    ));
-    if (!bundle.accepted) {
-      throw new Error(`artifact fetch rejected: ${bundle.reason ?? "unknown reason"}`);
-    }
+    const { bundle, provider } = await this.fetchArtifactManifestFromAnyControl(jobId, artifactHash);
 
     return storeFetchedArtifact({
       manifest: bundle.manifest,
@@ -206,14 +197,69 @@ export class WorkerPeer {
       outputRoot,
       chunkBytes: options.chunkBytes,
       maxChunkRetries: options.maxChunkRetries,
-      fetchChunk: async (request) => ArtifactFetchChunkResponseSchema.parse(await this.requestControlJson(
-        PROTOCOLS.artifactFetch,
-        {
-          ...this.authPayload(),
-          ...request,
-        },
-        { timeoutMs: 30_000 },
-      )),
+      fetchChunk: async (request) => this.fetchArtifactChunkFromAnyControl(request, provider),
+    });
+  }
+
+  private async fetchArtifactManifestFromAnyControl(
+    jobId: string,
+    artifactHash: string,
+  ): Promise<{ bundle: Extract<ArtifactFetchManifestResponse, { accepted: true }>; provider: Multiaddr }> {
+    const failures: string[] = [];
+    for (const addr of this.controlAddrsByPriority()) {
+      try {
+        const bundle = ArtifactFetchManifestResponseSchema.parse(await this.requestControlJsonAt(
+          addr,
+          PROTOCOLS.artifactFetch,
+          {
+            ...this.authPayload(),
+            request_type: "manifest",
+            job_id: jobId,
+            artifact_hash: artifactHash,
+          },
+          { timeoutMs: 30_000 },
+        ));
+        if (bundle.accepted) {
+          this.activeControlAddr = addr;
+          return { bundle, provider: addr };
+        }
+        failures.push(`${addr.toString()}: ${bundle.reason ?? "artifact fetch rejected"}`);
+      } catch (error) {
+        failures.push(`${addr.toString()}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    throw new Error(`all control addresses failed for artifact ${jobId}: ${failures.join("; ")}`);
+  }
+
+  private async fetchArtifactChunkFromAnyControl(
+    request: Omit<ArtifactFetchChunkRequest, "auth_token">,
+    preferredProvider: Multiaddr,
+  ): Promise<ArtifactFetchChunkResponse> {
+    const failures: string[] = [];
+    for (const addr of this.controlAddrsByPriorityWith(preferredProvider)) {
+      try {
+        const response = ArtifactFetchChunkResponseSchema.parse(await this.requestControlJsonAt(
+          addr,
+          PROTOCOLS.artifactFetch,
+          {
+            ...this.authPayload(),
+            ...request,
+          },
+          { timeoutMs: 30_000 },
+        ));
+        if (response.accepted) {
+          this.activeControlAddr = addr;
+          return response;
+        }
+        failures.push(`${addr.toString()}: ${response.reason ?? "artifact chunk fetch rejected"}`);
+      } catch (error) {
+        failures.push(`${addr.toString()}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return ArtifactFetchChunkResponseSchema.parse({
+      response_type: "chunk",
+      accepted: false,
+      reason: `all control addresses failed for artifact chunk: ${failures.join("; ")}`,
     });
   }
 
@@ -278,6 +324,15 @@ export class WorkerPeer {
     throw new Error(`all control addresses failed for ${protocol}: ${failures.join("; ")}`);
   }
 
+  private async requestControlJsonAt(
+    addr: Multiaddr,
+    protocol: Parameters<typeof requestJson>[2],
+    payload: unknown,
+    options?: Parameters<typeof requestJson>[4],
+  ): Promise<unknown> {
+    return requestJson(this.node, addr, protocol, payload, options);
+  }
+
   private controlAddrsByPriority(): Multiaddr[] {
     const all = workerControlAddrs(this.options);
     if (this.activeControlAddr == null) {
@@ -287,6 +342,14 @@ export class WorkerPeer {
     return [
       this.activeControlAddr,
       ...all.filter((addr) => addr.toString() !== active),
+    ];
+  }
+
+  private controlAddrsByPriorityWith(preferredProvider: Multiaddr): Multiaddr[] {
+    const preferred = preferredProvider.toString();
+    return [
+      preferredProvider,
+      ...this.controlAddrsByPriority().filter((addr) => addr.toString() !== preferred),
     ];
   }
 

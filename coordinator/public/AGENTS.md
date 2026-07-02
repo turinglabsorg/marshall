@@ -76,19 +76,20 @@ Verify:
 "$MARSHALL_PYTHON" -c "import mlx.core; import mlx_lm; print('mlx ready')"
 ```
 
-## Fetch the Live Control Peer
+## Fetch the Live Control Network
 
-The public control peer is published by Marshall at runtime. Fetch it before starting a worker:
+The public control network is published by Marshall at runtime. Fetch it before starting a worker:
 
 ```sh
-export MARSHALL_CONTROL_ADDR="$(node -e "fetch('https://marshall.training/control.json').then(r => r.json()).then(j => console.log(j.control_addr))")"
-echo "$MARSHALL_CONTROL_ADDR"
+export MARSHALL_CONTROL_NETWORK_URL="https://marshall.training/control-network.json"
+node -e "fetch(process.env.MARSHALL_CONTROL_NETWORK_URL).then(r => r.json()).then(j => console.log(j.peers.map(p => p.control_addr).join('\\n')))"
 ```
 
-The value should look like:
+The values should look like:
 
 ```text
 /dns4/marshall.training/tcp/4001/p2p/<control-peer-id>
+/dns4/marshall.training/tcp/4002/p2p/<mirror-peer-id>
 ```
 
 ## Join Available Work
@@ -97,7 +98,7 @@ Run the model worker supervisor. A model worker is one persistent worker pool th
 
 ```sh
 npm run worker:join:compiled -- \
-  --control "$MARSHALL_CONTROL_ADDR" \
+  --control-network-url "$MARSHALL_CONTROL_NETWORK_URL" \
   --worker-id-base "$(hostname)" \
   --state-dir .marshall/public-worker \
   --model-concurrency 2 \
@@ -110,6 +111,7 @@ Keep this process running. When one job finishes, the same model worker slot imm
 For later restarts, keep the same `--worker-id-base` and `--state-dir` if you want to preserve the same worker identities and reputation.
 Set `--memory-gb` to the real unified memory or RAM available to the worker. Some jobs declare `resource_requirements.min_memory_gb`; workers below that threshold stay idle and should not claim the job.
 Set `--slot-memory-gb` to the memory budget per concurrent slot; the pool caps concurrency against `--memory-gb`.
+Validation uses worker alternation. If the active policy requires quorum 2, the swarm needs at least two compatible validator identities that are not the artifact producer/evaluator. Extra low-memory slots can help validate CPU-only jobs while memory gates keep them away from high-memory training and evaluation work.
 
 If you intentionally want to run only one role for debugging, use `npm run worker:pool:compiled` with an explicit `--job-type`, separate `--worker-id-prefix`, `--key-dir`, and role-specific cache/artifact directories.
 
@@ -151,8 +153,9 @@ If the dashboard shows no compatible queued jobs, worker pools stay idle and pol
 If the worker cannot connect:
 
 ```sh
-curl -fsS https://marshall.training/control.json
+curl -fsS https://marshall.training/control-network.json
 nc -vz marshall.training 4001
+nc -vz marshall.training 4002
 ```
 
 If MLX import fails, reactivate the venv and reinstall:

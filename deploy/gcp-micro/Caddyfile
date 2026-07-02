@@ -11,6 +11,16 @@ marshall.training {
 		file_server
 	}
 
+	handle /control-mirror.json {
+		root * /var/lib/marshall/public
+		file_server
+	}
+
+	handle /control-network.json {
+		root * /var/lib/marshall/public
+		file_server
+	}
+
 	handle /models/index.json {
 		root * /var/lib/marshall/model-packages
 		rewrite * /index.json

@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { multiaddr } from "@multiformats/multiaddr";
+import { resolveControlMultiaddrs } from "./control-network.js";
 import { InferenceWorkerPeer } from "./inference-worker.js";
 import { promoteModelPackageFromControl } from "./model-promotion.js";
 import { loadModelRegistrySource, selectModelRegistryEntry } from "./model-package.js";
@@ -70,11 +70,18 @@ async function resolveModelPackagePath(args: Record<string, string>, privateKeyP
   const registryPath = args["model-registry-path"] ?? process.env.MARSHALL_MODEL_REGISTRY_PATH;
   const registryUrl = args["model-registry-url"] ?? process.env.MARSHALL_MODEL_REGISTRY_URL;
   const controlAddr = args.control ?? process.env.MARSHALL_CONTROL_ADDR;
+  const controlNetworkPath = args["control-network-path"] ?? process.env.MARSHALL_CONTROL_NETWORK_PATH;
+  const controlNetworkUrl = args["control-network-url"] ?? process.env.MARSHALL_CONTROL_NETWORK_URL;
   if ((registryPath == null || registryPath === "") && (registryUrl == null || registryUrl === "")) {
     return undefined;
   }
-  if (controlAddr == null || controlAddr === "") {
-    throw new Error("--control or MARSHALL_CONTROL_ADDR is required when auto-caching from a model registry");
+  if (
+    (controlAddr == null || controlAddr === "")
+    && (args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS ?? "") === ""
+    && (controlNetworkPath == null || controlNetworkPath === "")
+    && (controlNetworkUrl == null || controlNetworkUrl === "")
+  ) {
+    throw new Error("--control, --control-addrs, or --control-network-url/path is required when auto-caching from a model registry");
   }
 
   const registry = await loadModelRegistrySource({ registryPath, registryUrl });
@@ -84,7 +91,12 @@ async function resolveModelPackagePath(args: Record<string, string>, privateKeyP
     adapterId: args["adapter-id"] ?? process.env.MARSHALL_ADAPTER_ID,
     adapterArtifactHash: args["adapter-hash"] ?? process.env.MARSHALL_ADAPTER_HASH,
   });
-  const controlAddrs = parseControlAddrs(controlAddr, args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS);
+  const controlAddrs = await resolveControlMultiaddrs({
+    controlAddr,
+    controlAddrs: args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS,
+    controlNetworkPath,
+    controlNetworkUrl,
+  });
   const promoter = await WorkerPeer.create({
     privateKeyPath,
     workerId: args["promoter-worker-id"] ?? process.env.MARSHALL_MODEL_PROMOTER_WORKER_ID ?? `${hostname()}-inference-model-cache`,
@@ -122,18 +134,6 @@ async function resolveModelPackagePath(args: Record<string, string>, privateKeyP
   } finally {
     await promoter.stop();
   }
-}
-
-function parseControlAddrs(primary: string, extra: string | undefined) {
-  const values = [
-    ...splitList(primary),
-    ...splitList(extra ?? ""),
-  ];
-  const deduped = [...new Set(values)];
-  if (deduped.length === 0) {
-    throw new Error("--control is required");
-  }
-  return deduped.map((value) => multiaddr(value));
 }
 
 function requiredArg(value: string | undefined, name: string): string {

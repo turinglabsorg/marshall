@@ -35,6 +35,7 @@ install -d -m 0750 -o marshall -g marshall /etc/marshall
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/redis
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/artifacts
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/control
+install -d -m 0750 -o marshall -g marshall /var/lib/marshall/control-mirror
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/jobs/current
 install -d -m 0755 -o marshall -g marshall /var/lib/marshall/public
 install -d -m 0755 -o marshall -g marshall /var/lib/marshall/datasets
@@ -55,6 +56,7 @@ install -m 0644 /tmp/marshall-deploy/marshall-redis.service /etc/systemd/system/
 install -m 0644 /tmp/marshall-deploy/marshall-coordinator.service /etc/systemd/system/marshall-coordinator.service
 install -m 0644 /tmp/marshall-deploy/marshall-caddy.service /etc/systemd/system/marshall-caddy.service
 install -m 0644 /tmp/marshall-deploy/marshall-control.service /etc/systemd/system/marshall-control.service
+install -m 0644 /tmp/marshall-deploy/marshall-control-mirror.service /etc/systemd/system/marshall-control-mirror.service
 install -m 0644 /tmp/marshall-deploy/marshall-round-daemon.service /etc/systemd/system/marshall-round-daemon.service
 if [ -f /tmp/marshall-deploy/round-daemon.env ]; then
   install -m 0640 -o root -g marshall /tmp/marshall-deploy/round-daemon.env /etc/marshall/round-daemon.env
@@ -68,6 +70,15 @@ systemctl restart marshall-caddy.service
 systemctl enable marshall-caddy.service
 systemctl restart marshall-control.service
 systemctl enable marshall-control.service
+systemctl restart marshall-control-mirror.service
+systemctl enable marshall-control-mirror.service
+for attempt in $(seq 1 30); do
+  if [ -s /var/lib/marshall/public/control.json ] && [ -s /var/lib/marshall/public/control-mirror.json ]; then
+    break
+  fi
+  sleep 1
+done
+docker run --rm -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/control-network-cli.js --control-info /var/lib/marshall/public/control.json --control-info /var/lib/marshall/public/control-mirror.json --output /var/lib/marshall/public/control-network.json
 if [ -f /etc/marshall/round-daemon.env ]; then
   systemctl restart marshall-round-daemon.service
   systemctl enable marshall-round-daemon.service
@@ -79,6 +90,7 @@ curl -fsS http://127.0.0.1:8080/dashboard >/dev/null
 systemctl --no-pager --full status marshall-coordinator.service
 systemctl --no-pager --full status marshall-caddy.service
 systemctl --no-pager --full status marshall-control.service
+systemctl --no-pager --full status marshall-control-mirror.service
 if [ -f /etc/marshall/round-daemon.env ]; then
-  systemctl --no-pager --full status marshall-round-daemon.service
+  systemctl --no-pager --full status marshall-round-daemon.service || true
 fi

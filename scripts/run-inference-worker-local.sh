@@ -30,7 +30,7 @@ require_env MARSHALL_PYTHON
 
 REGISTRY_MODE=0
 if [ -z "${MARSHALL_MODEL_PACKAGE:-}" ]; then
-  if { [ -n "${MARSHALL_MODEL_REGISTRY_PATH:-}" ] || [ -n "${MARSHALL_MODEL_REGISTRY_URL:-}" ]; } && [ -n "${MARSHALL_CONTROL_ADDR:-}" ]; then
+  if { [ -n "${MARSHALL_MODEL_REGISTRY_PATH:-}" ] || [ -n "${MARSHALL_MODEL_REGISTRY_URL:-}" ]; } && { [ -n "${MARSHALL_CONTROL_ADDR:-}" ] || [ -n "${MARSHALL_CONTROL_ADDRS:-}" ] || [ -n "${MARSHALL_CONTROL_NETWORK_PATH:-}" ] || [ -n "${MARSHALL_CONTROL_NETWORK_URL:-}" ]; }; then
     REGISTRY_MODE=1
   else
     require_env MARSHALL_MODEL
@@ -92,9 +92,17 @@ else
   fi
 fi
 if [ "$REGISTRY_MODE" = "1" ]; then
-  ARGS+=(--control "$MARSHALL_CONTROL_ADDR")
+  if [ -n "${MARSHALL_CONTROL_ADDR:-}" ]; then
+    ARGS+=(--control "$MARSHALL_CONTROL_ADDR")
+  fi
   if [ -n "${MARSHALL_CONTROL_ADDRS:-}" ]; then
     ARGS+=(--control-addrs "$MARSHALL_CONTROL_ADDRS")
+  fi
+  if [ -n "${MARSHALL_CONTROL_NETWORK_PATH:-}" ]; then
+    ARGS+=(--control-network-path "$MARSHALL_CONTROL_NETWORK_PATH")
+  fi
+  if [ -n "${MARSHALL_CONTROL_NETWORK_URL:-}" ]; then
+    ARGS+=(--control-network-url "$MARSHALL_CONTROL_NETWORK_URL")
   fi
   if [ -n "${MARSHALL_MODEL_REGISTRY_PATH:-}" ]; then
     ARGS+=(--model-registry-path "$MARSHALL_MODEL_REGISTRY_PATH")

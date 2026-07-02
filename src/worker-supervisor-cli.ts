@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const args = parseArgs(process.argv.slice(2));
 const control = await resolveControlAddr(args.control ?? process.env.MARSHALL_CONTROL_ADDR, args["control-url"] ?? process.env.MARSHALL_CONTROL_URL);
+const controlNetworkPath = args["control-network-path"] ?? process.env.MARSHALL_CONTROL_NETWORK_PATH;
+const controlNetworkUrl = args["control-network-url"] ?? process.env.MARSHALL_CONTROL_NETWORK_URL;
 const workerIdBase = requiredArg("worker-id-base", args["worker-id-base"] ?? process.env.MARSHALL_WORKER_ID_BASE);
 const stateDir = requiredArg("state-dir", args["state-dir"] ?? process.env.MARSHALL_WORKER_STATE_DIR);
 const modelConcurrency = modelConcurrencyArg();
@@ -24,6 +26,9 @@ if (modelConcurrency < 1) {
 if (python == null || python === "") {
   throw new Error("--python or MARSHALL_PYTHON is required for model workers");
 }
+if ((control == null || control === "") && (controlNetworkPath == null || controlNetworkPath === "") && (controlNetworkUrl == null || controlNetworkUrl === "")) {
+  throw new Error("--control, --control-url, or control network source is required");
+}
 
 await mkdir(stateDir, { recursive: true });
 
@@ -39,7 +44,9 @@ const roles: WorkerRole[] = [
 
 console.log(JSON.stringify({
   type: "marshall_worker_supervisor_started",
-  control,
+  control: control ?? null,
+  control_network_path: controlNetworkPath ?? null,
+  control_network_url: controlNetworkUrl ?? null,
   worker_id_base: workerIdBase,
   state_dir: stateDir,
   memory_gb: memoryGb,
@@ -82,7 +89,6 @@ async function runRole(role: WorkerRole): Promise<number | null> {
   await mkdir(roleDir, { recursive: true });
   const values = [
     workerScript,
-    "--control", control,
     "--job-types", role.jobTypes.join(","),
     "--backend", role.backend,
     "--concurrency", String(role.concurrency),
@@ -95,6 +101,15 @@ async function runRole(role: WorkerRole): Promise<number | null> {
     "--heartbeat-interval-ms", String(heartbeatIntervalMs),
     "--idle-backoff-ms", String(idleBackoffMs),
   ];
+  if (control != null && control !== "") {
+    values.push("--control", control);
+  }
+  if (controlNetworkPath != null && controlNetworkPath !== "") {
+    values.push("--control-network-path", controlNetworkPath);
+  }
+  if (controlNetworkUrl != null && controlNetworkUrl !== "") {
+    values.push("--control-network-url", controlNetworkUrl);
+  }
   if (slotMemoryGb != null) {
     values.push("--slot-memory-gb", String(slotMemoryGb));
   }
@@ -125,11 +140,14 @@ function prefixLines(label: string, text: string): string {
   return text.split(/(?<=\n)/).map((line) => line === "" ? line : `[${label}] ${line}`).join("");
 }
 
-async function resolveControlAddr(control: string | undefined, controlUrl: string | undefined): Promise<string> {
+async function resolveControlAddr(control: string | undefined, controlUrl: string | undefined): Promise<string | undefined> {
   if (control != null && control !== "") {
     return control;
   }
-  const url = requiredArg("control-url", controlUrl);
+  if (controlUrl == null || controlUrl === "") {
+    return undefined;
+  }
+  const url = controlUrl;
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`failed to fetch control url ${url}: ${response.status}`);

@@ -15,6 +15,7 @@ import { TrainingArtifactManifestSchema, type AdapterEvaluationJob, type Artifac
 describe("Marshall p2p substrate", () => {
   let tempDir: string;
   let control: ControlPeer | undefined;
+  let mirrorControl: ControlPeer | undefined;
   let worker: WorkerPeer | undefined;
   let workers: WorkerPeer[] = [];
 
@@ -26,10 +27,12 @@ describe("Marshall p2p substrate", () => {
     await worker?.stop();
     await Promise.all(workers.map((item) => item.stop()));
     await control?.stop();
+    await mirrorControl?.stop();
     await rm(tempDir, { recursive: true, force: true });
     worker = undefined;
     workers = [];
     control = undefined;
+    mirrorControl = undefined;
   });
 
   it("registers a worker, trains a toy model, and publishes the artifact manifest over libp2p", async () => {
@@ -344,6 +347,103 @@ describe("Marshall p2p substrate", () => {
     expect(promotedPackage.adapter_id).toBe(adapterId);
     expect(promotedPackage.adapter_uri).toBe(modelArtifactUri(adapterId));
     expect(promotedPackage.adapter_path).not.toBe(adapterDir);
+    expect(await sha256Path(promotedPackage.adapter_path)).toBe(adapterHash);
+  }, 30_000);
+
+  it("falls back to another control peer when the first coordinator cannot serve an artifact", async () => {
+    const controlArtifactStore = join(tempDir, "mirror-control-artifacts");
+    const adapterId = "adapter_multi_control_001";
+    const adapterDir = join(tempDir, "source-adapter-multi-control");
+    await mkdir(adapterDir, { recursive: true });
+    await writeFile(join(adapterDir, "adapters.safetensors"), "adapter bytes served by the mirror coordinator", "utf8");
+    await writeFile(join(adapterDir, "adapter_config.json"), "{\"rank\":2}\n", "utf8");
+    const adapterHash = await sha256Path(adapterDir);
+    await mkdir(join(controlArtifactStore, adapterId), { recursive: true });
+    await writeFile(artifactStoreManifestPath(controlArtifactStore, adapterId), JSON.stringify({
+      worker_id: "worker_train_multi_control",
+      peer_id: "peer_train_multi_control",
+      job_id: adapterId,
+      artifact_type: "lora_adapter",
+      artifact_uri: pathToFileURL(adapterDir).toString(),
+      artifact_hash: adapterHash,
+      config_hash: "sha256:adapter-config",
+      created_at: "2026-07-02T00:00:00.000Z",
+    }, null, 2) + "\n", "utf8");
+
+    const packageDir = join(tempDir, "model-package-multi-control");
+    await mkdir(packageDir, { recursive: true });
+    const modelPackage: OptimizedModelPackage = {
+      type: "marshall_optimized_model_package",
+      strategy: "best_adapter_by_eval_score",
+      selection_policy: null,
+      created_at: "2026-07-02T00:01:00.000Z",
+      run_id: "run_multi_control_ready_model",
+      base_model: "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      adapter_id: adapterId,
+      adapter_uri: modelArtifactUri(adapterId),
+      adapter_path: adapterDir,
+      adapter_artifact_hash: adapterHash,
+      eval: {
+        job_id: "job_eval_multi_control_001",
+        eval_shard_id: "instruction_terms_jsonl",
+        examples: 2,
+        correct: 2,
+        accuracy: 1,
+        invalid: 0,
+        invalid_rate: 0,
+        score: 1,
+        metrics_path: join(packageDir, "metrics.json"),
+      },
+    };
+    await writeFile(modelPackage.eval.metrics_path, "{\"accuracy\":1}\n", "utf8");
+    const packagePath = join(packageDir, "model_package.json");
+    await writeFile(packagePath, JSON.stringify(modelPackage, null, 2) + "\n", "utf8");
+    const packageManifest = TrainingArtifactManifestSchema.parse({
+      job_id: `optimized_model_${adapterId}`,
+      artifact_type: "optimized_model_package",
+      artifact_uri: pathToFileURL(packagePath).toString(),
+      artifact_hash: await sha256File(packagePath),
+      config_hash: "sha256:package-config",
+      created_at: "2026-07-02T00:01:00.000Z",
+      metrics_uri: pathToFileURL(modelPackage.eval.metrics_path).toString(),
+    });
+    await publishModelPackageArtifact({
+      modelPackage,
+      manifest: packageManifest,
+      artifactStoreDir: controlArtifactStore,
+      registryPath: join(tempDir, "model-registry", "index.json"),
+    });
+
+    control = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "primary-control.key"),
+      artifactServeDirs: [],
+    });
+    mirrorControl = await ControlPeer.create({
+      privateKeyPath: join(tempDir, "mirror-control.key"),
+      artifactServeDirs: [controlArtifactStore],
+      artifactChunkBytes: 9,
+      artifactMaxChunkRetries: 2,
+    });
+    worker = await WorkerPeer.create({
+      privateKeyPath: join(tempDir, "worker.key"),
+      workerId: "mac-worker-multi-control-promotion",
+      controlAddr: control.multiaddrs[0],
+      controlAddrs: [control.multiaddrs[0], mirrorControl.multiaddrs[0]],
+      memoryGb: 64,
+      tokensPerSecond: 1234,
+    });
+
+    const promoted = await promoteModelPackageFromControl({
+      worker,
+      packageJobId: packageManifest.job_id,
+      packageArtifactHash: packageManifest.artifact_hash,
+      outputRoot: join(tempDir, "promoted-multi-control"),
+      chunkBytes: 5,
+      maxChunkRetries: 2,
+    });
+    const promotedPackage = JSON.parse(await readFile(promoted.model_package_path, "utf8"));
+    expect(promotedPackage.base_model).toBe("mlx-community/Qwen2.5-0.5B-Instruct-4bit");
+    expect(promotedPackage.adapter_id).toBe(adapterId);
     expect(await sha256Path(promotedPackage.adapter_path)).toBe(adapterHash);
   }, 30_000);
 

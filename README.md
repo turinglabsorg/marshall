@@ -13,10 +13,10 @@ Marshall is not trying to pretend that random public machines are one synchronou
 - Chat gateway target: <https://marshall.chat>
 - Worker onboarding guide: <https://marshall.training/AGENTS.md>
 - Coordinator snapshot: <https://marshall.training/dashboard>
-- libp2p control peer descriptor: <https://marshall.training/control.json>
+- libp2p control network descriptor: <https://marshall.training/control-network.json>
 - Roadmap: [ROADMAP.md](./ROADMAP.md)
 
-The public swarm is permissionless. Workers join through `/control.json`; there is no public worker join token.
+The public swarm is permissionless. Workers join through `/control-network.json`; there is no public worker join token.
 
 ## What Marshall Does
 
@@ -64,8 +64,8 @@ Implemented:
 
 - native Go coordinator with Redis state and append-only event stream;
 - React terminal-style public dashboard at `marshall.training`, served as static build assets by the Go coordinator;
-- permissionless libp2p control peer on public TCP `4001`;
-- public `/control.json` for worker discovery;
+- permissionless libp2p control peers on public TCP `4001` and `4002`;
+- public `/control-network.json` for worker discovery and failover;
 - public `/AGENTS.md` worker onboarding;
 - TypeScript libp2p worker/control protocols;
 - persistent Ed25519 worker identities;
@@ -78,13 +78,12 @@ Implemented:
 - quorum-based validator verdicts;
 - worker reputation and suspension policy;
 - accepted-only adapter leaderboard and model package path;
-- round advancement CLI for evaluation scheduling, validation scheduling, accepted-only leaderboard selection, and verified model packaging;
+- round advancement CLI and unattended round daemon for evaluation scheduling, validation scheduling, accepted-only leaderboard selection, and verified model packaging;
 - P2P `marshall.chat` gateway with streamed browser responses, gateway-owned durable conversation memory, and stateless libp2p inference workers;
-- GCP small-VM deployment with Caddy HTTPS, local Redis, coordinator, and control peer services.
+- GCP small-VM deployment with Caddy HTTPS, local Redis, coordinator, and multi-control peer services.
 
 Not implemented yet:
 
-- always-on round orchestration daemon from training to validation to next run;
 - production DNS/TLS cutover and process supervision for the public `marshall.chat` gateway;
 - CUDA worker backend;
 - model cache capability reporting;
@@ -105,7 +104,7 @@ The worker flow is:
 2. clone this repository;
 3. install dependencies and build;
 4. install an MLX Python environment on Apple Silicon;
-5. fetch the live control address from `https://marshall.training/control.json`;
+5. fetch the live control network from `https://marshall.training/control-network.json`;
 6. start `worker:join:compiled` or `worker:pool:compiled` with `--job-types train_adapter,evaluate_adapter,validate_artifact`;
 7. let the worker download only assigned shards or artifacts, verify hashes, run the compatible phase, and publish the artifact.
 
@@ -162,6 +161,7 @@ npm run worker:pool -- \
 `worker:pool` is long-running by default: each stable worker slot claims another compatible job after completing the previous one. Use `--max-jobs <n>` and `--exit-when-idle` only for bounded local tests or maintenance runs.
 Keep `--key-dir` stable when reusing the same `--worker-id-prefix`; the coordinator binds worker identity to the libp2p peer key and rejects mismatches.
 Workers must report `--memory-gb` explicitly. The control peer rejects memory-gated jobs before claim when the registered worker memory is below the job's `resource_requirements.min_memory_gb`.
+Validation quorum needs enough distinct worker identities. For `quorum=2`, a target produced or evaluated by one worker slot needs at least two other compatible slots to vote; the alternation policy rejects self-validation and repeated votes from the same local slot suffix. Low-memory slots can still validate CPU-only jobs when train/eval jobs carry higher `min_memory_gb` gates.
 
 ## Dataset Runs
 
@@ -216,6 +216,7 @@ npm run eval:jobs -- \
 
 Use `eval_kind ag_news` for exact-label AG News scoring and `eval_kind instruction_terms` for held-out instruction generation checks. The worker records the evaluation kind in the produced metrics artifact so leaderboard and validator stages can reason about what was measured.
 Evaluation jobs that load the same base model should use the same memory gate as training, or a higher one if generation settings require it.
+Validation jobs are CPU policy checks, but they still require distinct active worker identities. Size worker pools so validator quorum can complete without allowing the producer or evaluator of an artifact to vote on its own output.
 
 ## Round Advancement
 
@@ -279,11 +280,11 @@ npm run round:daemon:compiled -- \
 
 ## Multi-Mac Workers
 
-Use `worker:join:compiled` for a Mac that should remain available across train, evaluation, and validation phases. It fetches `/control.json` and starts one persistent `model` worker pool whose slots can claim training, evaluation, or validation jobs as the run advances. Inference workers are separate because they keep selected model packages hot for chat traffic.
+Use `worker:join:compiled` for a Mac that should remain available across train, evaluation, and validation phases. It fetches `/control-network.json` and starts one persistent `model` worker pool whose slots can claim training, evaluation, or validation jobs as the run advances. Inference workers are separate because they keep selected model packages hot for chat traffic.
 
 ```bash
 npm run worker:join:compiled -- \
-  --control-url https://marshall.training/control.json \
+  --control-network-url https://marshall.training/control-network.json \
   --worker-id-base "$(hostname)" \
   --state-dir .marshall/public-worker \
   --model-concurrency 2 \
@@ -293,6 +294,7 @@ npm run worker:join:compiled -- \
 ```
 
 Increase `--model-concurrency` only after confirming memory headroom on that Mac. `--slot-memory-gb` is the per-slot budget used to cap effective concurrency against `--memory-gb`. Keep the same `--worker-id-base` and `--state-dir` across restarts to preserve worker identity and reputation.
+If the active validation policy uses quorum greater than one, make sure the swarm has more compatible worker identities than the quorum. On a single Mac, this can mean running additional low-memory worker slots that cannot claim high-memory training/evaluation jobs but can claim validation jobs.
 
 ## Ready Model Packages
 
@@ -395,7 +397,7 @@ MARSHALL_INFERENCE_KEY=.marshall/inference-worker.key
 MARSHALL_INFERENCE_LISTEN=/ip4/0.0.0.0/tcp/8788
 MARSHALL_INFERENCE_WORKER_ID=<stable-worker-id>
 MARSHALL_PYTHON=/absolute/path/to/mlx-python
-MARSHALL_CONTROL_ADDR=/dns4/marshall.training/tcp/4001/p2p/<control-peer-id>
+MARSHALL_CONTROL_NETWORK_URL=https://marshall.training/control-network.json
 MARSHALL_MODEL_REGISTRY_URL=https://marshall.training/models/index.json
 MARSHALL_MODEL_PACKAGE_ID=optimized_model_job_dolly_gemma3_1b_public_shard_007
 MARSHALL_MODEL_CACHE_DIR=.marshall/model-cache
@@ -444,7 +446,7 @@ The current public trial deploy target is a small GCP VM:
 - chat domain: `marshall.chat`;
 - HTTPS proxy: Caddy;
 - coordinator: Go service on `127.0.0.1:8080`;
-- control peer: Node.js libp2p service on TCP `4001`, serving live coordinator jobs with `--coordinator-jobs true`;
+- control peers: Node.js libp2p services on TCP `4001` and `4002`, serving live coordinator jobs with `--coordinator-jobs true`;
 - round daemon: optional Node.js service that starts when `/etc/marshall/round-daemon.env` exists and automatically advances the configured run from training to evaluation, validation, and selection;
 - Redis: local-only on the VM.
 
@@ -454,7 +456,7 @@ Deploy:
 ./scripts/deploy-gcp-micro.sh
 ```
 
-The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control.json` for permissionless worker discovery. The same Caddy config exposes `/models/index.json` as metadata-only model registry, exposes the chat gateway at `https://marshall.training/chat/` as the public fallback path, and serves a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`. For the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
+The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps Redis private, publishes Caddy HTTPS, and writes `/control-network.json` for permissionless worker discovery across the primary and mirror control peers. The same Caddy config exposes `/models/index.json` as metadata-only model registry, exposes the chat gateway at `https://marshall.training/chat/` as the public fallback path, and serves a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`. For the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
 
 Use the public chat readiness check before calling inference operational:
 

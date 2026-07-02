@@ -6,10 +6,12 @@ import { fileURLToPath } from "node:url";
 
 const args = parseArgs(process.argv.slice(2));
 const control = args.control ?? process.env.MARSHALL_CONTROL_ADDR;
+const controlNetworkPath = args["control-network-path"] ?? process.env.MARSHALL_CONTROL_NETWORK_PATH;
+const controlNetworkUrl = args["control-network-url"] ?? process.env.MARSHALL_CONTROL_NETWORK_URL;
 const jobTypes = jobTypesArg(args["job-types"] ?? process.env.MARSHALL_JOB_TYPES ?? args["job-type"] ?? process.env.MARSHALL_JOB_TYPE);
 
-if (control == null) {
-  throw new Error("--control or MARSHALL_CONTROL_ADDR is required");
+if ((control == null || control === "") && (controlNetworkPath == null || controlNetworkPath === "") && (controlNetworkUrl == null || controlNetworkUrl === "")) {
+  throw new Error("--control, MARSHALL_CONTROL_ADDR, or control network source is required");
 }
 
 const requestedConcurrency = numberArg(args.concurrency ?? process.env.MARSHALL_WORKER_POOL_CONCURRENCY, 1);
@@ -91,8 +93,6 @@ async function runWorker(slot: number): Promise<"completed" | "failed" | "idle">
   const suffix = String(slot).padStart(4, "0");
   const workerArgs = [
     workerScript,
-    "--control",
-    control!,
     "--job-types",
     jobTypes.join(","),
     "--backend",
@@ -104,6 +104,9 @@ async function runWorker(slot: number): Promise<"completed" | "failed" | "idle">
     ...passThroughArgs(args),
     ...optionalValueArg("--memory-gb", workerMemoryGb),
   ];
+  if (control != null && control !== "") {
+    workerArgs.splice(1, 0, "--control", control);
+  }
 
   await mkdir(dirname(resolve(keyDir, `${workerPrefix}-${suffix}.key`)), { recursive: true });
   const result = await runProcess(scriptCommand(workerScript), scriptArgs(workerScript, workerArgs));
@@ -144,6 +147,8 @@ function passThroughArgs(values: Record<string, string>): string[] {
     "artifact-chunk-bytes",
     "artifact-chunk-retries",
     "control-addrs",
+    "control-network-path",
+    "control-network-url",
   ];
   const output: string[] = [];
   for (const key of keys) {

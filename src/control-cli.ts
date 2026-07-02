@@ -41,6 +41,8 @@ const effectiveJobType = coordinatorJobSource ? "coordinator_jobs" : jobs[0]?.jo
 
 const started = {
   type: "marshall_control_started",
+  coordinator_id: args["coordinator-id"] ?? process.env.MARSHALL_COORDINATOR_ID ?? "primary",
+  coordinator_role: args["coordinator-role"] ?? process.env.MARSHALL_COORDINATOR_ROLE ?? "primary",
   peer_id: control.peerId,
   addrs: control.multiaddrs.map((addr) => addr.toString()),
   control_addr: publicControlAddr(control.peerId),

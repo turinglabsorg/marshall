@@ -1,17 +1,18 @@
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { multiaddr } from "@multiformats/multiaddr";
+import { resolveControlMultiaddrs } from "./control-network.js";
 import { defaultBackendForJob } from "./jobs.js";
 import type { Backend, JobType, MarshallJob, WorkerHeartbeat } from "./schemas.js";
 import { runAdapterEvaluation, runArtifactValidation, runMlxLoraTraining, runMlxSmokeTraining, runToyTraining, type TrainingProgressUpdate } from "./training-runner.js";
 import { WorkerPeer } from "./worker-peer.js";
 
 const args = parseArgs(process.argv.slice(2));
-const controlAddr = args.control ?? process.env.MARSHALL_CONTROL_ADDR;
-
-if (controlAddr == null) {
-  throw new Error("--control or MARSHALL_CONTROL_ADDR is required");
-}
+const controlAddrs = await resolveControlMultiaddrs({
+  controlAddr: args.control ?? process.env.MARSHALL_CONTROL_ADDR,
+  controlAddrs: args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS,
+  controlNetworkPath: args["control-network-path"] ?? process.env.MARSHALL_CONTROL_NETWORK_PATH,
+  controlNetworkUrl: args["control-network-url"] ?? process.env.MARSHALL_CONTROL_NETWORK_URL,
+});
 
 const supportedJobTypes = jobTypesArg(args["job-types"] ?? process.env.MARSHALL_JOB_TYPES ?? args["job-type"] ?? process.env.MARSHALL_JOB_TYPE ?? "train_toy_model");
 const registrationBackend = backendArg(args.backend ?? process.env.MARSHALL_BACKEND ?? defaultBackendForJob(supportedJobTypes[0]));
@@ -22,8 +23,8 @@ const workerId = args["worker-id"] ?? process.env.MARSHALL_WORKER_ID ?? `${hostn
 const worker = await WorkerPeer.create({
   privateKeyPath: args.key ?? process.env.MARSHALL_WORKER_KEY ?? ".marshall/worker.key",
   workerId,
-  controlAddr: controlAddrs(controlAddr)[0],
-  controlAddrs: controlAddrs(controlAddr),
+  controlAddr: controlAddrs[0],
+  controlAddrs,
   listen: splitList(args.listen ?? process.env.MARSHALL_WORKER_LISTEN ?? "/ip4/0.0.0.0/tcp/0"),
   backend: registrationBackend,
   supportedJobs: supportedJobTypes,
@@ -399,18 +400,6 @@ function requiredArg(name: string, value: string | undefined): string {
     throw new Error(`--${name} is required`);
   }
   return value;
-}
-
-function controlAddrs(primary: string): ReturnType<typeof multiaddr>[] {
-  const values = [
-    ...splitList(primary),
-    ...splitList(args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS ?? ""),
-  ].filter(Boolean);
-  const deduped = [...new Set(values)];
-  if (deduped.length === 0) {
-    throw new Error("--control or MARSHALL_CONTROL_ADDR is required");
-  }
-  return deduped.map((value) => multiaddr(value));
 }
 
 function jobTypeArg(value: string): Extract<JobType, "train_toy_model" | "train_mlx_smoke" | "train_adapter" | "evaluate_adapter" | "validate_artifact"> {

@@ -55,13 +55,13 @@ fi
 if ! gcloud compute firewall-rules describe "$FIREWALL_RULE" --project "$PROJECT" >/dev/null 2>&1; then
   gcloud compute firewall-rules create "$FIREWALL_RULE" \
     --project "$PROJECT" \
-    --allow tcp:80,tcp:443,tcp:4001 \
+    --allow tcp:80,tcp:443,tcp:4001,tcp:4002 \
     --target-tags "$NETWORK_TAG" \
     --description "Allow public HTTP, HTTPS, and libp2p control traffic for Marshall"
 else
   gcloud compute firewall-rules update "$FIREWALL_RULE" \
     --project "$PROJECT" \
-    --allow tcp:80,tcp:443,tcp:4001 \
+    --allow tcp:80,tcp:443,tcp:4001,tcp:4002 \
     --target-tags "$NETWORK_TAG"
 fi
 
@@ -133,6 +133,7 @@ gcloud compute scp \
   "$ROOT_DIR/deploy/gcp-micro/marshall-coordinator.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-caddy.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-control.service" \
+  "$ROOT_DIR/deploy/gcp-micro/marshall-control-mirror.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-round-daemon.service" \
   "$INSTANCE:/tmp/marshall-deploy/" \
   --zone "$ZONE" \
