@@ -1,12 +1,12 @@
 [Unit]
 Description=Marshall public libp2p control peer mirror
-After=docker.service marshall-coordinator.service marshall-control.service
-Requires=docker.service marshall-coordinator.service
+After=docker.service marshall-coordinator-replica.service marshall-control.service
+Requires=docker.service marshall-coordinator-replica.service
 
 [Service]
 Type=simple
 ExecStartPre=-/usr/bin/docker rm -f marshall-control-mirror
-ExecStart=/usr/bin/docker run --name marshall-control-mirror --pull=always --network host --env-file /etc/marshall/coordinator.env -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/control-cli.js --key /var/lib/marshall/control-mirror/control.key --listen /ip4/0.0.0.0/tcp/4002 --coordinator-url http://127.0.0.1:8080 --coordinator-jobs true --artifact-store-dir /var/lib/marshall/artifacts/control --artifact-serve-dirs /var/lib/marshall/artifacts/control --job-lease-seconds 900 --public-control-host marshall.training --public-control-port 4002 --coordinator-id public-mirror-1 --coordinator-role mirror --info-file /var/lib/marshall/public/control-mirror.json
+ExecStart=/usr/bin/docker run --name marshall-control-mirror --pull=always --network host --env-file /etc/marshall/coordinator.env -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/control-cli.js --key /var/lib/marshall/control-mirror/control.key --listen /ip4/0.0.0.0/tcp/4002 --coordinator-url http://127.0.0.1:8081 --coordinator-jobs true --artifact-store-dir /var/lib/marshall/artifacts/control --artifact-serve-dirs /var/lib/marshall/artifacts/control --job-lease-seconds 900 --public-control-host marshall.training --public-control-port 4002 --coordinator-id public-replica-1 --coordinator-role mirror --info-file /var/lib/marshall/public/control-mirror.json
 ExecStop=/usr/bin/docker stop marshall-control-mirror
 Restart=always
 RestartSec=3

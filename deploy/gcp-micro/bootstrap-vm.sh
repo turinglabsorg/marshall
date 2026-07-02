@@ -54,6 +54,7 @@ install -m 0640 -o root -g marshall /tmp/marshall-deploy/coordinator.env /etc/ma
 install -m 0644 /tmp/marshall-deploy/Caddyfile /etc/marshall/Caddyfile
 install -m 0644 /tmp/marshall-deploy/marshall-redis.service /etc/systemd/system/marshall-redis.service
 install -m 0644 /tmp/marshall-deploy/marshall-coordinator.service /etc/systemd/system/marshall-coordinator.service
+install -m 0644 /tmp/marshall-deploy/marshall-coordinator-replica.service /etc/systemd/system/marshall-coordinator-replica.service
 install -m 0644 /tmp/marshall-deploy/marshall-caddy.service /etc/systemd/system/marshall-caddy.service
 install -m 0644 /tmp/marshall-deploy/marshall-control.service /etc/systemd/system/marshall-control.service
 install -m 0644 /tmp/marshall-deploy/marshall-control-mirror.service /etc/systemd/system/marshall-control-mirror.service
@@ -66,6 +67,8 @@ systemctl daemon-reload
 systemctl enable --now marshall-redis.service
 systemctl restart marshall-coordinator.service
 systemctl enable marshall-coordinator.service
+systemctl restart marshall-coordinator-replica.service
+systemctl enable marshall-coordinator-replica.service
 systemctl restart marshall-caddy.service
 systemctl enable marshall-caddy.service
 systemctl restart marshall-control.service
@@ -87,7 +90,9 @@ else
 fi
 
 curl -fsS http://127.0.0.1:8080/dashboard >/dev/null
+curl -fsS http://127.0.0.1:8081/health >/dev/null
 systemctl --no-pager --full status marshall-coordinator.service
+systemctl --no-pager --full status marshall-coordinator-replica.service
 systemctl --no-pager --full status marshall-caddy.service
 systemctl --no-pager --full status marshall-control.service
 systemctl --no-pager --full status marshall-control-mirror.service

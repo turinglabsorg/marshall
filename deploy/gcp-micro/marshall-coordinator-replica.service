@@ -1,5 +1,5 @@
 [Unit]
-Description=Marshall coordinator
+Description=Marshall coordinator replica
 After=network-online.target marshall-redis.service
 Wants=network-online.target
 Requires=marshall-redis.service
@@ -9,7 +9,7 @@ Type=simple
 User=marshall
 Group=marshall
 EnvironmentFile=/etc/marshall/coordinator.env
-ExecStart=/usr/bin/env MARSHALL_COORDINATOR_ID=public-primary /opt/marshall/bin/marshall-coordinator
+ExecStart=/usr/bin/env MARSHALL_HTTP_ADDR=127.0.0.1:8081 MARSHALL_COORDINATOR_ID=public-replica-1 /opt/marshall/bin/marshall-coordinator
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

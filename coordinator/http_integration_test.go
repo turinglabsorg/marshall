@@ -257,7 +257,11 @@ func TestHTTPServerAuthProtectsWrites(t *testing.T) {
 	server := httptest.NewServer(NewServer(NewRedisStore(addr, prefix), WithAuthToken("secret-token")))
 	defer server.Close()
 
-	getJSONInto(t, server.URL+"/health", http.StatusOK, &map[string]string{})
+	var health map[string]string
+	getJSONInto(t, server.URL+"/health", http.StatusOK, &health)
+	if health["status"] != "ok" || health["coordinator_id"] == "" {
+		t.Fatalf("unexpected health response: %+v", health)
+	}
 	postJSON(t, server.URL+"/runs", Run{
 		RunID:     "run_auth_001",
 		Objective: "unauthorized write",

@@ -8,9 +8,10 @@ import (
 )
 
 type Server struct {
-	store     Store
-	mux       *http.ServeMux
-	authToken string
+	store      Store
+	mux        *http.ServeMux
+	authToken  string
+	instanceID string
 }
 
 type ServerOption func(*Server)
@@ -21,10 +22,17 @@ func WithAuthToken(token string) ServerOption {
 	}
 }
 
+func WithInstanceID(instanceID string) ServerOption {
+	return func(server *Server) {
+		server.instanceID = instanceID
+	}
+}
+
 func NewServer(store Store, options ...ServerOption) *Server {
 	server := &Server{
-		store: store,
-		mux:   http.NewServeMux(),
+		store:      store,
+		mux:        http.NewServeMux(),
+		instanceID: "coordinator",
 	}
 	for _, option := range options {
 		option(server)
@@ -88,7 +96,10 @@ func requestBearerToken(request *http.Request) string {
 }
 
 func (server *Server) health(response http.ResponseWriter, _ *http.Request) {
-	writeJSON(response, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(response, http.StatusOK, map[string]string{
+		"status":         "ok",
+		"coordinator_id": server.instanceID,
+	})
 }
 
 func (server *Server) createRun(response http.ResponseWriter, request *http.Request) {
