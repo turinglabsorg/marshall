@@ -11,8 +11,14 @@ marshall.training {
 		file_server
 	}
 
+	handle /control-replica.json {
+		root * /var/lib/marshall/public
+		file_server
+	}
+
 	handle /control-mirror.json {
 		root * /var/lib/marshall/public
+		rewrite * /control-replica.json
 		file_server
 	}
 
@@ -33,7 +39,7 @@ marshall.training {
 		reverse_proxy 127.0.0.1:8787
 	}
 
-	reverse_proxy 127.0.0.1:8080 127.0.0.1:8081
+	reverse_proxy 127.0.0.1:8080
 }
 
 marshall.chat {
@@ -42,5 +48,5 @@ marshall.chat {
 }
 
 :80 {
-	reverse_proxy 127.0.0.1:8080 127.0.0.1:8081
+	reverse_proxy 127.0.0.1:8080
 }

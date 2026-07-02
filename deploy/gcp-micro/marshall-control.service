@@ -5,8 +5,9 @@ Requires=docker.service marshall-coordinator.service
 
 [Service]
 Type=simple
+EnvironmentFile=/etc/marshall/node.env
 ExecStartPre=-/usr/bin/docker rm -f marshall-control
-ExecStart=/usr/bin/docker run --name marshall-control --pull=always --network host --env-file /etc/marshall/coordinator.env -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/control-cli.js --key /var/lib/marshall/control/control.key --listen /ip4/0.0.0.0/tcp/4001 --coordinator-url http://127.0.0.1:8080 --coordinator-jobs true --artifact-store-dir /var/lib/marshall/artifacts/control --artifact-serve-dirs /var/lib/marshall/artifacts/control --job-lease-seconds 900 --public-control-host marshall.training --public-control-port 4001 --coordinator-id public-primary --coordinator-role primary --info-file /var/lib/marshall/public/control.json
+ExecStart=/usr/bin/docker run --name marshall-control --pull=always --network host --env-file /etc/marshall/coordinator.env -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/control-cli.js --key /var/lib/marshall/control/control.key --listen ${MARSHALL_CONTROL_LISTEN} --coordinator-url http://127.0.0.1:8080 --coordinator-jobs true --artifact-store-dir /var/lib/marshall/artifacts/control --artifact-serve-dirs /var/lib/marshall/artifacts/control --job-lease-seconds 900 --public-control-addr ${MARSHALL_PUBLIC_CONTROL_ADDR} --coordinator-id ${MARSHALL_COORDINATOR_ID} --coordinator-role ${MARSHALL_CONTROL_ROLE} --info-file /var/lib/marshall/public/control.json
 ExecStop=/usr/bin/docker stop marshall-control
 Restart=always
 RestartSec=3

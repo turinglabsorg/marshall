@@ -9,7 +9,8 @@ Type=simple
 User=marshall
 Group=marshall
 EnvironmentFile=/etc/marshall/coordinator.env
-ExecStart=/usr/bin/env MARSHALL_COORDINATOR_ID=public-primary MARSHALL_COORDINATOR_PEERS=public-replica-1=http://127.0.0.1:8081 /opt/marshall/bin/marshall-coordinator
+EnvironmentFile=/etc/marshall/node.env
+ExecStart=/opt/marshall/bin/marshall-coordinator
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

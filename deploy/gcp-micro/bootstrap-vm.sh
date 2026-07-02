@@ -33,10 +33,8 @@ cp -a /tmp/marshall-deploy/app/. /opt/marshall/app/
 
 install -d -m 0750 -o marshall -g marshall /etc/marshall
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/redis
-install -d -m 0750 -o marshall -g marshall /var/lib/marshall/redis-replica
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/artifacts
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/control
-install -d -m 0750 -o marshall -g marshall /var/lib/marshall/control-mirror
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/jobs/current
 install -d -m 0755 -o marshall -g marshall /var/lib/marshall/public
 install -d -m 0755 -o marshall -g marshall /var/lib/marshall/datasets
@@ -52,54 +50,64 @@ docker run --rm -v /opt/marshall/app:/app -w /app node:22-bookworm-slim npm ci -
 install -m 0755 /tmp/marshall-deploy/marshall-coordinator /opt/marshall/bin/marshall-coordinator
 
 install -m 0640 -o root -g marshall /tmp/marshall-deploy/coordinator.env /etc/marshall/coordinator.env
+install -m 0640 -o root -g marshall /tmp/marshall-deploy/node.env /etc/marshall/node.env
 install -m 0644 /tmp/marshall-deploy/Caddyfile /etc/marshall/Caddyfile
 install -m 0644 /tmp/marshall-deploy/marshall-redis.service /etc/systemd/system/marshall-redis.service
-install -m 0644 /tmp/marshall-deploy/marshall-redis-replica.service /etc/systemd/system/marshall-redis-replica.service
 install -m 0644 /tmp/marshall-deploy/marshall-coordinator.service /etc/systemd/system/marshall-coordinator.service
-install -m 0644 /tmp/marshall-deploy/marshall-coordinator-replica.service /etc/systemd/system/marshall-coordinator-replica.service
 install -m 0644 /tmp/marshall-deploy/marshall-caddy.service /etc/systemd/system/marshall-caddy.service
 install -m 0644 /tmp/marshall-deploy/marshall-control.service /etc/systemd/system/marshall-control.service
-install -m 0644 /tmp/marshall-deploy/marshall-control-mirror.service /etc/systemd/system/marshall-control-mirror.service
 install -m 0644 /tmp/marshall-deploy/marshall-round-daemon.service /etc/systemd/system/marshall-round-daemon.service
 if [ -f /tmp/marshall-deploy/round-daemon.env ]; then
   install -m 0640 -o root -g marshall /tmp/marshall-deploy/round-daemon.env /etc/marshall/round-daemon.env
 fi
+if [ -f /tmp/marshall-deploy/control-replica.json ]; then
+  install -m 0644 -o marshall -g marshall /tmp/marshall-deploy/control-replica.json /var/lib/marshall/public/control-replica.json
+fi
+
+NODE_ROLE="$(sed -n 's/^MARSHALL_NODE_ROLE=//p' /etc/marshall/node.env | head -n 1)"
+if [ -z "$NODE_ROLE" ]; then
+  NODE_ROLE=primary
+fi
 
 systemctl daemon-reload
+systemctl disable --now marshall-redis-replica.service 2>/dev/null || true
+systemctl disable --now marshall-coordinator-replica.service 2>/dev/null || true
+systemctl disable --now marshall-control-mirror.service 2>/dev/null || true
 systemctl enable --now marshall-redis.service
-systemctl enable --now marshall-redis-replica.service
 systemctl restart marshall-coordinator.service
 systemctl enable marshall-coordinator.service
-systemctl restart marshall-coordinator-replica.service
-systemctl enable marshall-coordinator-replica.service
-systemctl restart marshall-caddy.service
-systemctl enable marshall-caddy.service
 systemctl restart marshall-control.service
 systemctl enable marshall-control.service
-systemctl restart marshall-control-mirror.service
-systemctl enable marshall-control-mirror.service
+if [ "$NODE_ROLE" = "primary" ]; then
+  systemctl restart marshall-caddy.service
+  systemctl enable marshall-caddy.service
+else
+  systemctl disable --now marshall-caddy.service 2>/dev/null || true
+fi
 for attempt in $(seq 1 30); do
-  if [ -s /var/lib/marshall/public/control.json ] && [ -s /var/lib/marshall/public/control-mirror.json ]; then
+  if [ -s /var/lib/marshall/public/control.json ]; then
     break
   fi
   sleep 1
 done
-docker run --rm -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/control-network-cli.js --control-info /var/lib/marshall/public/control.json --control-info /var/lib/marshall/public/control-mirror.json --output /var/lib/marshall/public/control-network.json
-if [ -f /etc/marshall/round-daemon.env ]; then
+CONTROL_INFO_ARGS=(--control-info /var/lib/marshall/public/control.json)
+if [ -s /var/lib/marshall/public/control-replica.json ]; then
+  CONTROL_INFO_ARGS+=(--control-info /var/lib/marshall/public/control-replica.json)
+fi
+docker run --rm -v /opt/marshall/app:/app:ro -v /var/lib/marshall:/var/lib/marshall -w /app node:22-bookworm-slim node dist/src/control-network-cli.js "${CONTROL_INFO_ARGS[@]}" --output /var/lib/marshall/public/control-network.json
+if [ "$NODE_ROLE" = "primary" ] && [ -f /etc/marshall/round-daemon.env ]; then
   systemctl restart marshall-round-daemon.service
   systemctl enable marshall-round-daemon.service
 else
   systemctl disable --now marshall-round-daemon.service 2>/dev/null || true
 fi
 
-curl -fsS http://127.0.0.1:8080/dashboard >/dev/null
-curl -fsS http://127.0.0.1:8081/health >/dev/null
+curl -fsS http://127.0.0.1:8080/health >/dev/null
 systemctl --no-pager --full status marshall-coordinator.service
-systemctl --no-pager --full status marshall-coordinator-replica.service
-systemctl --no-pager --full status marshall-redis-replica.service
-systemctl --no-pager --full status marshall-caddy.service
 systemctl --no-pager --full status marshall-control.service
-systemctl --no-pager --full status marshall-control-mirror.service
-if [ -f /etc/marshall/round-daemon.env ]; then
+if [ "$NODE_ROLE" = "primary" ]; then
+  systemctl --no-pager --full status marshall-caddy.service
+fi
+if [ "$NODE_ROLE" = "primary" ] && [ -f /etc/marshall/round-daemon.env ]; then
   systemctl --no-pager --full status marshall-round-daemon.service || true
 fi

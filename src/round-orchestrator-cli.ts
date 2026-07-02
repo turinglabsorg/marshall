@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveControlMultiaddrs } from "./control-network.js";
 import { CoordinatorClient, type CoordinatorArtifact } from "./coordinator-client.js";
 import { hashDatasetPath } from "./dataset-cache.js";
 import { rankAdapterEvaluations, type AdapterEvaluationCandidate } from "./model-selection.js";
@@ -13,6 +14,7 @@ import {
   type ArtifactValidationJob,
   type MarshallJob,
 } from "./schemas.js";
+import { WorkerPeer } from "./worker-peer.js";
 
 const args = parseArgs(process.argv.slice(2));
 const coordinatorUrl = args["coordinator-url"] ?? process.env.MARSHALL_COORDINATOR_URL;
@@ -210,79 +212,96 @@ async function selectModel(artifacts: CoordinatorArtifact[], options: RoundAdvan
   const topK = positiveIntegerArg(args["top-k"] ?? process.env.MARSHALL_TOP_K ?? "10");
   const requireVerdict = args["require-verdict"] ?? process.env.MARSHALL_LEADERBOARD_REQUIRE_VERDICT ?? "accepted";
   const artifactVerdicts = new Map(artifacts.map((artifact) => [artifact.job_id, artifact.verdict ?? ""]));
-  const metricsPaths = await findMetrics(artifactStoreDir);
+  const artifactFetcher = await createArtifactFetcher(outputDir);
+  const metricsPaths = artifactFetcher == null
+    ? await findMetrics(artifactStoreDir)
+    : await fetchEvaluationMetrics(artifactFetcher, artifacts, outputDir);
   const candidates: AdapterEvaluationCandidate[] = [];
   let skippedMetrics = 0;
-  for (const path of metricsPaths) {
-    const parsed = AdapterEvaluationMetricsSchema.safeParse(JSON.parse(await readFile(path, "utf8")));
-    if (!parsed.success) {
-      skippedMetrics += 1;
-      continue;
+  try {
+    for (const path of metricsPaths) {
+      const parsed = AdapterEvaluationMetricsSchema.safeParse(JSON.parse(await readFile(path, "utf8")));
+      if (!parsed.success) {
+        skippedMetrics += 1;
+        continue;
+      }
+      candidates.push({
+        metrics: parsed.data,
+        metricsPath: path,
+        verdict: artifactVerdicts.get(parsed.data.job_id),
+      });
     }
-    candidates.push({
-      metrics: parsed.data,
-      metricsPath: path,
-      verdict: artifactVerdicts.get(parsed.data.job_id),
+
+    const selection = rankAdapterEvaluations(candidates, {
+      topK,
+      requireVerdict,
     });
+
+    await mkdir(outputDir, { recursive: true });
+    await writeFile(join(outputDir, "leaderboard.json"), JSON.stringify({
+      type: "marshall_adapter_leaderboard",
+      selection_policy: selection.policy,
+      entries: selection.entries,
+    }, null, 2) + "\n", "utf8");
+    await writeFile(join(outputDir, "top_k.json"), JSON.stringify({
+      type: "marshall_adapter_top_k",
+      selection_policy: selection.policy,
+      top_k: selection.policy.top_k,
+      entries: selection.topK,
+    }, null, 2) + "\n", "utf8");
+    const optimizedModel = {
+      type: "marshall_optimized_model_selection",
+      strategy: selection.policy.id,
+      selection_policy: selection.policy,
+      selected: selection.selected,
+    };
+    const optimizedModelPath = join(outputDir, "optimized_model.json");
+    await writeFile(optimizedModelPath, JSON.stringify(optimizedModel, null, 2) + "\n", "utf8");
+
+    const packageDir = args["package-dir"] ?? process.env.MARSHALL_MODEL_PACKAGE_DIR;
+    let packageResult = null;
+    if (packageDir != null && packageDir !== "" && selection.selected != null) {
+      const adapterArtifactsDir = args["adapter-artifacts-dir"] ?? process.env.MARSHALL_ADAPTER_ARTIFACTS_DIR ?? artifactStoreDir;
+      if (artifactFetcher != null) {
+        await artifactFetcher.fetchArtifactFromControl(
+          selection.selected.adapter_id,
+          selection.selected.adapter_artifact_hash,
+          adapterArtifactsDir,
+          fetchOptions(),
+        );
+      }
+      packageResult = await createOptimizedModelPackage({
+        optimizedModel: {
+          strategy: optimizedModel.strategy,
+          selection_policy: optimizedModel.selection_policy,
+          selected: selection.selected,
+        },
+        runId: options.runId,
+        metricsPath: selection.selected.metrics_path,
+        adapterArtifactsDir,
+        outputDir: packageDir,
+        artifactStoreDir,
+        registryPath: args["model-registry-path"] ?? process.env.MARSHALL_MODEL_REGISTRY_PATH,
+        publisherPeerId: args["publisher-peer-id"] ?? process.env.MARSHALL_MODEL_PUBLISHER_PEER_ID,
+        publisherWorkerId: args["publisher-worker-id"] ?? process.env.MARSHALL_MODEL_PUBLISHER_WORKER_ID,
+      });
+    }
+
+    return {
+      type: "marshall_round_advance",
+      action: "select_model",
+      leaderboard_dir: outputDir,
+      optimized_model: optimizedModelPath,
+      evaluated_adapters: selection.entries.length,
+      skipped_metrics: skippedMetrics,
+      require_verdict: requireVerdict,
+      selected: selection.selected,
+      package: packageResult,
+      artifact_fetch: artifactFetcher == null ? "local_store" : "p2p_control_network",
+    };
+  } finally {
+    await artifactFetcher?.stop();
   }
-
-  const selection = rankAdapterEvaluations(candidates, {
-    topK,
-    requireVerdict,
-  });
-
-  await mkdir(outputDir, { recursive: true });
-  await writeFile(join(outputDir, "leaderboard.json"), JSON.stringify({
-    type: "marshall_adapter_leaderboard",
-    selection_policy: selection.policy,
-    entries: selection.entries,
-  }, null, 2) + "\n", "utf8");
-  await writeFile(join(outputDir, "top_k.json"), JSON.stringify({
-    type: "marshall_adapter_top_k",
-    selection_policy: selection.policy,
-    top_k: selection.policy.top_k,
-    entries: selection.topK,
-  }, null, 2) + "\n", "utf8");
-  const optimizedModel = {
-    type: "marshall_optimized_model_selection",
-    strategy: selection.policy.id,
-    selection_policy: selection.policy,
-    selected: selection.selected,
-  };
-  const optimizedModelPath = join(outputDir, "optimized_model.json");
-  await writeFile(optimizedModelPath, JSON.stringify(optimizedModel, null, 2) + "\n", "utf8");
-
-  const packageDir = args["package-dir"] ?? process.env.MARSHALL_MODEL_PACKAGE_DIR;
-  let packageResult = null;
-  if (packageDir != null && packageDir !== "" && selection.selected != null) {
-    packageResult = await createOptimizedModelPackage({
-      optimizedModel: {
-        strategy: optimizedModel.strategy,
-        selection_policy: optimizedModel.selection_policy,
-        selected: selection.selected,
-      },
-      runId: options.runId,
-      metricsPath: selection.selected.metrics_path,
-      adapterArtifactsDir: args["adapter-artifacts-dir"] ?? process.env.MARSHALL_ADAPTER_ARTIFACTS_DIR ?? artifactStoreDir,
-      outputDir: packageDir,
-      artifactStoreDir,
-      registryPath: args["model-registry-path"] ?? process.env.MARSHALL_MODEL_REGISTRY_PATH,
-      publisherPeerId: args["publisher-peer-id"] ?? process.env.MARSHALL_MODEL_PUBLISHER_PEER_ID,
-      publisherWorkerId: args["publisher-worker-id"] ?? process.env.MARSHALL_MODEL_PUBLISHER_WORKER_ID,
-    });
-  }
-
-  return {
-    type: "marshall_round_advance",
-    action: "select_model",
-    leaderboard_dir: outputDir,
-    optimized_model: optimizedModelPath,
-    evaluated_adapters: selection.entries.length,
-    skipped_metrics: skippedMetrics,
-    require_verdict: requireVerdict,
-    selected: selection.selected,
-    package: packageResult,
-  };
 }
 
 async function writeAndPublishJobs(values: {
@@ -336,6 +355,73 @@ async function findMetrics(root: string): Promise<string[]> {
   const paths: string[] = [];
   await walk(root, paths);
   return paths.filter((path) => basename(path) === "metrics.json");
+}
+
+async function createArtifactFetcher(outputDir: string): Promise<WorkerPeer | undefined> {
+  if (!hasControlSource()) {
+    return undefined;
+  }
+  const controlAddrs = await resolveControlMultiaddrs({
+    controlAddr: args.control ?? process.env.MARSHALL_CONTROL_ADDR,
+    controlAddrs: args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS,
+    controlNetworkPath: args["control-network-path"] ?? process.env.MARSHALL_CONTROL_NETWORK_PATH,
+    controlNetworkUrl: args["control-network-url"] ?? process.env.MARSHALL_CONTROL_NETWORK_URL,
+  });
+  return WorkerPeer.create({
+    privateKeyPath: args["fetcher-key"] ?? process.env.MARSHALL_SELECTION_FETCHER_KEY ?? join(outputDir, "selection-fetcher.key"),
+    workerId: args["fetcher-worker-id"] ?? process.env.MARSHALL_SELECTION_FETCHER_WORKER_ID ?? "round-orchestrator-artifact-fetcher",
+    controlAddr: controlAddrs[0],
+    controlAddrs,
+    listen: [args["fetcher-listen"] ?? process.env.MARSHALL_SELECTION_FETCHER_LISTEN ?? "/ip4/0.0.0.0/tcp/0"],
+    backend: "cpu",
+    supportedJobs: ["validate_artifact"],
+    memoryGb: 1,
+  });
+}
+
+async function fetchEvaluationMetrics(fetcher: WorkerPeer, artifacts: CoordinatorArtifact[], outputDir: string): Promise<string[]> {
+  const outputRoot = args["selection-artifacts-dir"] ?? process.env.MARSHALL_SELECTION_ARTIFACTS_DIR ?? join(outputDir, "selection-artifacts");
+  const metricsPaths: string[] = [];
+  for (const artifact of artifacts.filter((item) => item.artifact_type === "adapter_evaluation")) {
+    const manifest = await fetcher.fetchArtifactFromControl(
+      artifact.job_id,
+      artifact.artifact_hash,
+      outputRoot,
+      fetchOptions(),
+    );
+    metricsPaths.push(metricsPathFromFetchedManifest(manifest));
+  }
+  return metricsPaths;
+}
+
+function metricsPathFromFetchedManifest(manifest: { artifact_uri: string; metrics_uri?: string }): string {
+  if (manifest.metrics_uri != null && manifest.metrics_uri !== "") {
+    return localFilePath(manifest.metrics_uri);
+  }
+  return join(localFilePath(manifest.artifact_uri), "metrics.json");
+}
+
+function localFilePath(uri: string): string {
+  if (uri.startsWith("file:")) {
+    return fileURLToPath(uri);
+  }
+  return uri;
+}
+
+function fetchOptions(): { chunkBytes?: number; maxChunkRetries?: number } {
+  return {
+    chunkBytes: optionalPositiveIntegerArg(args["artifact-chunk-bytes"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_BYTES),
+    maxChunkRetries: optionalPositiveIntegerArg(args["artifact-chunk-retries"] ?? process.env.MARSHALL_ARTIFACT_CHUNK_RETRIES),
+  };
+}
+
+function hasControlSource(): boolean {
+  return Boolean(
+    (args.control ?? process.env.MARSHALL_CONTROL_ADDR)
+    || (args["control-addrs"] ?? process.env.MARSHALL_CONTROL_ADDRS)
+    || (args["control-network-path"] ?? process.env.MARSHALL_CONTROL_NETWORK_PATH)
+    || (args["control-network-url"] ?? process.env.MARSHALL_CONTROL_NETWORK_URL),
+  );
 }
 
 async function walk(path: string, output: string[]): Promise<void> {

@@ -21,7 +21,7 @@ Goals:
 - keep `marshall.training` online as the public training network surface;
 - publish worker-resolvable jobs through `/control-network.json`;
 - keep Redis private to the coordinator host;
-- run multiple public coordinators with independent local Redis stores and owner-sharded job/artifact writes;
+- run multiple public coordinators on separate machines with independent local Redis stores and owner-sharded job/artifact writes;
 - keep worker onboarding permissionless;
 - train real LoRA adapters from content-addressed dataset shards;
 - validate every artifact before it can affect model selection;
@@ -36,7 +36,8 @@ Implemented baseline:
 - validator job creation from unvalidated artifacts;
 - accepted-only leaderboard and model package publication;
 - P2P model package promotion with chunk, file, and root hash verification;
-- federated coordinator reads across independent Redis stores.
+- federated coordinator reads across independent Redis stores;
+- two-machine public coordinator baseline where workers can claim through one node, route writes to another owner shard, and fetch remote artifacts through the libp2p control network without shared filesystem storage.
 
 Required hardening:
 

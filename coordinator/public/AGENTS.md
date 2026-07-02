@@ -78,7 +78,7 @@ Verify:
 
 ## Fetch the Live Control Network
 
-The public control network is published by Marshall at runtime. It currently contains a primary control peer and a mirror control peer backed by separate Go coordinator processes and separate local Redis state stores. Coordinator writes are owner-sharded by job or artifact id, and reads aggregate the stores. Fetch the network manifest before starting a worker:
+The public control network is published by Marshall at runtime. It currently contains a primary control peer and a replica control peer backed by separate Go coordinator processes on separate VMs, each with its own private local Redis state store. Coordinator writes are owner-sharded by job or artifact id, and reads aggregate the stores. Fetch the network manifest before starting a worker:
 
 ```sh
 export MARSHALL_CONTROL_NETWORK_URL="https://marshall.training/control-network.json"
@@ -89,10 +89,10 @@ The values should look like:
 
 ```text
 /dns4/marshall.training/tcp/4001/p2p/<control-peer-id>
-/dns4/marshall.training/tcp/4002/p2p/<mirror-peer-id>
+/ip4/<replica-static-ip>/tcp/4002/p2p/<replica-control-peer-id>
 ```
 
-Workers should use the full control network URL when possible. If one control peer or coordinator process is unavailable, the worker can retry another peer from the manifest; compatible jobs may still be physically owned by either coordinator store.
+Workers should use the full control network URL when possible. If one control peer or coordinator process is unavailable, the worker can retry another peer from the manifest; compatible jobs may still be physically owned by either coordinator store. Artifact payloads are fetched through the control peers with chunked hash verification, not by direct HTTPS model or adapter downloads.
 
 ## Join Available Work
 

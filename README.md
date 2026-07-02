@@ -41,7 +41,7 @@ Dataset manifest
       |
 Run/job publisher
       |
-Go coordinator replicas + Redis  <---- public dashboard
+Federated Go coordinators + private Redis stores  <---- public dashboard
       |
 TypeScript libp2p control peer
       |
@@ -62,7 +62,7 @@ Workers never receive Redis credentials. Redis is private to the coordinator hos
 
 Implemented:
 
-- native Go coordinator replicas with Redis state, append-only event streams, and federated owner-sharding across independent stores;
+- native Go coordinators with private Redis state, append-only event streams, and federated owner-sharding across independent stores;
 - React terminal-style public dashboard at `marshall.training`, served as static build assets by the Go coordinator;
 - permissionless libp2p control peers on public TCP `4001` and `4002`;
 - public `/control-network.json` for worker discovery and failover;
@@ -80,7 +80,7 @@ Implemented:
 - accepted-only adapter leaderboard and model package path;
 - round advancement CLI and unattended round daemon for evaluation scheduling, validation scheduling, accepted-only leaderboard selection, and verified model packaging;
 - P2P `marshall.chat` gateway with streamed browser responses, gateway-owned durable conversation memory, and stateless libp2p inference workers;
-- GCP small-VM deployment with Caddy HTTPS, local Redis, active-active coordinator services, and multi-control peer services.
+- GCP two-VM deployment with Caddy HTTPS, per-node local Redis, federated coordinator services, and multi-control peer services.
 
 Not implemented yet:
 
@@ -438,18 +438,20 @@ npm run chat:dev -- \
 
 ## Public Deployment
 
-The current public trial deploy target is a small GCP VM:
+The current public trial deploy target is a two-node GCP deployment:
 
 - project: `iconic-elevator-394020`;
-- instance: `marshall-micro-1`;
+- primary instance: `marshall-micro-1`, static IP `34.148.63.131`, internal IP `10.142.0.2`;
+- replica instance: `marshall-micro-2`, static IP `34.139.113.58`, internal IP `10.142.0.3`;
 - machine type: `e2-small` with a 2GB swapfile;
 - domain: `marshall.training`;
 - chat domain: `marshall.chat`;
-- HTTPS proxy: Caddy;
-- coordinators: federated Go services on `127.0.0.1:8080` (`public-primary`) and `127.0.0.1:8081` (`public-replica-1`);
-- Redis: local-only independent state stores on `127.0.0.1:6379` for primary and `127.0.0.1:6380` for replica;
-- control peers: Node.js libp2p services on TCP `4001` and `4002`, serving live coordinator jobs with `--coordinator-jobs true`; `4001` talks to `public-primary`, `4002` talks to `public-replica-1`;
-- round daemon: optional Node.js service that starts when `/etc/marshall/round-daemon.env` exists and automatically advances the configured run from training to evaluation, validation, and selection;
+- HTTPS proxy: Caddy on the primary node;
+- coordinators: `public-primary` on the primary node and `public-replica-1` on the replica node, each listening on `0.0.0.0:8080`;
+- Redis: private local-only state on `127.0.0.1:6379` on each node;
+- federation: coordinator HTTP links over the private GCP network only, with port `8080` restricted by firewall tag;
+- control peers: Node.js libp2p services on public TCP `4001` for `public-primary` and public TCP `4002` for `public-replica-1`, both serving live coordinator jobs with `--coordinator-jobs true`;
+- round daemon: primary-only Node.js service that starts when `/etc/marshall/round-daemon.env` exists and automatically advances the configured run from training to evaluation, validation, and selection;
 
 Deploy:
 
@@ -457,7 +459,7 @@ Deploy:
 ./scripts/deploy-gcp-micro.sh
 ```
 
-The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services, keeps both Redis stores private, publishes Caddy HTTPS, starts both coordinator replicas, and writes `/control-network.json` for permissionless worker discovery across the primary and mirror control peers. Caddy load-balances the public dashboard/API across both coordinator processes; direct health checks return `coordinator_id` so the two local services can be verified independently. `MARSHALL_COORDINATOR_PEERS` links the two coordinators into a federated store: jobs and artifacts are deterministically owner-sharded by id, writes route to the owner coordinator, and dashboard/API reads aggregate both stores. The same Caddy config exposes `/models/index.json` as metadata-only model registry, exposes the chat gateway at `https://marshall.training/chat/` as the public fallback path, and serves a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`. For the current prototype, the Mac Pro chat gateway can be exposed to the VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
+The deploy script builds the TypeScript runtime, React dashboard bundle, and Go coordinator, uploads systemd services to both nodes, keeps Redis private on each node, publishes Caddy HTTPS from the primary, starts one coordinator and one control peer per node, and writes `/control-network.json` for permissionless worker discovery across both control peers. `MARSHALL_COORDINATOR_PEERS` links the two machines into a federated store: jobs and artifacts are deterministically owner-sharded by id, writes route to the owner coordinator, and dashboard/API reads aggregate both stores. Direct health checks return `coordinator_id` so each machine can be verified independently. The round daemon can fetch selected adapter artifacts from the control network with chunked P2P transfer and hash verification, so final packaging does not require a shared filesystem. The same Caddy config exposes `/models/index.json` as metadata-only model registry, exposes the chat gateway at `https://marshall.training/chat/` as the public fallback path, and serves a `marshall.chat` vhost that reverse-proxies to `127.0.0.1:8787`. For the current prototype, the Mac Pro chat gateway can be exposed to the primary VM through a reverse SSH tunnel managed by `scripts/run-chat-tunnel-gcp.sh` or the macOS LaunchAgent installer. Public HTTPS for `marshall.chat` requires the domain A record to point at the primary VM static IP `34.148.63.131`, after which Caddy can issue the Let's Encrypt certificate automatically.
 
 Use the public chat readiness check before calling inference operational:
 
