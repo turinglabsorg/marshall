@@ -42,6 +42,9 @@ func NewServer(store Store, options ...ServerOption) *Server {
 }
 
 func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if request.Header.Get(federationHeader) == "1" {
+		request = request.WithContext(WithFederationLocalOnly(request.Context()))
+	}
 	server.mux.ServeHTTP(response, request)
 }
 
@@ -54,6 +57,7 @@ func (server *Server) routes() {
 	server.mux.HandleFunc("GET /dashboard", server.dashboard)
 	server.mux.HandleFunc("POST /runs", server.requireAuth(server.createRun))
 	server.mux.HandleFunc("POST /workers", server.requireAuth(server.registerWorker))
+	server.mux.HandleFunc("GET /workers", server.workers)
 	server.mux.HandleFunc("POST /workers/{worker_id}/heartbeat", server.requireAuth(server.workerHeartbeat))
 	server.mux.HandleFunc("GET /workers/{worker_id}/reputation", server.workerReputation)
 	server.mux.HandleFunc("GET /jobs", server.jobs)
@@ -133,6 +137,11 @@ func (server *Server) workerHeartbeat(response http.ResponseWriter, request *htt
 func (server *Server) workerReputation(response http.ResponseWriter, request *http.Request) {
 	reputation, err := server.store.WorkerReputation(request.Context(), request.PathValue("worker_id"))
 	writeResult(response, reputation, err)
+}
+
+func (server *Server) workers(response http.ResponseWriter, request *http.Request) {
+	workers, err := server.store.Workers(request.Context())
+	writeResult(response, workers, err)
 }
 
 func (server *Server) createJob(response http.ResponseWriter, request *http.Request) {

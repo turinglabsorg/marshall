@@ -130,6 +130,7 @@ gcloud compute scp \
   "$ROOT_DIR/deploy/gcp-micro/Caddyfile" \
   "$ROOT_DIR/deploy/gcp-micro/bootstrap-vm.sh" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-redis.service" \
+  "$ROOT_DIR/deploy/gcp-micro/marshall-redis-replica.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-coordinator.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-coordinator-replica.service" \
   "$ROOT_DIR/deploy/gcp-micro/marshall-caddy.service" \

@@ -78,7 +78,7 @@ Verify:
 
 ## Fetch the Live Control Network
 
-The public control network is published by Marshall at runtime. It currently contains a primary control peer and a mirror control peer backed by separate Go coordinator processes that share the same private Redis state. Fetch it before starting a worker:
+The public control network is published by Marshall at runtime. It currently contains a primary control peer and a mirror control peer backed by separate Go coordinator processes and separate local Redis state stores. Coordinator writes are owner-sharded by job or artifact id, and reads aggregate the stores. Fetch the network manifest before starting a worker:
 
 ```sh
 export MARSHALL_CONTROL_NETWORK_URL="https://marshall.training/control-network.json"
@@ -92,7 +92,7 @@ The values should look like:
 /dns4/marshall.training/tcp/4002/p2p/<mirror-peer-id>
 ```
 
-Workers should use the full control network URL when possible. If one control peer or coordinator process is unavailable, the worker can retry another peer from the manifest.
+Workers should use the full control network URL when possible. If one control peer or coordinator process is unavailable, the worker can retry another peer from the manifest; compatible jobs may still be physically owned by either coordinator store.
 
 ## Join Available Work
 

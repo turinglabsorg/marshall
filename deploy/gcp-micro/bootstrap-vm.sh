@@ -33,6 +33,7 @@ cp -a /tmp/marshall-deploy/app/. /opt/marshall/app/
 
 install -d -m 0750 -o marshall -g marshall /etc/marshall
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/redis
+install -d -m 0750 -o marshall -g marshall /var/lib/marshall/redis-replica
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/artifacts
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/control
 install -d -m 0750 -o marshall -g marshall /var/lib/marshall/control-mirror
@@ -53,6 +54,7 @@ install -m 0755 /tmp/marshall-deploy/marshall-coordinator /opt/marshall/bin/mars
 install -m 0640 -o root -g marshall /tmp/marshall-deploy/coordinator.env /etc/marshall/coordinator.env
 install -m 0644 /tmp/marshall-deploy/Caddyfile /etc/marshall/Caddyfile
 install -m 0644 /tmp/marshall-deploy/marshall-redis.service /etc/systemd/system/marshall-redis.service
+install -m 0644 /tmp/marshall-deploy/marshall-redis-replica.service /etc/systemd/system/marshall-redis-replica.service
 install -m 0644 /tmp/marshall-deploy/marshall-coordinator.service /etc/systemd/system/marshall-coordinator.service
 install -m 0644 /tmp/marshall-deploy/marshall-coordinator-replica.service /etc/systemd/system/marshall-coordinator-replica.service
 install -m 0644 /tmp/marshall-deploy/marshall-caddy.service /etc/systemd/system/marshall-caddy.service
@@ -65,6 +67,7 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now marshall-redis.service
+systemctl enable --now marshall-redis-replica.service
 systemctl restart marshall-coordinator.service
 systemctl enable marshall-coordinator.service
 systemctl restart marshall-coordinator-replica.service
@@ -93,6 +96,7 @@ curl -fsS http://127.0.0.1:8080/dashboard >/dev/null
 curl -fsS http://127.0.0.1:8081/health >/dev/null
 systemctl --no-pager --full status marshall-coordinator.service
 systemctl --no-pager --full status marshall-coordinator-replica.service
+systemctl --no-pager --full status marshall-redis-replica.service
 systemctl --no-pager --full status marshall-caddy.service
 systemctl --no-pager --full status marshall-control.service
 systemctl --no-pager --full status marshall-control-mirror.service

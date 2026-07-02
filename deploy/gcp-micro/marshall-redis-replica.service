@@ -1,0 +1,15 @@
+[Unit]
+Description=Marshall local Redis replica state
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f marshall-redis-replica
+ExecStart=/usr/bin/docker run --name marshall-redis-replica --pull=always -p 127.0.0.1:6380:6379 -v /var/lib/marshall/redis-replica:/data redis:7-alpine redis-server --appendonly yes --save 60 1
+ExecStop=/usr/bin/docker stop marshall-redis-replica
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

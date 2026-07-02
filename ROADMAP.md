@@ -14,27 +14,37 @@ Synchronous full-model training and sharded single-request inference are future 
 
 ## Phase 1: Reliable Public Training Loop
 
-Status: in progress.
+Status: operational prototype, hardening in progress.
 
 Goals:
 
 - keep `marshall.training` online as the public training network surface;
-- publish worker-resolvable jobs through `/control.json`;
+- publish worker-resolvable jobs through `/control-network.json`;
 - keep Redis private to the coordinator host;
+- run multiple public coordinators with independent local Redis stores and owner-sharded job/artifact writes;
 - keep worker onboarding permissionless;
 - train real LoRA adapters from content-addressed dataset shards;
 - validate every artifact before it can affect model selection;
 - keep stale workers hidden from the live dashboard while preserving identity and reputation;
 - make every transfer hash-verified before downstream work consumes it.
 
-Required work:
+Implemented baseline:
 
 - automated job publication from a run manifest;
 - public run status grouped by dataset, base model, round, and shard;
 - retry and requeue automation for expired jobs;
 - validator job creation from unvalidated artifacts;
 - accepted-only leaderboard and model package publication;
-- documented operator workflow for starting a new public run.
+- P2P model package promotion with chunk, file, and root hash verification;
+- federated coordinator reads across independent Redis stores.
+
+Required hardening:
+
+- stronger coordinator failover semantics when one owner shard is unavailable;
+- cross-coordinator reputation convergence;
+- explicit operator CLI for public run creation and rollout;
+- larger public runs with more workers and longer wall-clock duration;
+- persistent model-serving advertisement from inference workers.
 
 ## Phase 2: Larger-Parameter Fine-Tuning
 
@@ -168,10 +178,9 @@ Cluster workers should still use Marshall identity, scheduling, artifact, and re
 
 1. Add richer worker capability reports for memory, backend, model cache, and measured throughput.
 2. Extend `TrainingJob.training_config` with adapter rank, alpha, target modules, quantization, and minimum memory.
-3. Add scheduler filtering by declared model requirements.
+3. Add scheduler filtering by declared model requirements and worker reputation.
 4. Run a 1.5B or 3B adapter job with the current public job flow.
-5. Add automatic evaluation and validator job generation after training artifacts appear.
-6. Add a model package endpoint for the best accepted adapter.
-7. Add `serve_model` worker registration against the coordinator, including model package, queue depth, and live throughput.
-8. Add router selection across multiple inference workers instead of an explicit `--p2p-worker-addr`.
-9. Promote the gateway to `marshall.chat` after model package quality is validated.
+5. Add cross-coordinator reputation convergence and owner-shard health reporting.
+6. Add `serve_model` worker registration against the coordinator, including model package, queue depth, and live throughput.
+7. Add router selection across multiple inference workers instead of an explicit `--p2p-worker-addr`.
+8. Promote the gateway to `marshall.chat` after model package quality is validated.
